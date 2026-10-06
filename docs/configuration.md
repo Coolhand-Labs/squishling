@@ -89,8 +89,9 @@ end
 | Key | Sent as |
 |---|---|
 | `temperature` | RubyLLM's `with_temperature` |
-| `thinking` | RubyLLM's `with_thinking`: `{ effort: :low }` or `{ budget: 1024 }` (reasoning effort / thinking token budget) |
-| anything else (`top_p`, `max_tokens`, `seed`, Gemini's `generationConfig`, …) | passed to the provider request as-is via `with_params` |
+| `max_output_tokens` | RubyLLM's `with_max_output_tokens` (translated to each provider's own field) |
+| `thinking` | RubyLLM's `with_thinking`: `true` (the model's default), `false` (off), or options such as `{ effort: :low }`, `{ budget: 1024 }`, `{ display: :omitted }` |
+| anything else (`top_p`, `seed`, `service_tier`, Gemini's `generationConfig`, …) | merged into the provider request as-is via `with_provider_options`, in that provider's own field names |
 
 - **No params means provider defaults.** Squishling sends nothing unless you set it. For structured
   extraction on non-reasoning models (e.g. Anthropic Claude Haiku), a low temperature reduces run-to-run
@@ -104,9 +105,9 @@ end
   squish :triage, model: "gpt-6-luna", provider: :openai, params: { temperature: nil, thinking: { effort: :low } }
   ```
 
-- Keys that Squishling or RubyLLM control (`model`, `messages`, `system`, `stream`, `response_format`,
-  `output_config`, `tools`, `tool_choice`, `schema`, …) raise `ConfigurationError`, because they would override
-  the model, the conversation, or the strict output format.
+- Keys that Squishling or RubyLLM control (`model`, `messages`, `input`, `instructions`, `system`, `stream`,
+  `response_format`, `text`, `output_config`, `tools`, `tool_choice`, `schema`, …) raise `ConfigurationError`,
+  because they would override the model, the conversation, or the strict output format.
 - If a provider rejects a param, the call raises `Squishling::ConfigurationError` naming the params. It isn't
   retried or sent to `squish_fallback`. See [Failure handling](failures.md).
 

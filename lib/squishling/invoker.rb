@@ -23,7 +23,7 @@ module Squishling
       chat = build_chat
       chat.with_instructions("#{instructions}\n\n#{INPUT_NOTE}")
       chat.with_schema(schema.llm_schema)
-      Params.apply(chat, @definition.params)
+      apply_params(chat)
 
       response = ask(chat, JSON.generate(payload))
       attempts = 0
@@ -47,6 +47,14 @@ module Squishling
       RubyLLM.chat(**chat_options)
     rescue RubyLLM::ModelNotFoundError, RubyLLM::ConfigurationError => e
       raise ConfigurationError, "#{@definition.label}: #{e.message}"
+    end
+
+    # RubyLLM validates some settings locally (e.g. an impossible thinking budget for the model)
+    # and raises ArgumentError before any request is sent.
+    def apply_params(chat)
+      Params.apply(chat, @definition.params)
+    rescue ArgumentError => e
+      raise ConfigurationError, "#{@definition.label}: invalid params #{@definition.params.inspect} (#{e.message})"
     end
 
     # Transient HTTP failures are already retried by RubyLLM (config.max_retries); anything that
@@ -74,7 +82,7 @@ module Squishling
     end
 
     def known_model?(model, provider)
-      RubyLLM.models.find(model, provider)
+      RubyLLM.models.find(model, provider:)
       true
     rescue RubyLLM::ModelNotFoundError
       false

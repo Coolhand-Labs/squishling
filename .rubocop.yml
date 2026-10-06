@@ -13,7 +13,7 @@ AllCops:
     - 'tmp/**/*'
     - '.git/**/*'
     - 'bin/*'
-  TargetRubyVersion: 3.2
+  TargetRubyVersion: 3.3
   SuggestExtensions: false
   DocumentationBaseURL: https://docs.rubocop.org/rubocop
 

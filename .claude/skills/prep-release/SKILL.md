@@ -163,10 +163,13 @@ act on, so hunt specifically for:
   retry branch, the code-fence stripper, a `squish_fallback` return, a
   non-object root schema, `anyOf` unions left untyped? Does a
   `strict: false` schema slip through any accepted schema form?
-- **Params passthrough**: generation params are deep-merged into the
-  provider request last. Confirm `Params::RESERVED_KEYS` still covers
-  every top-level key Squishling/RubyLLM set for each provider in the
-  installed `ruby_llm` version (check each provider's `render_payload`),
+- **Params passthrough**: params other than `temperature`,
+  `max_output_tokens`, and `thinking` go to RubyLLM's
+  `with_provider_options`, which merges them into the request last.
+  Confirm `Params::RESERVED_KEYS` still covers every top-level key
+  Squishling/RubyLLM set for each protocol in the installed `ruby_llm`
+  version (check each protocol's `render_payload` under
+  `lib/ruby_llm/protocols/`),
   so params can't replace the model, conversation, or strict output
   format, and that a provider 400 still surfaces as `ConfigurationError`
   rather than being absorbed by `squish_fallback`.

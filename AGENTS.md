@@ -20,13 +20,14 @@ spec pending, or rescue-and-swallow to get green.
 
 ## Runtime dependencies
 
-The gem's runtime dependencies are `ruby_llm`, `ruby_llm-schema`, and `json_schemer`. Keep it that way:
+The gem's runtime dependencies are `ruby_llm` (2.x), `schematist` (the schema DSL RubyLLM 2.0 uses), and
+`json_schemer`. Keep it that way:
 
 - **Never add a provider SDK** (`openai`, `anthropic`, `google-generativeai`, …). Providers are reached
   through RubyLLM only.
 - Development-only gems go in the `Gemfile`'s `:development, :test` group, never the gemspec.
 - No Ruby-version-conditional gems in the `Gemfile`: the committed `Gemfile.lock` is installed in frozen
-  mode on every Ruby in the CI matrix (3.2–4.0), so it must resolve identically everywhere.
+  mode on every Ruby in the CI matrix (3.3–4.0), so it must resolve identically everywhere.
 - `examples/`, `spec/`, `bin/`, and agent files are excluded from the packaged gem (see the gemspec).
 
 ## Design invariants
@@ -45,8 +46,8 @@ Flag any change that breaks one of these; they are behavior contracts, not style
   swallow exceptions raised by the user's own Ruby code.
 - **Only named context leaves the process.** The LLM sees method arguments plus `squish_context` values —
   never instance variables wholesale.
-- **Params can't override what Squishling owns.** Generation params are deep-merged into the provider request,
-  so `Params::RESERVED_KEYS` (model, messages, structured-output format, tools, streaming) stay rejected. A
+- **Params can't override what Squishling owns.** Provider-specific params are merged into the request last
+  (RubyLLM's `with_provider_options`), so `Params::RESERVED_KEYS` (model, messages, structured-output format, tools, streaming) stay rejected. A
   provider 400 is a `ConfigurationError`, never something a fallback absorbs.
 - **Thread/fiber safety.** Routing state is fiber-local; shared caches are mutex-guarded. Don't add
   unsynchronized class-level mutable state.

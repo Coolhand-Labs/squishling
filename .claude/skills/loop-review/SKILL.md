@@ -232,9 +232,11 @@ elaboration of those priorities.
 - **RubyLLM compatibility**: where the diff touches how chats are built
   or answers are read (`Invoker#chat_options`, `Params.apply`,
   `with_schema`, `ask`, `response.content`), check it against the installed `ruby_llm`
-  source (`bundle exec gem contents ruby_llm`), not memory — e.g. RubyLLM
-  leaves unparseable structured output as a String and requires a
-  `provider:` for `assume_model_exists`.
+  source (`bundle show ruby_llm`), not memory — e.g. in RubyLLM 2.x
+  `response.content` stays a JSON String (Squishling parses it),
+  provider-specific options go through `with_provider_options`,
+  `models.find` takes `provider:` as a keyword, and `assume_model_exists`
+  needs a provider.
 - **Documentation**: per `AGENTS.md`'s "README and docs philosophy" — the
   README stays a landing page; anything needing more than one code block
   lives in `docs/<topic>.md` (`configuration.md`, `routing.md`,

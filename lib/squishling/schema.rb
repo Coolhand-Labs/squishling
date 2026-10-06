@@ -34,8 +34,8 @@ module Squishling
 
       @json_schema = body.except("strict")
       @llm_schema = {
-        "name" => (hash["name"] if wrapped),
-        "description" => (hash["description"] if wrapped),
+        "name" => hash["name"] || body["title"],
+        "description" => hash["description"] || body["description"],
         "schema" => @json_schema,
         "strict" => true
       }.compact
@@ -62,7 +62,7 @@ module Squishling
       case raw
       when Hash then raw
       when Class
-        raise ConfigurationError, "#{raw} is not a RubyLLM::Schema" unless raw <= RubyLLM::Schema
+        raise ConfigurationError, "#{raw} is not a Schematist::Schema" unless raw <= Schematist::Schema
 
         raw.new.to_json_schema
       else
@@ -72,7 +72,7 @@ module Squishling
       end
     end
 
-    # RubyLLM::Schema emits { name:, description:, schema: {...} }.
+    # Some schema objects emit a { name:, description:, schema: {...} } wrapper instead of a bare schema.
     def wrapped?(hash)
       hash["schema"].is_a?(Hash) && !hash.key?("type") && !hash.key?("properties")
     end

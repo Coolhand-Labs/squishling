@@ -4,8 +4,8 @@
 
 `output_schema` (and `squish`) accept any of:
 
-- a [RubyLLM::Schema](https://github.com/danielfriis/ruby_llm-schema) DSL block
-- a `RubyLLM::Schema` subclass
+- a [Schematist](https://github.com/crmne/schematist) DSL block (the schema DSL RubyLLM 2.0 uses)
+- a `Schematist::Schema` subclass (`RubyLLM::Schema` too, if your app uses the `ruby_llm-schema` shim)
 - a raw JSON Schema `Hash`
 
 ```ruby
@@ -20,7 +20,7 @@ output_schema do
   end
 end
 
-output_schema InvoiceSchema   # class InvoiceSchema < RubyLLM::Schema
+output_schema InvoiceSchema   # class InvoiceSchema < Schematist::Schema
 
 output_schema(
   type: "object",
@@ -33,12 +33,15 @@ output_schema(
 ## Strict schemas only
 
 Squishling only supports **strict** output schemas: it always asks RubyLLM for strict structured output, and a
-schema declaring `strict: false` (or `strict false` in the DSL) raises `Squishling::ConfigurationError`. With raw
-hashes, follow your provider's strict-mode rules (e.g. list every property in `required` and set
-`additionalProperties: false`). The DSL generates compliant schemas for you, as long as you don't mark fields
-`required: false`. Use `optional` instead (below).
+schema declaring `strict: false` raises `Squishling::ConfigurationError`. RubyLLM 2.0 on its own would send a
+schema with optional properties non-strict; Squishling always sets the flag explicitly, so it stays strict.
 
-Not every provider enforces strict mode server-side (RubyLLM only sends the flag to OpenAI and OpenRouter), so
+With raw hashes, follow your provider's strict-mode rules (e.g. list every property in `required` and set
+`additionalProperties: false`). The DSL generates compliant schemas for you, as long as you don't mark fields
+`required: false`. Use `optional` instead (below). A schema the provider rejects in strict mode raises
+`ConfigurationError`.
+
+Not every provider enforces strict mode server-side (Anthropic, for example, doesn't receive the flag), so
 Squishling validates every result itself. See [Failure handling](failures.md).
 
 ## Typed results

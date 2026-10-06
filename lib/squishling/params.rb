@@ -1,15 +1,16 @@
 # frozen_string_literal: true
 
 module Squishling
-  # Generation params (temperature, thinking, top_p, max_tokens, ...) layered config -> class -> method.
+  # Generation params (temperature, thinking, max_output_tokens, top_p, ...) layered config -> class -> method.
   module Params
-    THINKING_KEYS = %i[effort budget].freeze
+    THINKING_KEYS = %i[effort budget display].freeze
 
-    # Request keys Squishling or RubyLLM own. Params are deep-merged into the provider request last,
-    # so these would silently replace the model, the conversation, or the strict output format.
+    # Request keys Squishling or RubyLLM own. Provider options are merged into the request last,
+    # overriding RubyLLM's defaults, so these would silently replace the model, the conversation,
+    # or the strict output format.
     RESERVED_KEYS = %i[
-      model messages contents system system_instruction stream stream_options
-      response_format output_config tools tool_choice schema
+      model messages input instructions contents system system_instruction stream stream_options store include
+      response_format text output_config tools tool_choice schema
     ].freeze
 
     module_function
@@ -24,7 +25,6 @@ module Squishling
         raise ConfigurationError, "#{label}: #{reserved.join(', ')} can't be set through params " \
                                   "(controlled by Squishling/RubyLLM; use model:/provider:/output_schema)"
       end
-
       params[:thinking] = normalize_thinking(params[:thinking], label) unless params[:thinking].nil?
       params.freeze
     end
@@ -34,21 +34,30 @@ module Squishling
       layers.compact.reduce({}) { |merged, layer| merged.merge(layer) }.compact
     end
 
-    # :temperature and :thinking use RubyLLM's dedicated setters (which apply provider-specific
-    # handling); everything else is deep-merged into the provider request as-is.
+    # Portable settings use RubyLLM's dedicated setters, which translate them for each provider;
+    # everything else is merged into the provider request as-is.
     def apply(chat, params)
-      rest = params.except(:temperature, :thinking)
+      rest = params.except(:temperature, :thinking, :max_output_tokens)
       chat.with_temperature(params[:temperature]) if params.key?(:temperature)
-      chat.with_thinking(**params[:thinking]) if params.key?(:thinking)
-      chat.with_params(**rest) if rest.any?
+      chat.with_max_output_tokens(params[:max_output_tokens]) if params.key?(:max_output_tokens)
+      apply_thinking(chat, params[:thinking]) if params.key?(:thinking)
+      chat.with_provider_options(rest) if rest.any?
       chat
     end
 
+    # true: the model's default thinking; false: off; a Hash: { effort:, budget:, display: }.
+    def apply_thinking(chat, thinking)
+      thinking.is_a?(Hash) ? chat.with_thinking(**thinking) : chat.with_thinking(thinking)
+    end
+
     def normalize_thinking(thinking, label)
+      return thinking if [true, false].include?(thinking)
+
       thinking = thinking.transform_keys(&:to_sym) if thinking.is_a?(Hash)
-      unless thinking.is_a?(Hash) && thinking.any? && (thinking.keys - THINKING_KEYS).empty?
+      unless thinking.is_a?(Hash) && thinking.any? && (thinking.keys - THINKING_KEYS).empty? && !thinking.value?(nil)
         raise ConfigurationError,
-          "#{label}: thinking must be a Hash with :effort and/or :budget, got #{thinking.inspect}"
+          "#{label}: thinking must be true, false, or a Hash with :effort, :budget and/or :display, " \
+          "got #{thinking.inspect}"
       end
 
       thinking

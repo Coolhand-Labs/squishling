@@ -41,12 +41,12 @@ module Squishling
       @squishling_instructions = block || text
     end
 
-    # The output format: a RubyLLM::Schema subclass, a raw JSON Schema Hash, or a
-    # RubyLLM::Schema DSL block.
+    # The output format: a Schematist::Schema subclass (RubyLLM::Schema with the ruby_llm-schema shim),
+    # a raw JSON Schema Hash, or a Schematist DSL block.
     def output_schema(schema = nil, &block)
       return squishling_lookup(:@squishling_output_schema) if schema.nil? && block.nil?
 
-      @squishling_output_schema = block ? RubyLLM::Schema.create(&block) : schema
+      @squishling_output_schema = block ? Schematist::Schema.create(&block) : schema
     end
 
     # Routing predicate, called with the method's inputs as keywords and evaluated against the
@@ -88,7 +88,7 @@ module Squishling
     #   end
     def squish(*names, instructions: nil, output_schema: nil, model: nil, provider: nil, params: nil, when: nil,
       fallback: nil, &schema_block)
-      schema = schema_block ? RubyLLM::Schema.create(&schema_block) : output_schema
+      schema = schema_block ? Schematist::Schema.create(&schema_block) : output_schema
       params &&= Params.normalize(params, "#{self} squish params")
       options = { instructions:, output_schema: schema, model:, provider:, params:,
                   predicate: binding.local_variable_get(:when), fallback: }.compact

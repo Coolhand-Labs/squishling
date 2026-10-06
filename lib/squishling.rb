@@ -3,7 +3,7 @@
 require "json"
 require "json_schemer"
 require "ruby_llm"
-require "ruby_llm/schema"
+require "schematist"
 
 require_relative "squishling/version"
 require_relative "squishling/errors"

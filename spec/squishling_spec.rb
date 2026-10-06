@@ -169,21 +169,25 @@ RSpec.describe Squishling do
     end
 
     it "always requests strict output from RubyLLM" do
-      payload = Squishling::Schema.new(RubyLLM::Schema.create { string :label }).llm_schema
+      payload = Squishling::Schema.new(Schematist::Schema.create { string :label }).llm_schema
 
       expect(payload["strict"]).to be(true)
       expect(payload["schema"]).not_to have_key("strict")
       expect(RubyLLM::Chat.allocate.send(:normalize_schema_payload, payload)).to include(strict: true)
     end
 
+    it "keeps strict on even for schemas RubyLLM 2.0 would otherwise send non-strict" do
+      # RubyLLM 2.0 sends a schema with optional properties non-strict unless strict is explicit.
+      raw = { type: "object", properties: { label: { type: "string" }, note: { type: "string" } }, required: ["label"] }
+      payload = Squishling::Schema.new(raw).llm_schema
+
+      expect(RubyLLM::Chat.allocate.send(:normalize_schema_payload, payload)).to include(strict: true)
+    end
+
     it "rejects non-strict schemas" do
       raw = { type: "object", properties: { label: { type: "string" } } }
-      dsl = RubyLLM::Schema.create do
-        strict false
-        string :label
-      end
 
-      [raw.merge(strict: false), { name: "x", schema: raw, strict: false }, dsl].each do |schema|
+      [raw.merge(strict: false), { name: "x", schema: raw, strict: false }].each do |schema|
         expect { Squishling::Schema.new(schema) }
           .to raise_error(Squishling::ConfigurationError, /only supports strict/)
       end
@@ -216,8 +220,8 @@ RSpec.describe Squishling do
       expect { Squishling::Schema.new({ name: "x", schema: raw, strict: true }) }.not_to raise_error
     end
 
-    it "preserves the name and description of a wrapped schema" do
-      schema = Class.new(RubyLLM::Schema) do
+    it "passes a schema's title and description to RubyLLM" do
+      schema = Class.new(Schematist::Schema) do
         description "A label"
         string :label
       end
@@ -235,15 +239,15 @@ RSpec.describe Squishling do
     end
 
     it "validates data without the strict keyword in the JSON Schema" do
-      schema = Squishling::Schema.new(RubyLLM::Schema.create { string :label })
+      schema = Squishling::Schema.new(Schematist::Schema.create { string :label })
 
       expect(schema.json_schema).not_to have_key("strict")
       expect(schema.validate({ "label" => "ok" })).to be_empty
       expect(schema.validate({ "label" => 1 })).not_to be_empty
     end
 
-    it "accepts a RubyLLM::Schema subclass" do
-      schema = Class.new(RubyLLM::Schema) { string :label }
+    it "accepts a Schematist::Schema subclass" do
+      schema = Class.new(Schematist::Schema) { string :label }
       klass = Class.new do
         include Squishling
 

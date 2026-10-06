@@ -16,7 +16,7 @@ Gem::Specification.new do |spec|
                      "for unimplemented methods, and harden high-volume paths into code as the economics justify it."
   spec.homepage = "https://github.com/Coolhand-Labs/squishling"
   spec.license = "Apache-2.0"
-  spec.required_ruby_version = ">= 3.2"
+  spec.required_ruby_version = ">= 3.3"
 
   spec.metadata["allowed_push_host"] = "https://rubygems.org"
 
@@ -36,8 +36,8 @@ Gem::Specification.new do |spec|
   spec.require_paths = ["lib"]
 
   spec.add_dependency "json_schemer", "~> 2.0"
-  spec.add_dependency "ruby_llm", "~> 1.16"
-  spec.add_dependency "ruby_llm-schema", "~> 0.4"
+  spec.add_dependency "ruby_llm", "~> 2.0"
+  spec.add_dependency "schematist", "~> 1.1"
 
   spec.metadata["rubygems_mfa_required"] = "true"
 end

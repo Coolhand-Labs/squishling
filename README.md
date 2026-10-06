@@ -20,7 +20,7 @@ A squishling needs two things:
 gem "squishling"
 ```
 
-Requires Ruby 3.2+. Configure your provider API keys in RubyLLM as usual, then optionally set a universal model:
+Requires Ruby 3.3+ and RubyLLM 2.x. Configure your provider API keys in RubyLLM as usual, then optionally set a universal model:
 
 ```ruby
 Squishling.configure do |config|

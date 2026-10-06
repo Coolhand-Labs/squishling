@@ -36,13 +36,19 @@ class FakeChat
     self
   end
 
-  def with_thinking(effort: nil, budget: nil)
-    generation[:thinking] = { effort:, budget: }.compact
+  def with_max_output_tokens(max_output_tokens)
+    generation[:max_output_tokens] = max_output_tokens
     self
   end
 
-  def with_params(**params)
-    generation[:params] = params
+  # Mirrors RubyLLM 2.0: with_thinking(true | false) or with_thinking(effort:, budget:, display:).
+  def with_thinking(enabled = true, **options) # rubocop:disable Style/OptionalBooleanParameter -- mirrors RubyLLM
+    generation[:thinking] = options.empty? ? enabled : options
+    self
+  end
+
+  def with_provider_options(provider_options)
+    generation[:provider_options] = provider_options
     self
   end
 
