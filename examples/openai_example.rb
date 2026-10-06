@@ -10,5 +10,8 @@ LiveHarness.run(
   script: File.basename(__FILE__),
   provider: :openai,
   env_var: "OPENAI_API_KEY",
-  default_model: "gpt-6-luna"
+  default_model: "gpt-6-luna",
+  # Reasoning model: tune reasoning effort; sampling params like temperature are rejected.
+  params: { thinking: { effort: :low } },
+  rejected_params: { temperature: 0.1 }
 )

@@ -10,5 +10,8 @@ LiveHarness.run(
   script: File.basename(__FILE__),
   provider: :anthropic,
   env_var: "ANTHROPIC_API_KEY",
-  default_model: "claude-haiku-4-5-20251001"
+  default_model: "claude-haiku-4-5-20251001",
+  params: { temperature: 0 },
+  # Anthropic requires temperature 1 whenever extended thinking is on.
+  rejected_params: { thinking: { budget: 1024 }, temperature: 0 }
 )

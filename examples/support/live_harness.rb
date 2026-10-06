@@ -13,7 +13,9 @@ module LiveHarness
   module_function
 
   # Key resolution order: --api-key flag, then the provider's env var, else exit 1.
-  def run(script:, provider:, env_var:, default_model:)
+  # params: generation params the model supports, applied to every scenario.
+  # rejected_params: params the model is known to reject, which must fail loudly.
+  def run(script:, provider:, env_var:, default_model:, params:, rejected_params:)
     options = parse_options(script, default_model)
     api_key = options[:api_key] || ENV.fetch(env_var, nil)
     if api_key.nil? || api_key.strip.empty?
@@ -26,9 +28,11 @@ module LiveHarness
       config.default_model = options[:model]
       config.default_provider = provider
       config.max_retries = 1
+      config.default_params = params
     end
+    @rejected_params = rejected_params
 
-    puts "Squishling live examples: #{provider} / #{options[:model]}\n\n"
+    puts "Squishling live examples: #{provider} / #{options[:model]} / params #{params.inspect}\n\n"
     failures = SCENARIOS.count { |scenario| !run_scenario(scenario) }
     puts "\n#{SCENARIOS.size - failures}/#{SCENARIOS.size} passed"
     exit(failures.zero? ? 0 : 1)
@@ -58,6 +62,8 @@ module LiveHarness
     (Process.clock_gettime(Process::CLOCK_MONOTONIC) - started).round(2)
   end
 
+  def rejected_params = @rejected_params
+
   def check(condition, message)
     raise message unless condition
   end
@@ -81,7 +87,7 @@ module LiveHarness
     squish_when { |vendor:, **| vendor != "acme" }
 
     def call(vendor:, text:)
-      result(invoice_number: "ACME-#{text}", total: 0, line_items: [])
+      result(invoice_number: "#{vendor.upcase}-#{text}", total: 0, line_items: [])
     end
   end
 
@@ -117,6 +123,39 @@ module LiveHarness
       required: %w[sentiment confidence],
       additionalProperties: false
     )
+  end
+
+  # `optional` fields: null means "not mentioned", [] means "explicitly none".
+  class VisitSummarizer
+    include Squishling
+
+    instructions <<~TEXT
+      Summarize the clinic note. Use null for anything the note doesn't mention, and an empty list when
+      the note explicitly says there are none.
+    TEXT
+    output_schema do
+      array :symptoms, of: :string
+      optional :vitals do
+        object do
+          integer :heart_rate
+        end
+      end
+      optional :medications do
+        array of: :string
+      end
+      optional :allergies do
+        array of: :string
+      end
+    end
+  end
+
+  # Fallback that must never run for a setup mistake.
+  class Echo
+    include Squishling
+
+    instructions "Reply with one word."
+    output_schema { string :word }
+    squish_fallback { |_error, **| { word: "fallback" } }
   end
 
   INVOICE_TEXT = <<~TEXT
@@ -157,6 +196,24 @@ module LiveHarness
       check(result.sentiment == "positive", "sentiment was #{result.sentiment.inspect}")
       check(result.confidence.is_a?(Numeric), "confidence was #{result.confidence.inspect}")
       "#{result.sentiment} (#{result.confidence})"
+    }),
+    Scenario.new("optional fields keep null (not mentioned) distinct from [] (none)", lambda {
+      result = VisitSummarizer.call(note: "Patient reports a cough and fever. Heart rate 88. Takes no medications.")
+      check(result.symptoms.size >= 2, "symptoms were #{result.symptoms.inspect}")
+      check(result.vitals.is_a?(Data) && result.vitals.heart_rate == 88, "vitals were #{result.vitals.inspect}")
+      check(result.medications == [], "medications were #{result.medications.inspect}")
+      check(result.allergies.nil?, "allergies were #{result.allergies.inspect}")
+      "medications=[] allergies=nil"
+    }),
+    Scenario.new("params the model rejects raise ConfigurationError, not the fallback", lambda {
+      klass = Class.new(Echo) { squishling params: LiveHarness.rejected_params }
+      begin
+        result = klass.call
+      rescue Squishling::ConfigurationError => e
+        check(e.message.include?("provider rejected the request"), "unexpected message: #{e.message}")
+        next "rejected #{LiveHarness.rejected_params.inspect}"
+      end
+      raise "expected ConfigurationError, got #{result.to_h.inspect}"
     })
   ].freeze
 end

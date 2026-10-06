@@ -8,6 +8,7 @@ require "ruby_llm/schema"
 require_relative "squishling/version"
 require_relative "squishling/errors"
 require_relative "squishling/configuration"
+require_relative "squishling/params"
 require_relative "squishling/result"
 require_relative "squishling/schema"
 require_relative "squishling/definition"
@@ -49,5 +50,5 @@ module Squishling
     frame.definition.build_result(attrs || kwargs, squished: false)
   end
 
-  alias result squishling_result
+  alias_method :result, :squishling_result
 end

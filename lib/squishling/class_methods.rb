@@ -9,9 +9,12 @@ module Squishling
     #   squishling model: "claude-sonnet-5-5", instructions: "...", output_schema: MySchema
     # Pass provider: alongside model: for models missing from RubyLLM's registry, e.g.
     #   squishling model: "gpt-6-luna", provider: :openai
-    def squishling(model: nil, provider: nil, instructions: nil, output_schema: nil)
+    # params: are generation params merged over the configured defaults (see Configuration#default_params):
+    #   squishling params: { temperature: 0.1, top_p: 0.9 }
+    def squishling(model: nil, provider: nil, params: nil, instructions: nil, output_schema: nil)
       @squishling_model = model if model
       @squishling_provider = provider if provider
+      @squishling_params = Params.normalize(params, "#{self} params") if params
       self.instructions(instructions) if instructions
       self.output_schema(output_schema) if output_schema
       self
@@ -23,6 +26,12 @@ module Squishling
 
     def squishling_provider
       squishling_lookup(:@squishling_provider)
+    end
+
+    # Generation params merged down the inheritance chain, so a subclass overrides individual keys.
+    def squishling_params
+      inherited = superclass.respond_to?(:squishling_params) ? superclass.squishling_params : {}
+      inherited.merge(@squishling_params || {})
     end
 
     # The system prompt. A String, or a Proc evaluated against the instance.
@@ -50,6 +59,18 @@ module Squishling
       squishling_lookup(:@squishling_predicate)
     end
 
+    # Called with the error and the method's inputs (as keywords) when the LLM path fails with an
+    # InvalidOutputError or LLMError, evaluated against the instance. Its return value is used as
+    # the result (hashes are validated and typed); re-raise to propagate.
+    #   squish_fallback { |error, **inputs| { priority: "medium", team: "support" } }
+    def squish_fallback(&block)
+      @squishling_fallback = block
+    end
+
+    def squishling_fallback
+      squishling_lookup(:@squishling_fallback)
+    end
+
     # Instance state (attributes or instance variables) to send to the LLM alongside the arguments.
     def squish_context(*names)
       (@squishling_context_names ||= []).concat(names.map(&:to_sym))
@@ -61,14 +82,16 @@ module Squishling
     end
 
     # Make methods elastic. Each may override the class-level settings:
-    #   squish :triage, instructions: "...", model: "...", provider: :openai, when: ->(**) { true } do
+    #   squish :triage, instructions: "...", model: "...", provider: :openai, when: ->(**) { true },
+    #                   fallback: ->(error, **) { { priority: "medium" } } do
     #     string :priority
     #   end
-    def squish(*names, instructions: nil, output_schema: nil, model: nil, provider: nil, when: nil,
-               &schema_block)
+    def squish(*names, instructions: nil, output_schema: nil, model: nil, provider: nil, params: nil, when: nil,
+      fallback: nil, &schema_block)
       schema = schema_block ? RubyLLM::Schema.create(&schema_block) : output_schema
-      options = { instructions:, output_schema: schema, model:, provider:,
-                  predicate: binding.local_variable_get(:when) }.compact
+      params &&= Params.normalize(params, "#{self} squish params")
+      options = { instructions:, output_schema: schema, model:, provider:, params:,
+                  predicate: binding.local_variable_get(:when), fallback: }.compact
 
       names.map(&:to_sym).each do |name|
         (@squishling_methods ||= {})[name] = options
@@ -102,6 +125,7 @@ module Squishling
     def squishling_install_wrapper
       @squishling_wrapper = Wrapper.new
       prepend(@squishling_wrapper)
+
       squished_methods.each_key { |name| @squishling_wrapper.wrap(name) }
     end
 

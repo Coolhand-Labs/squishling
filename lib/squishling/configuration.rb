@@ -10,6 +10,11 @@ module Squishling
     # RubyLLM's registry.
     attr_accessor :default_provider
 
+    # Generation params applied to every call, overridable per class and per method.
+    # :temperature and :thinking ({ effort:, budget: }) map to RubyLLM's with_temperature and
+    # with_thinking; any other key (top_p, max_tokens, seed, ...) is passed to the provider as-is.
+    attr_reader :default_params
+
     # How many times to re-ask the LLM when its output fails schema validation.
     attr_accessor :max_retries
 
@@ -19,8 +24,13 @@ module Squishling
     def initialize
       @default_model = nil
       @default_provider = nil
+      @default_params = {}
       @max_retries = 1
       @logger = nil
+    end
+
+    def default_params=(params)
+      @default_params = Params.normalize(params, "default_params")
     end
   end
 end

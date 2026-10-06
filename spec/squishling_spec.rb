@@ -55,6 +55,7 @@ RSpec.describe Squishling do
     it "falls back to the LLM when the method raises NotImplementedError" do
       klass = Class.new do
         include Squishling
+
         instructions "Summarize."
         output_schema { string :summary }
 
@@ -69,6 +70,7 @@ RSpec.describe Squishling do
     it "falls back to the LLM when the method is not defined at all" do
       klass = Class.new do
         include Squishling
+
         instructions "Summarize."
         output_schema { string :summary }
       end
@@ -80,6 +82,7 @@ RSpec.describe Squishling do
     it "evaluates the predicate against the instance" do
       klass = Class.new do
         include Squishling
+
         instructions "Echo."
         output_schema { string :value }
         squish_when { @elastic }
@@ -98,6 +101,7 @@ RSpec.describe Squishling do
     let(:triager) do
       Class.new do
         include Squishling
+
         instructions "Default instructions."
         squish_context :customer_tier, :product
 
@@ -136,6 +140,7 @@ RSpec.describe Squishling do
     it "wraps methods regardless of whether squish comes before or after def" do
       klass = Class.new do
         include Squishling
+
         def shout(word) = { word: word.upcase }
         squish :shout, instructions: "Shout." do
           string :word
@@ -151,6 +156,7 @@ RSpec.describe Squishling do
     it "accepts a raw JSON Schema hash" do
       klass = Class.new do
         include Squishling
+
         instructions "Classify."
         output_schema({ type: "object", properties: { label: { type: "string" } }, required: ["label"],
                         additionalProperties: false })
@@ -187,6 +193,7 @@ RSpec.describe Squishling do
       expect do
         Class.new do
           include Squishling
+
           output_schema({ type: "object", properties: {}, strict: false })
           instructions "x"
         end.call
@@ -239,6 +246,7 @@ RSpec.describe Squishling do
       schema = Class.new(RubyLLM::Schema) { string :label }
       klass = Class.new do
         include Squishling
+
         instructions "Classify."
         output_schema schema
       end
@@ -264,7 +272,7 @@ RSpec.describe Squishling do
       expect(result.line_items.first.description).to eq("Widgets")
       expect(result[:total]).to eq(1250.0)
       expect(result.to_h).to eq(invoice_number: "INV-42", total: 1250.0,
-                                line_items: [{ description: "Widgets", amount: 1250.0 }])
+        line_items: [{ description: "Widgets", amount: 1250.0 }])
     end
 
     it "returns the same result class from both paths" do
@@ -280,6 +288,7 @@ RSpec.describe Squishling do
     it "coerces and validates plain hashes returned by the deterministic path" do
       klass = Class.new do
         include Squishling
+
         instructions "x"
         output_schema { integer :count }
 
@@ -319,6 +328,7 @@ RSpec.describe Squishling do
     let(:base) do
       Class.new do
         include Squishling
+
         instructions "x"
         output_schema { string :value }
       end
@@ -350,6 +360,7 @@ RSpec.describe Squishling do
     let(:base) do
       Class.new do
         include Squishling
+
         instructions "x"
         output_schema { string :value }
       end
@@ -410,17 +421,18 @@ RSpec.describe Squishling do
     let(:parent) do
       Class.new do
         include Squishling
+
         squishling model: "parent-model", instructions: "Parent."
         output_schema { string :value }
         squish_when { |mode:| mode == :llm }
 
-        def call(mode:) = { value: "parent" }
+        def call(**) = { value: "parent" }
       end
     end
 
     it "inherits settings and routes subclass overrides" do
       child = Class.new(parent) do
-        def call(mode:) = { value: "child" }
+        def call(**) = { value: "child" }
       end
       chats = stub_llm({ "value" => "llm" })
 
@@ -444,6 +456,7 @@ RSpec.describe Squishling do
     it "requires instructions for the elastic path" do
       klass = Class.new do
         include Squishling
+
         output_schema { string :value }
       end
       stub_llm

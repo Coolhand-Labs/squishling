@@ -6,8 +6,8 @@ module Squishling
   module Result
     # Mixed into every generated result class.
     module Instance
-      def initialize(__squished__: false, **attrs)
-        @squished = __squished__
+      def initialize(squishling_squished: false, **attrs)
+        @squished = squishling_squished
         super(**attrs)
       end
 
@@ -29,7 +29,7 @@ module Squishling
       def from_h(hash, squished: false)
         hash = hash.transform_keys(&:to_sym)
         attrs = members.to_h { |member| [member, squishling_fields[member].call(hash[member], squished)] }
-        new(__squished__: squished, **attrs)
+        new(squishling_squished: squished, **attrs)
       end
 
       private
@@ -87,7 +87,10 @@ module Squishling
         property = resolve(property)
         return IDENTITY unless property.is_a?(Hash)
 
-        if (klass = class_for(property))
+        # `optional` (anyOf [schema, null]) is typed as its schema; nil passes through every converter.
+        if (branch = nullable_branch(property))
+          converter_for(branch)
+        elsif (klass = class_for(property))
           ->(value, squished) { value.is_a?(Hash) ? klass.from_h(value, squished:) : value }
         elsif property["items"]
           item = converter_for(property["items"])
@@ -95,6 +98,16 @@ module Squishling
         else
           IDENTITY
         end
+      end
+
+      # The single non-null branch of an anyOf/oneOf. Unions with several non-null branches are
+      # ambiguous, so their values are left untyped.
+      def nullable_branch(property)
+        union = property["anyOf"] || property["oneOf"]
+        return unless union.is_a?(Array)
+
+        branches = union.reject { |branch| resolve(branch).is_a?(Hash) && resolve(branch)["type"] == "null" }
+        branches.first if branches.size == 1
       end
 
       def resolve(schema)

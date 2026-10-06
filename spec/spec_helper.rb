@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "simplecov"
 require "squishling"
 
 # Stand-in for RubyLLM::Chat: records configuration and replays canned responses.
@@ -25,9 +26,33 @@ class FakeChat
     self
   end
 
+  # Generation settings applied through RubyLLM's setters, recorded for assertions.
+  def generation
+    @generation ||= {}
+  end
+
+  def with_temperature(temperature)
+    generation[:temperature] = temperature
+    self
+  end
+
+  def with_thinking(effort: nil, budget: nil)
+    generation[:thinking] = { effort:, budget: }.compact
+    self
+  end
+
+  def with_params(**params)
+    generation[:params] = params
+    self
+  end
+
+  # Exception responses (instances or classes) are raised instead of returned.
   def ask(message)
     @messages << message
-    Response.new(@responses.shift)
+    response = @responses.shift
+    raise response if response.is_a?(Exception) || (response.is_a?(Class) && response < Exception)
+
+    Response.new(response)
   end
 end
 

@@ -8,10 +8,23 @@ configures a universal model and runs the same scenarios:
 | routing predicate sends unhardened input to the LLM | `squish_when`, DSL schema, nested typed results |
 | routing predicate keeps hardened input in Ruby | deterministic path, `result(...)` |
 | both paths return the same result class | the elastic contract |
-| NotImplementedError falls back to the LLM with squish_context | fallback, `squish`, per-method schema, opt-in context |
+| NotImplementedError falls back to the LLM with squish_context | `NotImplementedError` fallback, `squish`, per-method schema, opt-in context |
 | raw JSON Schema hash output | raw strict JSON Schema |
+| optional fields keep null (not mentioned) distinct from [] (none) | `optional` (nullable) fields, typed nullable objects |
+| params the model rejects raise ConfigurationError, not the fallback | 400 handling, `squish_fallback` bypass |
 
-The scripts share `support/live_harness.rb`. Together they make about 8 small requests per provider.
+Every scenario runs with generation params the model supports (`config.default_params`). Each script also
+names params its model is known to reject:
+
+| Script | Params used | Params expected to be rejected |
+|---|---|---|
+| `anthropic_example.rb` | `{ temperature: 0 }` | `{ thinking: { budget: 1024 }, temperature: 0 }` |
+| `openai_example.rb` | `{ thinking: { effort: :low } }` | `{ temperature: 0.1 }` (reasoning model) |
+
+The scripts share `support/live_harness.rb`. Together they make about 10 small requests per provider.
+
+Failure handling (empty or malformed responses, provider errors, `squish_fallback`) is covered by the offline
+specs in `spec/failure_handling_spec.rb`, because a live model can't be made to fail on demand.
 
 ## API keys
 

@@ -5,7 +5,7 @@ module Squishling
   # whether they're defined before or after the `squish` declaration (or at all).
   class Wrapper < Module
     def wrap(name)
-      return if instance_methods(false).include?(name)
+      return if method_defined?(name, false)
 
       define_method(name) do |*args, **kwargs, &block|
         impl =

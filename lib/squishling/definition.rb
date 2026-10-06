@@ -5,14 +5,17 @@ module Squishling
   class Definition
     attr_reader :klass, :name
 
-    def initialize(klass:, name:, instructions: nil, output_schema: nil, model: nil, provider: nil, predicate: nil)
+    def initialize(klass:, name:, instructions: nil, output_schema: nil, model: nil, provider: nil, params: nil,
+      predicate: nil, fallback: nil)
       @klass = klass
       @name = name
       @instructions = instructions
       @output_schema = output_schema
       @model = model
       @provider = provider
+      @params = params
       @predicate = predicate
+      @fallback = fallback
     end
 
     def label
@@ -45,6 +48,11 @@ module Squishling
        [config.default_model, config.default_provider]].find(&:first) || [nil, nil]
     end
 
+    # Generation params: config defaults, overridden key by key by the class, then by the method.
+    def params
+      Params.resolve(Squishling.config.default_params, klass.squishling_params, @params)
+    end
+
     def context_names
       klass.squishling_context_names
     end
@@ -56,8 +64,16 @@ module Squishling
       receiver.instance_exec(**inputs, &predicate) ? true : false
     end
 
+    # Runs the elastic path. When the LLM fails (InvalidOutputError or LLMError) and a fallback is
+    # declared, the fallback's return value is used instead, coerced like a deterministic return.
     def invoke_llm(receiver, inputs)
       Invoker.new(self, receiver, inputs).call
+    rescue InvalidOutputError, LLMError => e
+      handler = @fallback || klass.squishling_fallback
+      raise unless handler
+
+      Squishling.config.logger&.warn("[Squishling] #{label} LLM failed, using fallback: #{e.message}")
+      coerce(receiver.instance_exec(e, **inputs, &handler))
     end
 
     # Deterministic return values: hashes are validated and turned into the typed result;
