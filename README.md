@@ -56,8 +56,11 @@ r.squished?   # => true (came from the LLM)
 
 ## Features
 
-- **Per-input routing**: a `squish_when` predicate decides Ruby vs. LLM per call, and unimplemented methods
-  (`NotImplementedError`) go to the LLM automatically.
+- **Per-input routing**: a `squish_when` predicate decides Ruby vs. LLM per call, unimplemented methods
+  (`NotImplementedError`) go to the LLM automatically, and `squish!` hands a call to the LLM from inside Ruby,
+  e.g. when a parser raises. See [Routing](docs/routing.md).
+- **Your code as context**: `append_instructions "...", self` adds sections to the prompt, including the class's
+  own Ruby source, so the LLM handles the inputs your code can't with the logic it already has.
 - **One contract, two paths**: Ruby returns and LLM output are validated against the same strict schema and
   returned as the same typed `Data` objects.
 - **Any RubyLLM provider and model**: OpenAI, Anthropic Claude, Google Gemini, AWS Bedrock, OpenRouter, and more.
@@ -65,13 +68,14 @@ r.squished?   # => true (came from the LLM)
   reasoning effort, top_p, …).
 - **Defined failure behavior**: invalid output is re-asked with the validation errors, provider errors become
   `Squishling::LLMError`, and `squish_fallback` lets you decide what to return when the LLM can't deliver.
-- **Opt-in context**: only method arguments and the instance state you name with `squish_context` are sent to the
-  provider.
+- **Opt-in context**: only method arguments, the instance state you name with `squish_context`, the `context:` you
+  pass to `squish!`, and the source you choose to append are sent to the provider.
 
 ## Documentation
 
 - [Configuration](docs/configuration.md): options, model and provider resolution, generation params, inheritance
-- [Routing](docs/routing.md): Ruby vs. LLM, hardening a path, entry points, what the LLM sees
+- [Routing](docs/routing.md): when a call goes to the LLM, `squish!`, `append_instructions`, hardening a path,
+  what the LLM sees
 - [Output schemas](docs/schemas.md): schema forms, strict mode, typed results, optional vs. empty
 - [Failure handling](docs/failures.md): retries, error classes, fallbacks
 - [Live examples](examples/README.md): end-to-end tests against Anthropic Claude Haiku and OpenAI GPT-6 Luna

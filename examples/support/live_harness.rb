@@ -149,6 +149,31 @@ module LiveHarness
     end
   end
 
+  # Ruby parses "Name <email>"; anything else is handed to the LLM from the rescue, with the parse error as
+  # context and this class's own source appended to the instructions.
+  class ContactParser
+    include Squishling
+
+    instructions "Extract the contact's name and email address."
+    append_instructions "The Ruby parser for well-formed contacts, for context on the expected output:", self
+    output_schema do
+      string :name
+      string :email
+    end
+
+    def call(text:)
+      match = text.match(/\A(?<name>[^<]+?)\s*<(?<email>[^>]+)>\z/)
+      raise ArgumentError, "expected \"Name <email>\", got #{text.inspect}" unless match
+
+      result(name: match[:name], email: match[:email])
+    rescue ArgumentError => e
+      squish!(
+        append_instructions: "The Ruby parser failed on this input; the error is in the context.",
+        context: { parse_error: e }
+      )
+    end
+  end
+
   # Fallback that must never run for a setup mistake.
   class Echo
     include Squishling
@@ -190,6 +215,18 @@ module LiveHarness
       check(result.priority == "high", "priority was #{result.priority.inspect}")
       check(result.team == "platform", "team was #{result.team.inspect}")
       "#{result.priority} / #{result.team}"
+    }),
+    Scenario.new("squish! keeps well-formed input in Ruby", lambda {
+      result = ContactParser.call(text: "Ada Lovelace <ada@example.com>")
+      check(!result.squished?, "expected the deterministic path")
+      check(result.email == "ada@example.com", "email was #{result.email.inspect}")
+    }),
+    Scenario.new("squish! hands a failed Ruby parse to the LLM with the class source appended", lambda {
+      result = ContactParser.call(text: "You can reach Ada Lovelace at ada (at) example (dot) com.")
+      check(result.squished?, "expected an LLM result")
+      check(result.email == "ada@example.com", "email was #{result.email.inspect}")
+      check(result.name.include?("Lovelace"), "name was #{result.name.inspect}")
+      "#{result.name} <#{result.email}>"
     }),
     Scenario.new("raw JSON Schema hash output", lambda {
       result = SentimentClassifier.call(review: "Absolutely love it — best purchase I've made all year!")

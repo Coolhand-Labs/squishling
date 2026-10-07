@@ -37,10 +37,11 @@ Transport-level retries (rate limits, 5xx, timeouts) are configured on RubyLLM i
 
 The model for a squished call comes from the first level that declares one:
 
-1. per method: `squish :name, model: "..."`
-2. per class: `squishling model: "..."` (inherited by subclasses)
-3. universal: `Squishling.config.default_model`
-4. RubyLLM's `default_model`
+1. per call: `squish!(model: "...")` (see [Per-call overrides](#per-call-overrides))
+2. per method: `squish :name, model: "..."`
+3. per class: `squishling model: "..."` (inherited by subclasses)
+4. universal: `Squishling.config.default_model`
+5. RubyLLM's `default_model`
 
 ```ruby
 class InvoiceParser
@@ -116,3 +117,12 @@ end
 Subclasses inherit the model, provider, generation params (merged key by key), instructions, output schema,
 `squish_when` predicate, `squish_context` names, `squish_fallback`, and every `squish` declaration. Overrides in a subclass, including
 overridden methods, are routed the same way.
+
+`append_instructions` sections are added to, not replaced: a subclass's sections follow its parent's, and
+`append_instructions false` drops the inherited ones. See [Appending to the instructions](routing.md#appending-to-the-instructions).
+
+## Per-call overrides
+
+Inside a squished method, `squish!` sends the call to the LLM with its own `instructions:`,
+`append_instructions:`, `context:`, `model:`/`provider:`, and `params:`. Each layers over the method and class
+settings the same way they layer over each other. See [Escalating from Ruby](routing.md#escalating-from-ruby-with-squish).

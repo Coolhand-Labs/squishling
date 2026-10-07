@@ -2,29 +2,64 @@
 
 module Squishling
   # A squished method's settings, with per-method overrides falling back to class-level defaults.
+  # `for_call` layers one call's `squish!` overrides on top.
   class Definition
-    attr_reader :klass, :name
+    # Matches the keys a squish! context: Hash may use.
+    NAME_KEY = ->(key) { key.is_a?(String) || key.is_a?(Symbol) }
 
-    def initialize(klass:, name:, instructions: nil, output_schema: nil, model: nil, provider: nil, params: nil,
-      predicate: nil, fallback: nil)
+    attr_reader :klass, :name, :call_context
+
+    def initialize(klass:, name:, instructions: nil, append_instructions: nil, output_schema: nil, model: nil,
+      provider: nil, params: nil, predicate: nil, fallback: nil, call_context: {})
       @klass = klass
       @name = name
       @instructions = instructions
+      @append_instructions = append_instructions
       @output_schema = output_schema
       @model = model
       @provider = provider
       @params = params
       @predicate = predicate
       @fallback = fallback
+      @call_context = call_context
+    end
+
+    # This definition with one call's overrides on top. The output schema and predicate can't be overridden:
+    # the call must still return the method's result type.
+    def for_call(instructions: nil, append_instructions: nil, context: nil, model: nil, provider: nil, params: nil)
+      raise ConfigurationError, "#{label}: squish! provider: needs a model:" if provider && !model
+      unless context.nil? || (context.is_a?(Hash) && context.each_key.all?(NAME_KEY))
+        raise ConfigurationError, "#{label}: squish! context: must be a Hash with String or Symbol keys"
+      end
+
+      appended = Appendices.normalize(append_instructions, "#{label} squish!") unless append_instructions.nil?
+      call_params = params && Params.normalize(params, "#{label} squish! params")
+      self.class.new(
+        klass:, name:, output_schema: @output_schema, predicate: @predicate, fallback: @fallback,
+        instructions: instructions || @instructions,
+        append_instructions: [*@append_instructions, *appended],
+        model: model || @model, provider: model ? provider : @provider,
+        # merge, not Params.resolve: a nil at the method level must still unset the class's key.
+        params: call_params ? (@params || {}).merge(call_params) : @params,
+        call_context: @call_context.merge((context || {}).transform_keys(&:to_sym))
+      )
     end
 
     def label
       "#{klass}##{name}"
     end
 
+    # The system prompt: the instructions, then each append_instructions section.
     def instructions(receiver)
       value = @instructions || klass.instructions
-      value.is_a?(Proc) ? receiver.instance_exec(&value) : value
+      value = receiver.instance_exec(&value) if value.is_a?(Proc)
+      return value if value.nil? || value.empty?
+
+      [value, *Appendices.render(append_instructions, receiver, label)].join("\n\n")
+    end
+
+    def append_instructions
+      Appendices.resolve(klass.squishling_append_instructions + (@append_instructions || []))
     end
 
     def schema
@@ -113,11 +148,9 @@ module Squishling
 
     private
 
-    # The first implementation beneath the prepended wrappers (instance_method resolves to the wrapper).
+    # The implementation's parameters, beneath the prepended wrappers.
     def parameters
-      method = klass.instance_method(name)
-      method = method.super_method while method&.owner.is_a?(Wrapper)
-      method ? method.parameters : []
+      Wrapper.implementation(klass.instance_method(name))&.parameters || []
     end
   end
 end
