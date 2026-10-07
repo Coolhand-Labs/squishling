@@ -1,0 +1,97 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test (Ruby ${{ matrix.ruby-version }})
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      matrix:
+        ruby-version: ['3.3', '3.4', '4.0']
+      fail-fast: false
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Ruby ${{ matrix.ruby-version }}
+        uses: ruby/setup-ruby@95ef2b042f9d7a56d8268cba8559e2842e2ad01b # v1.321.0
+        with:
+          ruby-version: ${{ matrix.ruby-version }}
+          bundler-cache: true
+
+      # Offline: RubyLLM is stubbed, so no provider API keys are needed. Live provider
+      # tests live in examples/ and run during /prep-release.
+      - name: Run RSpec tests
+        run: bundle exec rspec --format documentation
+
+      - name: Ensure minimum coverage
+        if: matrix.ruby-version == '3.4'
+        run: |
+          coverage=$(jq '.result.line' coverage/.last_run.json)
+          if (( $(echo "$coverage < 90" | bc -l) )); then
+            echo "Coverage $coverage% is below 90% threshold"
+            exit 1
+          fi
+          echo "Coverage: $coverage%"
+
+      - name: Upload coverage report
+        if: matrix.ruby-version == '3.4'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage-report
+          path: coverage/
+          retention-days: 7
+
+  lint:
+    name: Lint (RuboCop)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Ruby
+        uses: ruby/setup-ruby@95ef2b042f9d7a56d8268cba8559e2842e2ad01b # v1.321.0
+        with:
+          ruby-version: '3.4'
+          bundler-cache: true
+
+      - name: Run RuboCop
+        run: bundle exec rubocop --parallel
+
+      - name: Audit dependencies for known vulnerabilities
+        run: bundle exec bundler-audit check --update
+
+  build:
+    name: Build Gem
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Ruby
+        uses: ruby/setup-ruby@95ef2b042f9d7a56d8268cba8559e2842e2ad01b # v1.321.0
+        with:
+          ruby-version: '3.4'
+          bundler-cache: true
+
+      - name: Build gem
+        run: gem build squishling.gemspec
+
+      - name: Verify gem was created
+        run: ls -la *.gem
