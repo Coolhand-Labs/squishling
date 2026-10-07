@@ -120,9 +120,11 @@ RSpec.describe Squishling::Appendices do
   it "rejects unsupported values returned by a proc" do
     klass = base_class { append_instructions -> { 42 } }
     hash = base_class { append_instructions -> { { a: 1 } } }
+    object = base_class { append_instructions -> { Object.new } }
 
     expect { system_prompt(klass) }.to raise_error(Squishling::ConfigurationError, /proc.*or methods \(got 42\)/)
-    expect { system_prompt(hash) }.to raise_error(Squishling::ConfigurationError, /got \{a: 1\}/)
+    expect { system_prompt(hash) }.to raise_error(Squishling::ConfigurationError, /\(got an instance of Hash\)/)
+    expect { system_prompt(object) }.to raise_error(Squishling::ConfigurationError, /\(got an instance of Object\)/)
   end
 
   it "raises ConfigurationError when the source isn't available" do

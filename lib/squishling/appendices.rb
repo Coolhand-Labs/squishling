@@ -44,7 +44,16 @@ module Squishling
       return if allowed.any? { |type| item.is_a?(type) }
 
       raise ConfigurationError, "#{label}: append_instructions items must be Strings, classes or modules, " \
-                                "#{procs ? 'methods, or procs' : 'or methods'} (got #{item.inspect})"
+                                "#{procs ? 'methods, or procs' : 'or methods'} (got #{describe(item)})"
+    end
+
+    # Simple values as written; anything else by class only, since a proc returning the wrong object (a user,
+    # a config) shouldn't copy its attributes into an error message.
+    def describe(item)
+      case item
+      when Symbol, Numeric, true, nil then item.inspect
+      else "an instance of #{item.class}"
+      end
     end
   end
 end

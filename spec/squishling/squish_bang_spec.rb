@@ -53,7 +53,8 @@ RSpec.describe Squishling, "#squish!" do
   it "sends exceptions nested in context as their class and message" do
     chats = stub_llm({ "name" => "Ada" })
 
-    parser(context: { attempts: [KeyError.new("a"), { last: IndexError.new("b") }] }).call(record: "Ada")
+    anonymous = Class.new(IndexError)
+    parser(context: { attempts: [KeyError.new("a"), { last: anonymous.new("b") }] }).call(record: "Ada")
 
     expect(JSON.parse(chats.first.messages.first)["context"]["attempts"])
       .to eq([{ "class" => "KeyError", "message" => "a" }, { "last" => { "class" => "IndexError", "message" => "b" } }])
