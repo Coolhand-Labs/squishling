@@ -8,12 +8,16 @@ Gem::Specification.new do |spec|
   spec.authors = ["Michael Carroll"]
   spec.email = ["mc@coolhandlabs.com"]
 
-  spec.summary = "Elastic Ruby classes that run as deterministic code or as a structured LLM call via RubyLLM."
-  spec.description = "Declare any Ruby class a squishling: give it instructions and a strict output schema, and " \
-                     "its methods can bypass their Ruby implementation to run their inputs through an LLM " \
-                     "(OpenAI, Anthropic Claude, Google Gemini, and any provider RubyLLM supports), returning " \
-                     "schema-validated, typed results. Route per input with a predicate, fall back to the LLM " \
-                     "for unimplemented methods, and harden high-volume paths into code as the economics justify it."
+  spec.summary = "Elastic Ruby classes with LLM batteries included: zero-code integrations, graceful error rescue, " \
+                 "and code only where it's worth maintaining."
+  spec.description = "Squishling makes Ruby classes elastic. Add a squishling to a class and it can send inputs " \
+                     "straight to an LLM (OpenAI, Anthropic Claude, Google Gemini, or any provider RubyLLM " \
+                     "supports) and return strict-schema-validated, typed results: the same type your Ruby code " \
+                     "returns. Use it to gracefully maintain fickle integrations, build interfaces for unknown " \
+                     "data formats, and rescue production errors by handing the failing call to the LLM with the " \
+                     "source class as context. Write Ruby only for the paths where token costs justify " \
+                     "maintaining it. Per-input routing, validated retries, and fallbacks for your LLM calls " \
+                     "included."
   spec.homepage = "https://github.com/Coolhand-Labs/squishling"
   spec.license = "Apache-2.0"
   spec.required_ruby_version = ">= 3.3"
