@@ -454,6 +454,42 @@ RSpec.describe Squishling do
       expect(child.call(mode: :ruby).value).to eq("child+parent")
       expect(chats).to be_empty
     end
+
+    it "routes once through a chain of super calls" do
+      child = Class.new(parent) { def call(mode:) = { value: "child+#{super.value}" } }
+      grandchild = Class.new(child) { def call(mode:) = { value: "grandchild+#{super.value}" } }
+      chats = stub_llm({ "value" => "llm" })
+
+      expect(grandchild.call(mode: :ruby).value).to eq("grandchild+child+parent")
+      expect(grandchild.call(mode: :llm).value).to eq("llm")
+      expect(chats.size).to eq(1)
+    end
+
+    it "routes a subclass that doesn't override the method" do
+      chats = stub_llm({ "value" => "llm" })
+
+      expect(Class.new(parent).call(mode: :ruby).value).to eq("parent")
+      expect(Class.new(parent).call(mode: :llm).value).to eq("llm")
+      expect(chats.size).to eq(1)
+    end
+
+    it "routes each recursive call on its own, including from a parent reached through super" do
+      recursive = Class.new(parent) do
+        squish_when { |depth: 0, **| depth == 2 }
+
+        def call(mode:, depth: 0)
+          return { value: "#{mode} leaf" } if depth == 2
+
+          { value: "#{depth}>#{call(mode:, depth: depth + 1).value}" }
+        end
+      end
+      child = Class.new(recursive) { def call(**) = super }
+      chats = stub_llm({ "value" => "llm" })
+
+      expect(child.call(mode: :ruby).value).to eq("0>1>llm")
+      expect(chats.size).to eq(1)
+      expect(JSON.parse(chats.first.messages.first)["arguments"]).to eq("mode" => "ruby", "depth" => 2)
+    end
   end
 
   describe "configuration errors" do

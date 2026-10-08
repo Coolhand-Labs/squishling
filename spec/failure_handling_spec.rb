@@ -166,6 +166,16 @@ RSpec.describe "Squishling failure handling" do
       expect { klass.call(text: "hi") }.to raise_error(Squishling::InvalidOutputError)
     end
 
+    it "runs the Ruby implementation when the fallback calls the method itself" do
+      klass.squish_when { |text:| text.length > 5 }
+      klass.squish_fallback { |_error, **inputs| call(**inputs) }
+      klass.define_method(:call) { |text:| { label: "ruby #{text}" } }
+      chats = stub_llm(nil, nil)
+
+      expect(klass.call(text: "too long").label).to eq("ruby too long")
+      expect(chats.size).to eq(1)
+    end
+
     it "can build the result with result(...)" do
       klass.squish_fallback { |_error, text:| result(label: text.upcase) }
       stub_llm(nil, nil)

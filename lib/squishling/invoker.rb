@@ -95,11 +95,29 @@ module Squishling
       ". Check params #{params.inspect}; reasoning models often reject sampling params such as temperature and top_p"
     end
 
+    # Only the arguments, the declared squish_context names, and a squish! call's context leave the process.
     def payload
-      body = { arguments: Schema.jsonify(@inputs) }
-      names = @definition.context_names
-      body[:context] = Schema.jsonify(names.to_h { |name| [name, context_value(name)] }) if names.any?
+      body = { arguments: Schema.jsonify(describe(@inputs)) }
+      context = @definition.context_names.to_h { |name| [name, context_value(name)] }.merge(@definition.call_context)
+      body[:context] = Schema.jsonify(describe(context)) if context.any?
       body
+    end
+
+    # Exceptions are sent as their class and message. Plain JSON would send only the message, and with
+    # json/add/exception loaded it would also send the backtrace, which exposes file paths.
+    def describe(value)
+      case value
+      when Exception then { class: exception_class_name(value.class), message: value.message }
+      when Hash then value.transform_values { |item| describe(item) }
+      when Array then value.map { |item| describe(item) }
+      else value
+      end
+    end
+
+    # An anonymous error class (Class.new(StandardError)) is named after its closest named ancestor.
+    def exception_class_name(klass)
+      klass = klass.superclass until klass.name
+      klass.name
     end
 
     def context_value(name)
