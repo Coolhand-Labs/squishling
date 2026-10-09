@@ -301,10 +301,61 @@ RSpec.describe "Squishling harnesses" do
       expect(klass.call(text: "x").priority).to eq("high")
       expect(chats.size).to eq(2)
     end
+
+    it "calls squawk for every sample attempt, with the rejection as the error" do
+      calls = []
+      klass.squishling(squawk: ->(output:, metadata:, error:) { calls << [output, metadata, error] })
+      invalid = { "priority" => 1, "team" => "api" }
+      stub_llm_chats([invalid, high], [high])
+
+      klass.call(text: "x")
+
+      expect(calls.map { |output, _, error| [output, error&.class] })
+        .to contain_exactly([invalid, Squishling::InvalidOutputError], [high, nil], [high, nil])
+      expect(calls.map { |_, metadata, _| metadata[:attempts] }).to all(eq(2))
+      expect(calls.map { |_, metadata, _| metadata[:final] }).to contain_exactly(false, false, true)
+    end
+
+    it "calls squawk with the LLMError when a sample's request fails, then with the retry's output" do
+      calls = []
+      klass.squishling(squawk: ->(output:, error:, **) { calls << [output, error&.class] })
+      stub_llm_chats([RubyLLM::ServerError.new("boom")], [high], [high])
+
+      klass.call(text: "x")
+
+      expect(calls).to contain_exactly([nil, Squishling::LLMError], [high, nil], [high, nil])
+    end
+
+    it "starts a sample's fresh chat from the input alone when the step sets forward_rejected: false" do
+      invalid = { "priority" => 1, "team" => "api" }
+      responses = [[invalid, RubyLLM::ServerError.new("boom")], [high], [high]]
+
+      [true, false].each do |forward|
+        klass.squishling(escalation: [{ model: "claude-haiku-4-5", attempts: 3, forward_rejected: forward }])
+        chats = stub_llm_chats(*responses)
+
+        klass.call(text: "x")
+
+        input = JSON.generate(arguments: { text: "x" })
+        expect(chats.last.messages.first).to forward ? include("A previous attempt") : eq(input)
+      end
+    end
   end
 
   describe "judged_squishsum" do
     before { klass.squishling(harness: :judged_squishsum) }
+
+    it "calls squawk for the judge's attempt too, with the judge's own input" do
+      calls = []
+      klass.squishling(squawk: ->(metadata:, **) { calls << metadata })
+      stub_llm_chats([high], [low], [{ "verdict" => "a", "reason" => "more urgent" }])
+
+      klass.call(text: "x")
+
+      expect(calls.size).to eq(3)
+      expect(calls.last).to include(model: "claude-sonnet-5-5", final: true)
+      expect(JSON.parse(calls.last[:input])).to include("candidates")
+    end
 
     it "doesn't call the judge when the samples agree" do
       chats = stub_llm_chats([high], [high])

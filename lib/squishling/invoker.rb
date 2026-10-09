@@ -23,6 +23,7 @@ module Squishling
       @receiver = receiver
       @inputs = inputs
       @client = LLMClient.new(definition.label)
+      @output_check = OutputCheck.new(definition, receiver, inputs)
     end
 
     # Runs the harness (Definition#harness) over the escalation (Definition#escalation_path).
@@ -70,7 +71,7 @@ module Squishling
         begin
           response = @client.ask(chat, message, step)
         rescue LLMError => e
-          squawk(prompt, path, step, attempt, nil, e)
+          squawk(prompt, path, attempt, nil, e)
           raise if last
 
           # The failed request may be half-recorded in this chat, so the next attempt starts a fresh one.
@@ -79,15 +80,15 @@ module Squishling
           next
         end
 
-        result, errors = check(response.content, prompt)
+        result, errors = @output_check.call(response.content, prompt)
         if errors.empty?
-          squawk(prompt, path, step, attempt, response, nil)
+          squawk(prompt, path, attempt, response, nil)
           return result
         end
 
         error = InvalidOutputError.new(errors:, raw: response.content, attempts: attempt, models: models.dup,
           source: source(prompt.role))
-        squawk(prompt, path, step, attempt, response, error)
+        squawk(prompt, path, attempt, response, error)
         raise error if last
 
         rejected = [response.content, errors]
@@ -129,26 +130,25 @@ module Squishling
     end
 
     def record(sample, (response, error), prompt, steps, attempt)
-      step = steps[attempt - 1]
       last = attempt == steps.size
       role = "sample #{sample.name}"
       if error
-        squawk(prompt, steps, step, attempt, nil, error)
+        squawk(prompt, steps, attempt, nil, error)
         raise error if last
 
         sample.chat = nil
         return log_failure(role, attempt, steps, error.message)
       end
 
-      result, errors = check(response.content, prompt)
+      result, errors = @output_check.call(response.content, prompt)
       if errors.empty?
-        squawk(prompt, steps, step, attempt, response, nil)
+        squawk(prompt, steps, attempt, response, nil)
         return sample.result = result
       end
 
       models = steps.first(attempt).map(&:model)
       invalid = InvalidOutputError.new(errors:, raw: response.content, attempts: attempt, models:)
-      squawk(prompt, steps, step, attempt, response, invalid)
+      squawk(prompt, steps, attempt, response, invalid)
       raise invalid if last
 
       sample.rejected = [response.content, errors]
@@ -215,77 +215,6 @@ module Squishling
       @receiver.instance_variable_get(:"@#{name}")
     end
 
-    # RubyLLM parses structured output itself and leaves the raw string when that fails, so
-    # content is a Hash on success, or a String/nil when the model refused, was cut off, or
-    # ignored the schema.
-    def parse(content)
-      return [nil, ["response was empty"]] if content.nil? || (content.is_a?(String) && content.strip.empty?)
-      return [content, []] unless content.is_a?(String)
-
-      [JSON.parse(strip_code_fence(content)), []]
-    rescue JSON::ParserError => e
-      [nil, ["response was not valid JSON#{parse_position(e)}"]]
-    end
-
-    # The parser's message quotes a snippet of the response, which must not reach error messages or logs
-    # (the raw output lives only in InvalidOutputError#raw), so only the position is kept.
-    def parse_position(error)
-      position = error.message.strip.match(/ at line (\d+) column (\d+)\z/)
-      position ? " (at line #{position[1]} column #{position[2]})" : ""
-    end
-
-    # Models without native structured output sometimes wrap JSON in a markdown code fence.
-    def strip_code_fence(text)
-      text[/\A\s*```(?:json)?\s*\n(.*?)\n\s*```\s*\z/m, 1] || text
-    end
-
-    # Parses and validates a response: [typed result, []] when it passes, [nil or result, errors] otherwise.
-    def check(content, prompt)
-      data, errors = parse(content)
-      errors = prompt.schema.validate(data) if errors.empty?
-      return [nil, errors] if errors.any?
-
-      result = prompt.schema.build(data, squished: true)
-      [result, prompt.role == :judge ? [] : validator_errors(result)]
-    end
-
-    # Runs the squish_validate check, if any. Exceptions it raises are the user's own and propagate as-is.
-    def validator_errors(result)
-      validator = @definition.validator
-      return [] unless validator
-
-      value = @receiver.instance_exec(result, **@inputs, &validator)
-      case value
-      when nil, true then []
-      when false then ["the output was rejected by squish_validate"]
-      when String, Array then Array(value).flatten.compact.map(&:to_s).reject { |message| message.strip.empty? }
-      else
-        return contract_errors(value) if value.respond_to?(:success?) && value.respond_to?(:errors)
-
-        raise ConfigurationError, "#{@definition.label}: squish_validate must return nil, true, false, a String, " \
-                                  "an Array of Strings, or a validation result, got #{value.class}"
-      end
-    end
-
-    # A dry-validation style result: errors.to_h is { key => ["message", ...] }, nested for nested keys.
-    def contract_errors(value)
-      return [] if value.success?
-
-      errors = value.errors
-      errors = errors.to_h if !errors.is_a?(Array) && errors.respond_to?(:to_h)
-      messages = errors.is_a?(Hash) ? flatten_messages(errors) : Array(errors).map(&:to_s)
-      messages.empty? ? ["the output was rejected by squish_validate"] : messages
-    end
-
-    def flatten_messages(errors, prefix = nil)
-      errors.flat_map do |key, value|
-        path = [prefix, key].compact.join(".")
-        next flatten_messages(value, path) if value.is_a?(Hash)
-
-        Array(value).map { |message| path.empty? ? message.to_s : "#{path} #{message}" }
-      end
-    end
-
     def retry_message(errors)
       "Your previous response was rejected:\n- #{errors.join("\n- ")}\nRespond again with corrected JSON only."
     end
@@ -305,10 +234,11 @@ module Squishling
 
     # Runs the observability hook, if any, with this attempt's raw output (nil when the call itself failed),
     # the error that ended it (nil when it was accepted), and what was asked.
-    def squawk(prompt, path, step, attempt, response, error)
+    def squawk(prompt, path, attempt, response, error)
       hook = @definition.squawk
       return unless hook
 
+      step = path[attempt - 1]
       metadata = {
         label: @definition.label, attempt:, attempts: path.size, final: attempt == path.size,
         model: response&.model || step.model, provider: step.provider, params: step.params, input: prompt.input,
