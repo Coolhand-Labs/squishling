@@ -27,8 +27,8 @@ module Squishling
       raise ConfigurationError, "#{@definition.label} has no instructions" if @instructions.nil? || @instructions.empty?
       raise ConfigurationError, "#{@definition.label} has no output_schema" unless @schema
 
-      path = @definition.escalation_path
-      input = JSON.generate(payload)
+      path = @path = @definition.escalation_path
+      input = @input = JSON.generate(payload)
       chat = nil
       rejected = nil # [raw content, errors] of the last invalid output
       models = []
@@ -46,6 +46,7 @@ module Squishling
         begin
           response = ask(chat, message, step)
         rescue LLMError => e
+          squawk(step, attempt, nil, e)
           raise if last
 
           # The failed request may be half-recorded in this chat, so the next attempt starts a fresh one.
@@ -55,9 +56,14 @@ module Squishling
         end
 
         result, errors = check(response.content)
-        return result if errors.empty?
+        if errors.empty?
+          squawk(step, attempt, response, nil)
+          return result
+        end
 
-        raise InvalidOutputError.new(errors:, raw: response.content, attempts: attempt, models:) if last
+        error = InvalidOutputError.new(errors:, raw: response.content, attempts: attempt, models: models.dup)
+        squawk(step, attempt, response, error)
+        raise error if last
 
         rejected = [response.content, errors]
         log_failure(attempt, path, errors.join("; "))
@@ -167,7 +173,14 @@ module Squishling
 
       [JSON.parse(strip_code_fence(content)), []]
     rescue JSON::ParserError => e
-      [nil, ["response was not valid JSON (#{e.message.lines.first&.strip})"]]
+      [nil, ["response was not valid JSON#{parse_position(e)}"]]
+    end
+
+    # The parser's message quotes a snippet of the response, which must not reach error messages or logs
+    # (the raw output lives only in InvalidOutputError#raw), so only the position is kept.
+    def parse_position(error)
+      position = error.message.strip.match(/ at line (\d+) column (\d+)\z/)
+      position ? " (at line #{position[1]} column #{position[2]})" : ""
     end
 
     # Models without native structured output sometimes wrap JSON in a markdown code fence.
@@ -237,6 +250,20 @@ module Squishling
       end
       "#{input}\n\nA previous attempt at this request returned:\n#{previous}\n" \
         "It was rejected:\n- #{errors.join("\n- ")}\nRespond with corrected JSON only."
+    end
+
+    # Runs the observability hook, if any, with this attempt's raw output (nil when the call itself failed),
+    # the error that ended it (nil when it was accepted), and what was asked.
+    def squawk(step, attempt, response, error)
+      hook = @definition.squawk
+      return unless hook
+
+      metadata = {
+        label: @definition.label, attempt:, attempts: @path.size, final: attempt == @path.size,
+        model: response&.model || step.model, provider: step.provider, params: step.params, input: @input,
+        usage: response&.tokens&.to_h
+      }
+      Squawk.call(hook, output: response&.content, metadata:, error:)
     end
 
     def log_failure(attempt, path, reason)

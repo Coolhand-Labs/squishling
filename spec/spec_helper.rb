@@ -5,7 +5,7 @@ require "squishling"
 
 # Stand-in for RubyLLM::Chat: records configuration and replays canned responses.
 class FakeChat
-  Response = Struct.new(:content)
+  Response = Struct.new(:content, :model, :tokens)
 
   attr_reader :model, :options, :instructions, :schema, :messages
 
@@ -58,7 +58,7 @@ class FakeChat
     response = @responses.shift
     raise response if response.is_a?(Exception) || (response.is_a?(Class) && response < Exception)
 
-    Response.new(response)
+    response.is_a?(Response) ? response : Response.new(response)
   end
 end
 

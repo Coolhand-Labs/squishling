@@ -15,8 +15,11 @@ module Squishling
     #   squishling params: { temperature: 0.1, top_p: 0.9 }
     # append_instructions: adds sections after the instructions (see #append_instructions):
     #   squishling append_instructions: ["The Ruby that handles well-formed input:", self]
+    # squawk: is called after every LLM attempt with the raw output (see Configuration#squawk); false silences
+    # an inherited one:
+    #   squishling squawk: ->(output:, metadata:, error:) { Tracer.record(output, metadata, error) }
     def squishling(model: nil, escalation: nil, provider: nil, params: nil, instructions: nil,
-      append_instructions: nil, output_schema: nil)
+      append_instructions: nil, output_schema: nil, squawk: nil)
       path = ModelPath.declare(model, escalation, to_s)
       @squishling_model_path = path if path
       @squishling_provider = provider if provider
@@ -24,7 +27,12 @@ module Squishling
       self.instructions(instructions) if instructions
       self.append_instructions(append_instructions) unless append_instructions.nil?
       self.output_schema(output_schema) if output_schema
+      @squishling_squawk = Squawk.validate(squawk, to_s) unless squawk.nil?
       self
+    end
+
+    def squishling_squawk
+      squishling_lookup(:@squishling_squawk)
     end
 
     # The class's (or nearest ancestor's) model or escalation, as normalized steps.
@@ -120,19 +128,21 @@ module Squishling
     # Make methods elastic. Each may override the class-level settings:
     #   squish :triage, instructions: "...", escalation: %w[claude-haiku-4-5 claude-sonnet-5-5], when: ->(**) { true },
     #                   fallback: ->(error, **) { { priority: "medium" } }, append_instructions: [...],
-    #                   validate: ->(result, **) { "team is required" if result.team.empty? } do
+    #                   validate: ->(result, **) { "team is required" if result.team.empty? },
+    #                   squawk: ->(output:, error:, **) { Tracer.record(output, error) } do
     #     string :priority
     #   end
     def squish(*names, instructions: nil, append_instructions: nil, output_schema: nil, model: nil, escalation: nil,
-      provider: nil, params: nil, when: nil, fallback: nil, validate: nil, &schema_block)
+      provider: nil, params: nil, when: nil, fallback: nil, validate: nil, squawk: nil, &schema_block)
       schema = schema_block ? Schematist::Schema.create(&schema_block) : output_schema
       model = ModelPath.declare(model, escalation, "#{self} squish")
       params &&= Params.normalize(params, "#{self} squish params")
       unless append_instructions.nil?
         append_instructions = Appendices.normalize(append_instructions, "#{self} squish append_instructions")
       end
+      squawk = Squawk.validate(squawk, "#{self} squish")
       options = { instructions:, append_instructions:, output_schema: schema, model:, provider:, params:,
-                  predicate: binding.local_variable_get(:when), fallback:, validator: validate }.compact
+                  predicate: binding.local_variable_get(:when), fallback:, validator: validate, squawk: }.compact
 
       names.map(&:to_sym).each do |name|
         (@squishling_methods ||= {})[name] = options

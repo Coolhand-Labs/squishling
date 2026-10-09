@@ -33,6 +33,52 @@ RSpec.describe "Squishling failure handling" do
       expect(chats.first.messages.last).to include("not valid JSON")
     end
 
+    describe "model output in messages and logs" do
+      let(:log) { StringIO.new }
+
+      before { Squishling.configure { |c| c.logger = Logger.new(log) } }
+
+      it "keeps unparseable output out of the error, the log, and the retry message" do
+        chats = stub_llm('{"label": SECRET_TOKEN oops}', '{"label": SECRET_TOKEN oops}')
+
+        expect { klass.call(text: "x") }.to raise_error(Squishling::InvalidOutputError, /not valid JSON/) do |e|
+          expect(e.message).not_to include("SECRET_TOKEN")
+          expect(e.errors.join).not_to include("SECRET_TOKEN")
+          expect(e.raw).to include("SECRET_TOKEN")
+        end
+        expect(log.string).to include("not valid JSON")
+        expect(log.string).not_to include("SECRET_TOKEN")
+        expect(chats.first.messages.last).not_to include("SECRET_TOKEN")
+      end
+
+      it "reports where parsing failed" do
+        stub_llm('{"label": SECRET_TOKEN oops}', '{"label": SECRET_TOKEN oops}')
+
+        expect { klass.call(text: "x") }.to raise_error(Squishling::InvalidOutputError, /at line 1 column \d+/)
+      end
+
+      it "reports a failure without a position" do
+        allow(JSON).to receive(:parse).and_call_original
+        allow(JSON).to receive(:parse).with("SECRET_TOKEN")
+          .and_raise(JSON::ParserError, "unexpected token at 'SECRET_TOKEN'")
+        stub_llm("SECRET_TOKEN", "SECRET_TOKEN")
+
+        expect { klass.call(text: "x") }
+          .to raise_error(Squishling::InvalidOutputError, "LLM output was invalid after 2 attempts: " \
+                                                          "response was not valid JSON")
+      end
+
+      it "doesn't echo rejected values in schema errors" do
+        klass.output_schema { string :label, enum: %w[a b] }
+        stub_llm({ "label" => "SECRET_TOKEN" }, { "label" => "SECRET_TOKEN" })
+
+        expect { klass.call(text: "x") }.to raise_error(Squishling::InvalidOutputError, /not one of/) do |e|
+          expect(e.message).not_to include("SECRET_TOKEN")
+        end
+        expect(log.string).not_to include("SECRET_TOKEN")
+      end
+    end
+
     it "parses JSON wrapped in a markdown code fence" do
       stub_llm("```json\n{\"label\": \"fenced\"}\n```")
 

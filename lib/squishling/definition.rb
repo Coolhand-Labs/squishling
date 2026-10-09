@@ -10,7 +10,7 @@ module Squishling
     attr_reader :klass, :name, :call_context
 
     def initialize(klass:, name:, instructions: nil, append_instructions: nil, output_schema: nil, model: nil,
-      provider: nil, params: nil, predicate: nil, fallback: nil, validator: nil, call_context: {})
+      provider: nil, params: nil, predicate: nil, fallback: nil, validator: nil, squawk: nil, call_context: {})
       @klass = klass
       @name = name
       @instructions = instructions
@@ -22,6 +22,7 @@ module Squishling
       @predicate = predicate
       @fallback = fallback
       @validator = validator
+      @squawk = squawk
       @call_context = call_context
     end
 
@@ -39,7 +40,7 @@ module Squishling
       call_params = params && Params.normalize(params, "#{label} squish! params")
       self.class.new(
         klass:, name:, output_schema: @output_schema, predicate: @predicate, fallback: @fallback,
-        validator: @validator,
+        validator: @validator, squawk: @squawk,
         instructions: instructions || @instructions,
         append_instructions: [*@append_instructions, *appended],
         model: call_path || @model, provider: call_path ? provider : @provider,
@@ -90,6 +91,12 @@ module Squishling
     # Extra output checks run on schema-valid LLM results (see ClassMethods#squish_validate).
     def validator
       @validator || klass.squishling_validator
+    end
+
+    # The observability hook: the method's, else the class's, else the configured one. `false` at a level
+    # silences the levels above it.
+    def squawk
+      [@squawk, klass.squishling_squawk, Squishling.config.squawk].find { |hook| !hook.nil? } || nil
     end
 
     def context_names

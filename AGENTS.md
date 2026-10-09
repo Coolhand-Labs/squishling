@@ -50,6 +50,9 @@ Flag any change that breaks one of these; they are behavior contracts, not style
   attempt in the escalation),
   `LLMError` (provider/transport failure after RubyLLM's HTTP retries, original as `cause`). Never wrap or
   swallow exceptions raised by the user's own Ruby code.
+- **Model output leaves the process only through `InvalidOutputError#raw` and the opt-in `squawk` hook.** Error
+  messages and `config.logger` lines carry parse positions and schema paths, never the response itself (the
+  documented exceptions are model-chosen extra key names and the developer's own `squish_validate` messages).
 - **Only named context leaves the process.** The LLM sees method arguments, `squish_context` values, a
   `squish!` call's `context:`, and source the developer explicitly passes to `append_instructions` — never
   instance variables wholesale. Exceptions in context are sent as class and message only. The one model-generated
@@ -66,9 +69,10 @@ Flag any change that breaks one of these; they are behavior contracts, not style
 
 The public surface is `Squishling.configure`/`config`, the `include Squishling` DSL (`squishling` — including its
 `model:`/`escalation:` (steps with `model:`, `attempts:`, `order:`, `provider:`, `params:`, `forward_rejected:`)/`provider:`/`params:`/
-`append_instructions:` options — `instructions`, `append_instructions`, `output_schema`, `squish_when`,
-`squish_context`, `squish` (including `validate:`), `squish_validate`, `squish_fallback`, `result`/`squishling_result`,
-`squish!` (including `model:`/`escalation:`)), `Squishling::Configuration` options, result objects (`squished?`,
+`append_instructions:`/`squawk:` options — `instructions`, `append_instructions`, `output_schema`, `squish_when`,
+`squish_context`, `squish` (including `validate:`/`squawk:`), `squish_validate`, `squish_fallback`,
+`result`/`squishling_result`, `squish!` (including `model:`/`escalation:`)), `Squishling::Configuration` options
+(including `squawk`, whose `output:`/`metadata:`/`error:` keywords are public), result objects (`squished?`,
 `to_h`, `[]`), and the error classes (including `InvalidOutputError#models`). Don't break it without a clear
 migration path in the changelog.
 
