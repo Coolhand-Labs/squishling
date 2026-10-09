@@ -115,18 +115,20 @@ module Squishling
       coerce(receiver.instance_exec(e, **inputs, &handler))
     end
 
-    # Deterministic return values: hashes are validated and turned into the typed result;
-    # anything else (including an already-built result) passes through.
+    # Deterministic and fallback return values: with an output_schema, every value is validated and
+    # typed like an LLM result. Without one, the value passes through untouched.
     def coerce(value)
-      value.is_a?(Hash) && schema ? build_result(value, squished: false) : value
+      schema ? build_result(value, squished: false) : value
     end
 
+    # A result of this schema's own class passes through; any other result is re-validated via to_h.
     def build_result(attrs, squished:)
       raise ConfigurationError, "#{label} has no output_schema" unless schema
-      return attrs if attrs.is_a?(Result::Instance)
+      return attrs if schema.result_class && attrs.is_a?(schema.result_class)
 
-      data = Schema.jsonify(attrs)
-      errors = schema.validate(data)
+      attrs = attrs.to_h if attrs.is_a?(Result::Instance)
+      data, errors = jsonify_return(attrs)
+      errors = schema.validate(data) if errors.empty?
       raise InvalidOutputError.new(errors:, raw: attrs, source: "Deterministic") if errors.any?
 
       schema.build(data, squished:)
@@ -161,6 +163,13 @@ module Squishling
     end
 
     private
+
+    # Values JSON can't represent (NaN, Infinity, cycles) are invalid output, not a raw JSON error.
+    def jsonify_return(attrs)
+      [Schema.jsonify(attrs), []]
+    rescue JSON::GeneratorError, JSON::NestingError => e
+      [nil, [e.message]]
+    end
 
     # The implementation's parameters, beneath the prepended wrappers.
     def parameters

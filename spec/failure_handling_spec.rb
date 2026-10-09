@@ -164,6 +164,64 @@ RSpec.describe "Squishling failure handling" do
       expect { klass.call(text: "hi") }.to raise_error(Squishling::InvalidOutputError, /Deterministic/)
     end
 
+    it "rejects a fallback return that isn't the schema's object" do
+      stub_llm(nil, nil)
+
+      [nil, "fallback", [1], Object.new].each do |value|
+        klass.squish_fallback { |_error, **| value }
+
+        expect { klass.call(text: "hi") }.to raise_error(Squishling::InvalidOutputError, /Deterministic/)
+        stub_llm(nil, nil)
+      end
+    end
+
+    it "re-validates a fallback return built from a different schema" do
+      other = Class.new do
+        include Squishling
+
+        instructions "x"
+        output_schema { string :label }
+
+        def call = { label: "other" }
+      end
+      mismatched = Class.new do
+        include Squishling
+
+        instructions "x"
+        output_schema { integer :label }
+
+        def call = { label: 1 }
+      end
+      stub_llm(nil, nil)
+
+      klass.squish_fallback { |_error, **| other.call }
+      converted = klass.call(text: "hi")
+      expect(converted.label).to eq("other")
+      expect(converted.class).not_to equal(other.call.class)
+
+      stub_llm(nil, nil)
+      klass.squish_fallback { |_error, **| mismatched.call }
+      expect { klass.call(text: "hi") }.to raise_error(Squishling::InvalidOutputError, /Deterministic/)
+    end
+
+    it "lets a fallback post-process a plain value from calling the method itself" do
+      klass.squish_when { |**| true }
+      klass.squish_fallback { |_error, **inputs| { label: call(**inputs) || "default" } }
+      klass.define_method(:call) { |text:| text == "skip" ? nil : text }
+      stub_llm(nil, nil)
+
+      expect(klass.call(text: "skip").label).to eq("default")
+    end
+
+    it "lets squish_when consume a plain value from calling the method itself" do
+      klass.squish_when { |**inputs| call(**inputs).nil? }
+      klass.define_method(:call) { |text:| text == "skip" ? nil : { label: text } }
+      stub_llm(label: "from llm")
+
+      expect(klass.call(text: "skip").label).to eq("from llm")
+      expect(klass.call(text: "keep").label).to eq("keep")
+    end
+
     it "can re-raise to propagate the error" do
       klass.squish_fallback { |error, **| raise error }
       stub_llm(nil, nil)

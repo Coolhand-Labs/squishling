@@ -85,7 +85,7 @@ module Squishling
 
     # Called with the error and the method's inputs (as keywords) when the LLM path fails with an
     # InvalidOutputError or LLMError, evaluated against the instance. Its return value is used as
-    # the result (hashes are validated and typed); re-raise to propagate.
+    # the result (validated against the schema and typed like a deterministic return); re-raise to propagate.
     #   squish_fallback { |error, **inputs| { priority: "medium", team: "support" } }
     def squish_fallback(&block)
       @squishling_fallback = block

@@ -35,18 +35,20 @@ end
 def summarize(text) = raise NotImplementedError   # elastic until someone writes it
 ```
 
-When the Ruby implementation runs, a `Hash` it returns is validated against the schema and turned into the
-same typed result the LLM path produces. `result(...)` (alias `squishling_result`) does the same explicitly.
-Invalid deterministic output raises `Squishling::InvalidOutputError` too, so a hardened path can't silently
-drift from the contract.
+When the Ruby implementation runs, whatever it returns (a `Hash`, `nil`, a string, another schema's result, …)
+is validated against the schema and turned into the same typed result the LLM path produces. `result(...)`
+(alias `squishling_result`) does the same explicitly. Invalid deterministic output raises
+`Squishling::InvalidOutputError` too, so a hardened path can't silently drift from the contract.
 
 A `NotImplementedError` raised anywhere inside the method, including from code it calls, also routes to the
 LLM.
 
-Each call is routed on its own, including a squished method that calls itself on smaller inputs. A subclass
+Each call is routed on its own, including a squished method that calls itself on smaller inputs (those
+recursive calls must return schema-valid values too). A subclass
 override that calls `super` is one call: it's routed once, at the subclass. A call to the method from its own
 `squish_when` or `squish_fallback` (or an instructions proc) isn't routed again: it runs the Ruby
-implementation, so a fallback can hand the input back to Ruby with `call(**inputs)`.
+implementation, so a fallback can hand the input back to Ruby with `call(**inputs)`. These inner calls
+return a `Hash` as the typed result and any other value unchanged; only the outermost return is validated in full.
 
 ## Hardening a path
 

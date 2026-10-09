@@ -59,7 +59,8 @@ r.squished?                      # => true when it came from the LLM
 ```
 
 On the deterministic path, return a `Hash` or build the result with `result(...)`. Either way it's validated
-against the schema.
+against the schema, and so is anything else you return (`nil`, a string, another schema's result), which raises
+`Squishling::InvalidOutputError` unless it matches.
 
 ## Optional vs. empty
 
