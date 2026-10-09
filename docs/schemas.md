@@ -85,3 +85,32 @@ branch as usual: `vitals` is a `Data` object or `nil`, and a list of objects is 
 JSON Schema, `type: ["array", "null"]` works too. A union with more than one non-null branch is ambiguous, so its
 values come back as plain hashes. If you need the model to tell "none" apart from "not mentioned", say so in your
 instructions.
+
+## Contracts beyond the schema
+
+Every response is validated against the full schema, so some contracts are already enforced:
+
+- **A non-`optional` field can't be `null`.** `string :reason` rejects `"reason": null`. Make a field `optional` only
+  when "not provided" is a real answer.
+- **Constraints** such as `enum`, `min_length`, `pattern`, `minimum`, and `min_items` are checked locally, even where
+  a provider's strict mode ignores them.
+
+For rules that depend on another field, use Schematist's conditionals. A field can be nullable in general but
+required when a condition holds:
+
+```ruby
+output_schema do
+  string :status, enum: %w[approved rejected]
+  optional(:reason) { string }                                  # nil is fine when approved...
+  given(status: "rejected") { string :reason, min_length: 1 }   # ...but not when rejected
+end
+```
+
+Providers' strict modes don't support conditional keywords (`if`/`then`/`else` from `given`, and `dependentRequired`/
+`dependentSchemas` from `dependent`), so Squishling keeps them out of the schema it sends and enforces them itself.
+Output that breaks a rule is rejected like any other invalid output: the call moves on to the next attempt in its
+[escalation](configuration.md#models-and-escalation) with the errors. The model doesn't see these rules
+up front, so state them in your instructions too.
+
+For anything a schema can't express (sums, lookups against your data), use
+[`squish_validate`](failures.md#output-checks-squish_validate).

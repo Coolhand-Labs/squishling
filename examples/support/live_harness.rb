@@ -25,9 +25,8 @@ module LiveHarness
 
     RubyLLM.configure { |config| config.public_send(:"#{provider}_api_key=", api_key) }
     Squishling.configure do |config|
-      config.default_model = options[:model]
+      config.default_escalation = [{ model: options[:model], attempts: 2 }]
       config.default_provider = provider
-      config.max_retries = 1
       config.default_params = params
     end
     @rejected_params = rejected_params
@@ -183,6 +182,42 @@ module LiveHarness
     squish_fallback { |_error, **| { word: "fallback" } }
   end
 
+  # A conditional rule (`given`): reason is nullable, but required when the review is rejected. The rule is
+  # kept out of the provider's strict schema and enforced locally.
+  class ReviewModerator
+    include Squishling
+
+    instructions "Moderate the product review. Reject spam or abuse and give a short reason; otherwise approve " \
+                 "it with a null reason."
+    output_schema do
+      string :status, enum: %w[approved rejected]
+      optional(:reason) { string }
+      given(status: "rejected") { string :reason, min_length: 1 }
+    end
+  end
+
+  # squish_validate rejects the first answer, so the call escalates to a second step (same model, different
+  # params, so a fresh chat that is shown the rejected output and the reason).
+  class CheckedEcho
+    include Squishling
+
+    instructions "Reply with one lowercase word that names a color."
+    output_schema { string :word }
+    squish_validate do |result, **|
+      @checks = (@checks || 0) + 1
+      "pick a different color than #{result.word.inspect}" if @checks == 1
+    end
+    attr_reader :checks
+
+    def self.escalate_on(model)
+      Class.new(self) do
+        # A provider pairs with the models declared at its own level, so the configured one is passed along.
+        squishling provider: Squishling.config.default_provider,
+          escalation: [{ model:, params: { max_output_tokens: 4096 } }, { model:, params: { max_output_tokens: 8192 } }]
+      end
+    end
+  end
+
   INVOICE_TEXT = <<~TEXT
     GLOBEX CORP — Invoice #INV-2041
     3 x Widget @ $10.00
@@ -241,6 +276,19 @@ module LiveHarness
       check(result.medications == [], "medications were #{result.medications.inspect}")
       check(result.allergies.nil?, "allergies were #{result.allergies.inspect}")
       "medications=[] allergies=nil"
+    }),
+    Scenario.new("conditional (given) rules pass strict mode and are enforced locally", lambda {
+      result = ReviewModerator.call(review: "BUY CHEAP WATCHES!!! visit spam-watches.example now!!!")
+      check(result.status == "rejected", "status was #{result.status.inspect}")
+      check(result.reason.is_a?(String) && !result.reason.empty?, "reason was #{result.reason.inspect}")
+      "rejected: #{result.reason}"
+    }),
+    Scenario.new("squish_validate rejection escalates to a fresh chat on the next step", lambda {
+      instance = CheckedEcho.escalate_on(Squishling.config.default_model_path.first[:model]).new
+      result = instance.call
+      check(instance.checks == 2, "expected 2 validator runs, got #{instance.checks.inspect}")
+      check(result.word.match?(/\A[a-z]+\z/), "word was #{result.word.inspect}")
+      "second answer: #{result.word}"
     }),
     Scenario.new("params the model rejects raise ConfigurationError, not the fallback", lambda {
       klass = Class.new(Echo) { squishling params: LiveHarness.rejected_params }

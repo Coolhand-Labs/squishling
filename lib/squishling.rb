@@ -9,6 +9,7 @@ require_relative "squishling/version"
 require_relative "squishling/errors"
 require_relative "squishling/configuration"
 require_relative "squishling/params"
+require_relative "squishling/model_path"
 require_relative "squishling/result"
 require_relative "squishling/schema"
 require_relative "squishling/source"
@@ -58,8 +59,10 @@ module Squishling
   # handle this input. Returns the typed result (squished? true, or false when the declared fallback supplied
   # it); return it from the method. The overrides apply to this call only: append_instructions adds to (or,
   # with false, replaces) the declared sections, context is sent alongside the declared squish_context,
-  # model/provider/instructions replace the declared ones, and params merge key by key over them.
-  def squish!(append_instructions: nil, context: nil, instructions: nil, model: nil, provider: nil, params: nil)
-    Router.escalate(self, { append_instructions:, context:, instructions:, model:, provider:, params: })
+  # model/escalation (one or the other)/provider/instructions replace the declared ones, and params merge key
+  # by key over them.
+  def squish!(append_instructions: nil, context: nil, instructions: nil, model: nil, escalation: nil, provider: nil,
+    params: nil)
+    Router.hand_off(self, { append_instructions:, context:, instructions:, model:, escalation:, provider:, params: })
   end
 end

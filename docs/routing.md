@@ -18,7 +18,7 @@ A squished call runs its Ruby implementation unless one of these sends it to the
 |---|---|---|
 | `squish_when` (or `when:`) predicate is truthy | class, or per method | before Ruby runs |
 | The method has no implementation: it isn't defined, or it raises `NotImplementedError` | the method body | when Ruby gives up |
-| `squish!` | inside the method, e.g. in a `rescue` | after Ruby has partly run, see [Escalating from Ruby](#escalating-from-ruby-with-squish) |
+| `squish!` | inside the method, e.g. in a `rescue` | after Ruby has partly run, see [Handing off to the LLM](#handing-off-to-the-llm-with-squish) |
 
 With no predicate and a working implementation, every call runs Ruby.
 
@@ -86,13 +86,13 @@ end
 - `instructions:` (replaces the class's)
 - `append_instructions:` (added to the class's, see [Appending to the instructions](#appending-to-the-instructions))
 - `output_schema:` (or a schema block)
-- `model:`, `provider:`, and `params:` (generation params; see [Configuration](configuration.md))
+- `model:` or `escalation:`, `provider:`, and `params:` (generation params; see [Configuration](configuration.md))
 - `when:`, a predicate proc
-- `fallback:` (see [Failure handling](failures.md))
+- `validate:` and `fallback:` (see [Failure handling](failures.md))
 
 `squish` can come before or after the method's `def`.
 
-## Escalating from Ruby with `squish!`
+## Handing off to the LLM with `squish!`
 
 Call `squish!` inside a squished method to hand *this call* to the LLM: for example, when the Ruby parser
 fails on an input it wasn't written for. It sends the call's arguments, as any LLM call would, and returns the
@@ -128,7 +128,7 @@ end
 | `context:` | A Hash sent under `"context"` with any `squish_context` values (a same-named key wins). Exceptions are sent as `{ "class", "message" }`, never their backtrace. |
 | `append_instructions:` | Added to the declared sections; `false` (alone or first in an Array) drops them for this call |
 | `instructions:` | Replaces the instructions |
-| `model:`, `provider:`, `params:` | E.g. escalate to a stronger model when Ruby fails. A `provider:` needs a `model:`; `params:` merge key by key over the declared ones. |
+| `model:` or `escalation:`, `provider:`, `params:` | E.g. send this call to a stronger model, or a whole [escalation](configuration.md#models-and-escalation), when Ruby fails. A `provider:` needs a `model:` or `escalation:`; `params:` merge key by key over the declared ones. |
 
 - **The output schema can't be overridden.** The call still returns the method's result type.
 - **Failures** go through the normal LLM path: a declared `squish_fallback` is used, otherwise
@@ -204,6 +204,12 @@ Source is read with Ruby's own parser (Prism) the first time it's needed and cac
 { "arguments": { "ticket_text": "API is down!" },
   "context":   { "customer_tier": "enterprise", "product": "API" } }
 ```
+
+- **Retries and escalation:** another attempt of the same step gets the validation errors in the same conversation. A
+  later [escalation](configuration.md#models-and-escalation) step, which may be a different provider (say, local
+  Ollama, then hosted Anthropic Claude), gets the same JSON plus the previous model's rejected output and the
+  errors, including any messages your [`squish_validate`](failures.md#output-checks-squish_validate) check
+  returned. Don't put data in those messages that you wouldn't send as an argument.
 
 `squish_context` names are read from a method of that name if there is one, otherwise from the instance
 variable. Only context you name is sent. Instance variables are never dumped wholesale, so API clients,

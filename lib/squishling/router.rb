@@ -4,9 +4,9 @@ module Squishling
   # Decides, per call, whether a squished method runs its Ruby implementation or the LLM.
   module Router
     # One squished call in progress. `phase` is :routing (deciding, e.g. running squish_when), :ruby (running
-    # the implementation), or :llm (on the LLM path, including any fallback); `escalated` records that squish!
+    # the implementation), or :llm (on the LLM path, including any fallback); `handed_off` records that squish!
     # already sent it to the LLM.
-    Frame = Struct.new(:receiver, :definition, :wrapper, :inputs, :phase, :escalated)
+    Frame = Struct.new(:receiver, :definition, :wrapper, :inputs, :phase, :handed_off)
 
     FRAMES_KEY = :__squishling_frames__
 
@@ -27,7 +27,7 @@ module Squishling
             value = impl.call
           rescue NotImplementedError
             # After squish!, the error came from the LLM path (a fallback, a proc), not a missing implementation.
-            raise if frame.escalated
+            raise if frame.handed_off
 
             return route_to_llm(frame, definition, "not implemented")
           end
@@ -43,7 +43,7 @@ module Squishling
       end
 
       # squish!: hand the call in progress on this receiver to the LLM, with this call's overrides.
-      def escalate(receiver, overrides)
+      def hand_off(receiver, overrides)
         frame = current_frame(receiver)
         raise Error, "#{receiver.class}#squish! called outside a squished method" unless frame
         unless frame.phase == :ruby
@@ -51,7 +51,7 @@ module Squishling
                        "not from squish_when or while already on the LLM path (e.g. from squish_fallback)"
         end
 
-        frame.escalated = true
+        frame.handed_off = true
         route_to_llm(frame, frame.definition.for_call(**overrides), "squish!")
       end
 
