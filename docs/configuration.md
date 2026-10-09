@@ -17,6 +17,7 @@ Squishling.configure do |config|
   config.default_model = "claude-sonnet-5-5"   # or default_escalation, below
   config.default_provider = nil
   config.default_params = { temperature: 0 }
+  config.default_harness = :escalation
   config.logger = Rails.logger
 end
 ```
@@ -28,6 +29,7 @@ end
 | `default_provider` | `nil` | The provider for `default_model`/`default_escalation` steps that don't name one. Only needed for models missing from RubyLLM's registry (see below). |
 | `default_params` | `{}` | Generation params for every call (temperature, reasoning effort, top_p, …), overridable per class, per method, and per escalation step. See [Generation params](#generation-params). |
 | `squawk` | `nil` | A callable run after every LLM attempt with the raw output, for sending it to an error tracker or tracing tool. Also settable per class and per method. See [Observing every attempt](failures.md#observing-every-attempt-squawk). |
+| `default_harness` | `nil` (`:escalation`) | How every squishling class that doesn't declare its own uses its escalation: `:escalation`, `:squishsum`, `:judged_squishsum`, or a Hash with `type:` and options. See [Harnesses](harnesses.md). |
 | `logger` | `nil` | Any `Logger`. Debug lines when a call routes to the LLM, warnings on each escalation and when a fallback is used. Never includes the raw model response; see [what ends up in errors and logs](failures.md#what-ends-up-in-errors-and-logs). |
 
 Transport-level retries (rate limits, 5xx, timeouts) are configured on RubyLLM itself
@@ -121,9 +123,9 @@ RubyLLM looks models up in its bundled registry. To use a model that isn't there
 OpenAI or Anthropic model, name its provider next to it. Squishling then tells RubyLLM to assume the model exists:
 
 ```ruby
-squishling model: "gpt-6-luna", provider: :openai
+squishling model: "gpt-7-preview", provider: :openai
 squish :triage, model: "claude-haiku-4-5", provider: :anthropic
-Squishling.configure { |c| c.default_model = "gpt-6-luna"; c.default_provider = :openai }
+Squishling.configure { |c| c.default_model = "gpt-7-preview"; c.default_provider = :openai }
 ```
 
 A provider is paired with the model or escalation declared at the same level, and applies to that escalation's steps
@@ -186,7 +188,7 @@ end
 
 ## Inheritance
 
-Subclasses inherit the model or escalation, provider, generation params (merged key by key), purpose, output schema,
+Subclasses inherit the model or escalation, provider, harness, generation params (merged key by key), purpose, output schema,
 `squish_when` predicate, `squish_context` names, `squish_validate`, `squish_fallback`, and every `squish` declaration. Overrides in a subclass, including
 overridden methods, are routed the same way.
 
@@ -196,5 +198,5 @@ overridden methods, are routed the same way.
 ## Per-call overrides
 
 Inside a squished method, `squish!` sends the call to the LLM with its own `purpose:`,
-`append_to_purpose:`, `context:`, `model:` or `escalation:` (with `provider:`), and `params:`. Each layers over the method and class
+`append_to_purpose:`, `context:`, `model:` or `escalation:` (with `provider:`), `params:`, and `harness:`. Each layers over the method and class
 settings the same way they layer over each other. See [Handing off to the LLM](routing.md#handing-off-to-the-llm-with-squish).

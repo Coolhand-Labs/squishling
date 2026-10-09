@@ -40,7 +40,7 @@ Gem::Specification.new do |spec|
   spec.require_paths = ["lib"]
 
   spec.add_dependency "json_schemer", "~> 2.0"
-  spec.add_dependency "ruby_llm", "~> 2.0"
+  spec.add_dependency "ruby_llm", "~> 2.1"
   spec.add_dependency "schematist", "~> 1.1"
 
   spec.metadata["rubygems_mfa_required"] = "true"

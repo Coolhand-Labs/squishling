@@ -290,6 +290,19 @@ module LiveHarness
       check(result.word.match?(/\A[a-z]+\z/), "word was #{result.word.inspect}")
       "second answer: #{result.word}"
     }),
+    Scenario.new("judged_squishsum samples concurrently and a chat judge picks a candidate", lambda {
+      model = Squishling.config.default_model_path.first[:model]
+      # compare: never agrees, so the judge (the same model, one attempt) always runs.
+      klass = Class.new(SentimentClassifier) do
+        squishling provider: Squishling.config.default_provider, model:,
+          harness: { type: :judged_squishsum, compare: ->(*) { false },
+                     judge: { model:, provider: Squishling.config.default_provider } }
+      end
+      result = klass.call(review: "Absolutely love it — best purchase I've made all year!")
+      check(result.squished?, "expected an LLM result")
+      check(result.sentiment == "positive", "sentiment was #{result.sentiment.inspect}")
+      "judge picked #{result.sentiment} (#{result.confidence})"
+    }),
     Scenario.new("params the model rejects raise ConfigurationError, not the fallback", lambda {
       klass = Class.new(Echo) { squishling params: LiveHarness.rejected_params }
       begin

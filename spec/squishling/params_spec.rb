@@ -76,7 +76,7 @@ RSpec.describe Squishling::Params do
 
     it "lets a nil value remove an inherited key, falling back to the provider default" do
       base.squishling(params: { temperature: 0.1 })
-      base.squish(:luna, model: "gpt-6-luna", provider: :openai, params: { temperature: nil }) { string :value }
+      base.squish(:luna, model: "gpt-unknown", provider: :openai, params: { temperature: nil }) { string :value }
 
       expect(generation_for(base, :luna)).to eq({})
     end

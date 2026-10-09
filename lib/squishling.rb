@@ -11,12 +11,15 @@ require_relative "squishling/configuration"
 require_relative "squishling/params"
 require_relative "squishling/squawk"
 require_relative "squishling/model_path"
+require_relative "squishling/harness"
 require_relative "squishling/result"
 require_relative "squishling/schema"
 require_relative "squishling/source"
 require_relative "squishling/appendices"
 require_relative "squishling/definition"
+require_relative "squishling/llm_client"
 require_relative "squishling/invoker"
+require_relative "squishling/judge"
 require_relative "squishling/router"
 require_relative "squishling/wrapper"
 require_relative "squishling/class_methods"
@@ -71,10 +74,11 @@ module Squishling
   # handle this input. Returns the typed result (squished? true, or false when the declared fallback supplied
   # it); return it from the method. The overrides apply to this call only: append_to_purpose adds to (or,
   # with false, replaces) the declared sections, context is sent alongside the declared squish_context,
-  # model/escalation (one or the other)/provider/purpose replace the declared ones, and params merge key
-  # by key over them.
+  # model/escalation (one or the other)/provider/purpose/harness replace the declared ones, and params merge
+  # key by key over them.
   def squish!(append_to_purpose: nil, context: nil, purpose: nil, model: nil, escalation: nil, provider: nil,
-    params: nil)
-    Router.hand_off(self, { append_to_purpose:, context:, purpose:, model:, escalation:, provider:, params: })
+    params: nil, harness: nil)
+    Router.hand_off(self, { append_to_purpose:, context:, purpose:, model:, escalation:, provider:, params:,
+                            harness: })
   end
 end
