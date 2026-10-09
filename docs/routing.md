@@ -68,9 +68,9 @@ end
 
 - `instructions:`
 - `output_schema:` (or a schema block)
-- `model:`, `provider:`, and `params:` (generation params; see [Configuration](configuration.md))
+- `model:` or `escalation:`, `provider:`, and `params:` (generation params; see [Configuration](configuration.md))
 - `when:`, a predicate proc
-- `fallback:` (see [Failure handling](failures.md))
+- `validate:` and `fallback:` (see [Failure handling](failures.md))
 
 `squish` can come before or after the method's `def`.
 
@@ -85,6 +85,12 @@ end
 { "arguments": { "ticket_text": "API is down!" },
   "context":   { "customer_tier": "enterprise", "product": "API" } }
 ```
+
+- **Retries and escalation:** another attempt of the same step gets the validation errors in the same conversation. A
+  later [escalation](configuration.md#models-and-escalation) step, which may be a different provider (say, local
+  Ollama, then hosted Anthropic Claude), gets the same JSON plus the previous model's rejected output and the
+  errors, including any messages your [`squish_validate`](failures.md#output-checks-squish_validate) check
+  returned. Don't put data in those messages that you wouldn't send as an argument.
 
 `squish_context` names are read from a method of that name if there is one, otherwise from the instance
 variable. Only context you name is sent. Instance variables are never dumped wholesale, so API clients,

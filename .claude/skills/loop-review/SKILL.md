@@ -186,8 +186,9 @@ elaboration of those priorities.
   elastic path (`lib/squishling/invoker.rb`). Check the error taxonomy in
   `AGENTS.md`: provider/transport failures become `LLMError` (original
   kept as `cause`), setup mistakes become `ConfigurationError` and are
-  never retried or sent to a fallback, invalid output becomes
-  `InvalidOutputError` after `max_retries`. Flag both missing handling
+  never retried, escalated, or sent to a fallback, invalid output
+  becomes `InvalidOutputError` once every attempt in the
+  escalation is exhausted. Flag both missing handling
   (a provider exception escaping raw) AND overly broad rescues — in
   particular anything that would catch or wrap exceptions raised by the
   user's own Ruby implementation, or that rescues `NotImplementedError`

@@ -2,19 +2,54 @@
 
 ## When the LLM fails
 
+Every squished call works through its [escalation](configuration.md#models-and-escalation), one attempt at a time.
+A failed attempt moves on to the next one; once the last fails, the error is raised (or handed to the
+[fallback](#fallbacks)). A plain `model:` makes a single attempt.
+
 | Failure | What Squishling does |
 |---|---|
-| Rate limit, 5xx, overload, timeout, connection error | RubyLLM retries at the HTTP level (`RubyLLM.config.max_retries`, default 3). If it still fails, raises `Squishling::LLMError`; the original exception is its `cause`. |
-| Bad API key, unknown model, missing provider config | Raises `Squishling::ConfigurationError`. Never retried, never sent to the fallback. |
-| Provider rejects the request (400 Bad Request), e.g. an unsupported `temperature` or a schema it won't accept | Raises `ConfigurationError` with the provider's message and the params in use. Never retried, never sent to the fallback, so a setup mistake can't be silently covered up on every call. |
-| Empty or `nil` response (e.g. a refusal or a max-tokens cutoff) | Re-asks, then raises `Squishling::InvalidOutputError` |
-| Malformed or truncated JSON | Re-asks, then raises `InvalidOutputError`. JSON wrapped in a markdown code fence is accepted. |
-| JSON that doesn't match the schema (wrong types, missing or extra keys, root not an object) | Re-asks with the validation errors, then raises `InvalidOutputError` |
+| Rate limit, 5xx, overload, timeout, connection error | RubyLLM retries at the HTTP level first (`RubyLLM.config.max_retries`, default 3). If it still fails, moves to the next attempt in a fresh chat; on the last attempt, raises `Squishling::LLMError` with the original exception as its `cause`. |
+| Bad API key, unknown model, missing provider config | Raises `Squishling::ConfigurationError`. Never escalated, never sent to the fallback. |
+| Provider rejects the request (400 Bad Request), e.g. an unsupported `temperature` or a schema it won't accept | Raises `ConfigurationError` with the provider's message and the params in use. Never escalated, never sent to the fallback, so a setup mistake can't be silently covered up on every call. |
+| Empty or `nil` response (e.g. a refusal or a max-tokens cutoff) | Moves to the next attempt, then raises `Squishling::InvalidOutputError` |
+| Malformed or truncated JSON | Moves to the next attempt, then raises `InvalidOutputError`. JSON wrapped in a markdown code fence is accepted. |
+| JSON that doesn't match the schema (wrong types, missing or extra keys, `null` in a non-`optional` field, a broken [conditional rule](schemas.md#contracts-beyond-the-schema), root not an object) | Moves to the next attempt with the validation errors, then raises `InvalidOutputError` |
+| Schema-valid output that [`squish_validate`](#output-checks-squish_validate) rejects | Moves to the next attempt with your messages, then raises `InvalidOutputError` |
 
 Squishling validates output itself with [json_schemer](https://github.com/davishmcclurg/json_schemer), because
-RubyLLM doesn't, and some providers don't enforce strict mode. Re-asks happen in the same conversation, so the model
-sees what it got wrong. `Squishling.config.max_retries` (default 1) sets how many follow-ups are allowed.
-`InvalidOutputError` exposes `errors`, `raw` (the last response), and `attempts`.
+RubyLLM doesn't, and some providers don't enforce strict mode. When the next attempt is on the same step (same
+model, provider, and params), the re-ask happens in the same conversation, so the model sees what it got wrong. A
+different step gets a fresh chat with the original input plus the rejected output and its errors. `InvalidOutputError` exposes `errors`, `raw` (the last
+response), `attempts`, and `models` (the model tried on each attempt). With a `logger` configured, every escalation
+is logged as a warning.
+
+## Output checks (`squish_validate`)
+
+The schema covers shape and types. For rules it can't express, such as cross-field arithmetic or a lookup against
+your data, add a Ruby check. It runs only on LLM output that already matches the schema, receives the typed result
+plus the method's inputs as keywords, and runs against the instance:
+
+```ruby
+class InvoiceParser
+  include Squishling
+  # ...
+  squish_validate do |result, **|
+    errors = []
+    errors << "total must equal the sum of line_items" unless result.total == result.line_items.sum(&:amount)
+    errors << "unknown currency" unless Currency.supported?(result.currency)
+    errors
+  end
+end
+```
+
+- Return `nil`, `true`, `""`, or `[]` to accept the output.
+- Return a message or an array of messages to reject it. The messages are sent to the next attempt and end up in
+  `InvalidOutputError#errors` if every attempt fails. `false` rejects with a generic message.
+- A [dry-validation](https://dry-rb.org/gems/dry-validation/) result works too, if your app already uses it:
+  `squish_validate { |result, **| InvoiceContract.new.call(result.to_h) }`. Squishling doesn't depend on dry-rb.
+- Per method: `squish :triage, validate: ->(result, **inputs) { ... }`. Subclasses inherit the class-level check.
+- It doesn't run on deterministic or fallback returns: those are your own code.
+- Exceptions raised inside it propagate unwrapped, like any of your own code.
 
 ## Errors
 
@@ -22,14 +57,15 @@ sees what it got wrong. `Squishling.config.max_retries` (default 1) sets how man
 |---|---|
 | `Squishling::Error` | Base class for everything below |
 | `Squishling::ConfigurationError` | Missing instructions or schema, a non-strict schema, invalid or reserved params, bad credentials, an unknown model, a request the provider rejects (400) |
-| `Squishling::InvalidOutputError` | LLM output still invalid after `max_retries`, or a deterministic/fallback return that doesn't match the schema |
-| `Squishling::LLMError` | The provider call failed after RubyLLM's own retries, including context-length errors (`cause` holds the original) |
+| `Squishling::InvalidOutputError` | LLM output still invalid (schema or `squish_validate`) after every attempt in the escalation, or a deterministic/fallback return that doesn't match the schema |
+| `Squishling::LLMError` | The provider call failed on the last attempt in the escalation, after RubyLLM's own retries, including context-length errors (`cause` holds the original) |
 
 Errors raised by your own Ruby code are not wrapped.
 
 ## Fallbacks
 
-Use `squish_fallback` to decide what happens when the LLM path fails with `InvalidOutputError` or `LLMError`.
+Use `squish_fallback` to decide what happens when every attempt fails, with `InvalidOutputError` or
+`LLMError`.
 It receives the error plus the method's inputs as keywords, and runs against the instance:
 
 ```ruby

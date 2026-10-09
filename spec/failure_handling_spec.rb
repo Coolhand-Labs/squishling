@@ -5,6 +5,7 @@ RSpec.describe "Squishling failure handling" do
     Class.new do
       include Squishling
 
+      squishling escalation: [{ model: "test-model", attempts: 2 }]
       instructions "Classify."
       output_schema { string :label }
     end
@@ -56,8 +57,8 @@ RSpec.describe "Squishling failure handling" do
       expect { klass.call(text: "x") }.to raise_error(Squishling::InvalidOutputError)
     end
 
-    it "makes a single attempt when max_retries is 0" do
-      Squishling.configure { |c| c.max_retries = 0 }
+    it "makes a single attempt for a single model" do
+      klass.squishling(model: "test-model")
       chats = stub_llm(nil)
 
       expect { klass.call(text: "x") }
@@ -76,6 +77,8 @@ RSpec.describe "Squishling failure handling" do
   end
 
   describe "LLM call failures" do
+    before { klass.squishling(model: "test-model") }
+
     {
       "rate limit" => RubyLLM::RateLimitError.new("slow down"),
       "server error" => RubyLLM::ServerError.new("boom"),
@@ -94,6 +97,7 @@ RSpec.describe "Squishling failure handling" do
     end
 
     it "wraps a failure on a retry request too" do
+      klass.squishling(escalation: [{ model: "test-model", attempts: 2 }])
       stub_llm({ "label" => 1 }, RubyLLM::ServiceUnavailableError.new("down"))
 
       expect { klass.call(text: "x") }.to raise_error(Squishling::LLMError, /ServiceUnavailable/)
@@ -117,6 +121,7 @@ RSpec.describe "Squishling failure handling" do
       Class.new do
         include Squishling
 
+        squishling escalation: [{ model: "test-model", attempts: 2 }]
         instructions "Classify."
         output_schema { string :label }
         squish_fallback do |error, text:|
@@ -138,8 +143,8 @@ RSpec.describe "Squishling failure handling" do
       expect(instance.seen).to eq([Squishling::InvalidOutputError, "hi"])
     end
 
-    it "uses the fallback when the LLM call fails" do
-      stub_llm(RubyLLM::RateLimitError.new("slow down"))
+    it "uses the fallback when the LLM call fails on every model" do
+      stub_llm(RubyLLM::RateLimitError.new("slow down"), RubyLLM::RateLimitError.new("still slow"))
       instance = klass.new
 
       expect(instance.call(text: "hi").label).to eq("fallback")
