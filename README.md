@@ -20,7 +20,7 @@ method unimplemented: every call goes to the LLM, and its output is validated ag
 class PaymentWebhook
   include Squishling
 
-  instructions "Normalize this payment provider's webhook into our payment event."
+  purpose "Normalize this payment provider's webhook into our payment event."
   output_schema do
     string  :event, enum: %w[succeeded failed refunded disputed]
     integer :amount_cents
@@ -49,8 +49,8 @@ parser raises, `squish!` sends this call to the LLM with the error and the parse
 class InvoiceParser
   include Squishling
 
-  instructions "Extract the invoice fields from the vendor's document."
-  append_instructions "The Ruby parser that handles well-formed invoices:", self   # this class's source
+  purpose "Extract the invoice fields from the vendor's document."
+  append_to_purpose "The Ruby parser that handles well-formed invoices:", self   # this class's source
   output_schema do
     string :invoice_number
     number :total
@@ -60,7 +60,7 @@ class InvoiceParser
     invoice = VendorFormats.fetch(vendor).parse(document)
     result(invoice_number: invoice.number, total: invoice.total)
   rescue VendorFormats::ParseError => e
-    squish!(append_instructions: "The parser failed on this document; the error is in the context.",
+    squish!(append_to_purpose: "The parser failed on this document; the error is in the context.",
             context: { parse_error: e })
   end
 end
@@ -79,7 +79,7 @@ return, or the error is raised with the original `ParseError` as its cause. See
 gem "squishling"
 ```
 
-Requires Ruby 3.3+ and RubyLLM 2.x. Configure your provider API keys in RubyLLM as usual, then optionally set a
+Requires Ruby 3.3+ and RubyLLM 2.1+. Configure your provider API keys in RubyLLM as usual, then optionally set a
 universal model, or an escalation of models to try in order:
 
 ```ruby
@@ -91,7 +91,7 @@ end
 
 ## How it works
 
-A squishling class needs **instructions** (the system prompt) and an **output schema** (the shape of the result,
+A squishling class needs a **purpose** (the system prompt) and an **output schema** (the shape of the result,
 validated on both paths). A squished call goes to the LLM when:
 
 - its `squish_when` predicate is truthy for these inputs,
@@ -104,13 +104,13 @@ Otherwise the Ruby runs, and whatever it returns is validated and typed like LLM
 
 - **One contract, two paths**: Ruby returns and LLM output are validated against the same strict schema and
   returned as the same typed `Data` objects. `squished?` tells you which path served a call.
-- **Your code as context**: `append_instructions` adds sections to the prompt, including a class's or method's
+- **Your code as context**: `append_to_purpose` adds sections to the prompt, including a class's or method's
   own Ruby source.
 - **Any RubyLLM provider and model**: OpenAI, Anthropic Claude, Google Gemini, AWS Bedrock, OpenRouter, and more.
   Set a universal, per-class, per-method, or per-call model, plus layered generation params (temperature,
   reasoning effort, top_p, …).
 - **Model escalation**: declare an `escalation:` instead of a `model:`, with per-step `attempts:`, `order:`, provider,
-  and params. Invalid output (with its errors fed back) or a provider failure moves on to the next attempt. Steps can
+  params, and `forward_rejected:`. Invalid output (with its errors fed back) or a provider failure moves on to the next attempt. Steps can
   cross providers, e.g. a local Qwen model on Ollama, then Anthropic Claude Haiku on AWS Bedrock, then Claude Opus:
 
   ```ruby
@@ -130,23 +130,31 @@ Otherwise the Ruby runs, and whatever it returns is validated and typed like LLM
       { model: "claude-haiku-4-5", provider: :bedrock },       # small hosted model
       { model: "claude-opus-5-5", provider: :anthropic }       # last resort
     ]
-    # instructions, output_schema, ...
+    # purpose, output_schema, ...
   end
   ```
+- **[Harnesses](docs/harnesses.md)**: choose how a call uses its escalation with `harness:`
+  - [`:escalation`](docs/configuration.md#models-and-escalation) (default): try each attempt until one passes
+  - [`:squishsum`](docs/harnesses.md#samples): two concurrent samples, accepted only if they agree
+  - [`:judged_squishsum`](docs/harnesses.md#the-judge): a chat or Jev judge picks between disagreeing samples
 - **Output contracts**: beyond the strict schema, conditional rules (`given`) and Ruby checks (`squish_validate`)
   reject bad output and trigger the next attempt.
 - **Defined failure behavior**: provider errors become `Squishling::LLMError`, and `squish_fallback` lets you decide
   what to return when every attempt fails.
 - **Opt-in context**: only method arguments, the instance state you name with `squish_context`, the `context:` you
-  pass to `squish!`, and the source you choose to append are sent to the provider.
+  pass to `squish!`, and the source you choose to append are sent to the provider. The one addition: when
+  [escalation](docs/configuration.md#models-and-escalation) moves to the next step, that step also sees the previous
+  model's rejected output, unless the step sets `forward_rejected: false`.
 
 ## Documentation
 
 - [Configuration](docs/configuration.md): options, models and escalation, providers, generation params, inheritance
-- [Routing](docs/routing.md): when a call goes to the LLM, `squish!`, `append_instructions`, hardening a path,
+- [Routing](docs/routing.md): when a call goes to the LLM, `squish!`, `append_to_purpose`, hardening a path,
   what the LLM sees
 - [Output schemas](docs/schemas.md): schema forms, strict mode, typed results, optional vs. empty, contracts
 - [Failure handling](docs/failures.md): escalation, `squish_validate`, error classes, fallbacks
+- [Naming and collisions](docs/naming.md): the methods `include Squishling` adds and what happens when a name is taken
+- [Harnesses](docs/harnesses.md): escalation, squishsum, and judged squishsum (chat or Jev judges)
 - [Live examples](examples/README.md): end-to-end tests against Anthropic Claude Haiku and OpenAI GPT-6 Luna
 
 ## Development

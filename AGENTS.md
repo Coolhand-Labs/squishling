@@ -14,14 +14,17 @@ typed result. Both paths must return the same type — that contract is the whol
 bundle exec rake    # RSpec (offline, RubyLLM stubbed) + RuboCop — both must pass
 ```
 
+After the feature or fix is built and `rake` is green, run `/loop-review` until it comes back clean (see
+[Review and release skills](#review-and-release-skills)).
+
 Live provider tests are in `examples/` (`bundle exec ruby examples/<provider>_example.rb`). They need real
 API keys and cost money, so they run during `/prep-release`, not in CI. Never delete an assertion, mark a
 spec pending, or rescue-and-swallow to get green.
 
 ## Runtime dependencies
 
-The gem's runtime dependencies are `ruby_llm` (2.x), `schematist` (the schema DSL RubyLLM 2.0 uses), and
-`json_schemer`. Keep it that way:
+The gem's runtime dependencies are `ruby_llm` (2.1+, for judgments), `schematist` (the schema DSL RubyLLM 2.0 uses),
+and `json_schemer`. Keep it that way:
 
 - **Never add a provider SDK** (`openai`, `anthropic`, `google-generativeai`, …). Providers are reached
   through RubyLLM only.
@@ -50,24 +53,41 @@ Flag any change that breaks one of these; they are behavior contracts, not style
   attempt in the escalation),
   `LLMError` (provider/transport failure after RubyLLM's HTTP retries, original as `cause`). Never wrap or
   swallow exceptions raised by the user's own Ruby code.
+- **Model output leaves the process only through `InvalidOutputError#raw` and the opt-in `squawk` hook.** Error
+  messages and `config.logger` lines carry parse positions and schema paths, never the response itself (the
+  documented exceptions are model-chosen extra key names and the developer's own `squish_validate` messages).
 - **Only named context leaves the process.** The LLM sees method arguments, `squish_context` values, a
-  `squish!` call's `context:`, and source the developer explicitly passes to `append_instructions` — never
-  instance variables wholesale. Exceptions in context are sent as class and message only.
+  `squish!` call's `context:`, and source the developer explicitly passes to `append_to_purpose` — never
+  instance variables wholesale. Exceptions in context are sent as class and message only. The one model-generated
+  exception: escalating to a new step forwards the previous step's rejected output (capped at
+  `Invoker::MAX_FORWARDED_CHARS`) to that step's provider, which may differ; a step can opt out with
+  `forward_rejected: false`.
 - **Params can't override what Squishling owns.** Provider-specific params are merged into the request last
   (RubyLLM's `with_provider_options`), so `Params::RESERVED_KEYS` (model, messages, structured-output format, tools, streaming) stay rejected. A
   provider 400 is a `ConfigurationError`, never something a fallback absorbs.
+- **No silent shadowing.** `include Squishling` raises `ConfigurationError` if the class inherits a method it would
+  override (`Collisions`), and only adds the `result` alias when the class has no `result`. Classes' own methods win.
 - **Thread/fiber safety.** Routing state is fiber-local; shared caches are mutex-guarded. Don't add
-  unsynchronized class-level mutable state.
+  unsynchronized class-level mutable state. The squishsum harnesses send their two sample requests on worker
+  threads (`LLMClient.concurrently`), and only the requests: parsing, validation, and every Squishling callback
+  (`squish_validate`, `compare:`, procs) run on the caller's thread. (RubyLLM instrumentation subscribers fire on
+  the worker threads.) Workers must not enter the Rails executor: the caller already holds it, and a second
+  interlock share can deadlock against a pending code reload.
+- **Harnesses don't add a second rescue path.** Every harness failure surfaces as `InvalidOutputError`
+  (disagreements as its `DisagreementError` subclass) or `LLMError`, so `squish_fallback` stays the only fallback.
 
 ## Public API
 
 The public surface is `Squishling.configure`/`config`, the `include Squishling` DSL (`squishling` — including its
-`model:`/`escalation:` (steps with `model:`, `attempts:`, `order:`, `provider:`, `params:`)/`provider:`/`params:`/
-`append_instructions:` options — `instructions`, `append_instructions`, `output_schema`, `squish_when`,
-`squish_context`, `squish` (including `validate:`), `squish_validate`, `squish_fallback`, `result`/`squishling_result`,
-`squish!` (including `model:`/`escalation:`)), `Squishling::Configuration` options, result objects (`squished?`,
-`to_h`, `[]`), and the error classes (including `InvalidOutputError#models`). Don't break it without a clear
-migration path in the changelog.
+`model:`/`escalation:` (steps with `model:`, `attempts:`, `order:`, `provider:`, `params:`, `forward_rejected:`)/`provider:`/`params:`/
+`harness:` (`type:`, `compare:`, `judge:` (a step, plus `type: :chat | :judgment` and `min_confidence:`),
+`judge_instructions:`)/`append_to_purpose:`/`squawk:` options — `purpose`, `append_to_purpose`, `output_schema`,
+`squish_when`, `squish_context`, `squish` (including `validate:`/`harness:`/`squawk:`), `squish_validate`,
+`squish_fallback`, `result`/`squishling_result`, `squish!` (including `model:`/`escalation:`/`harness:`)),
+`Squishling::Configuration` options (including `default_harness`, and `squawk`, whose `output:`/`metadata:`/`error:`
+keywords are public), `Squishling::Harness::DEFAULT_JUDGE_INSTRUCTIONS`, result objects (`squished?`,
+`to_h`, `[]`), and the error classes (including `InvalidOutputError#models` and
+`DisagreementError#candidates`/`verdict`/`reason`). Don't break it without a clear migration path in the changelog.
 
 ## Changelog and versioning
 
@@ -98,6 +118,7 @@ When in doubt, link rather than expand.
 ## Review and release skills
 
 - `/loop-review` (`.claude/skills/loop-review/SKILL.md`) — iterative review-and-fix of the current diff.
-  Run it before pushing a branch.
+  **Always run it after building a feature or fix, before committing or pushing the branch** — don't wait to be
+  asked. Report its result (clean or the remaining findings) along with the work.
 - `/prep-release` (`.claude/skills/prep-release/SKILL.md`) — the release event: PR triage, merges,
   changelog/version, security red-team, live examples, release-prep PR.

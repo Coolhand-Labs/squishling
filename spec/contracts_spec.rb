@@ -6,7 +6,7 @@ RSpec.describe "Squishling output contracts" do
       include Squishling
 
       squishling escalation: %w[small large]
-      instructions "Total the invoice."
+      purpose "Total the invoice."
       output_schema do
         number :total
         array(:amounts, of: :number)
@@ -149,7 +149,7 @@ RSpec.describe "Squishling output contracts" do
         include Squishling
 
         squishling escalation: %w[small large]
-        instructions "Review."
+        purpose "Review."
         output_schema do
           string :status, enum: %w[approved rejected]
           optional(:reason) { string }

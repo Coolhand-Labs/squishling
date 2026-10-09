@@ -59,7 +59,8 @@ r.squished?                      # => true when it came from the LLM
 ```
 
 On the deterministic path, return a `Hash` or build the result with `result(...)`. Either way it's validated
-against the schema.
+against the schema, and so is anything else you return (`nil`, a string, another schema's result), which raises
+`Squishling::InvalidOutputError` unless it matches.
 
 ## Optional vs. empty
 
@@ -84,7 +85,7 @@ end
 branch as usual: `vitals` is a `Data` object or `nil`, and a list of objects is a list of `Data` objects. In a raw
 JSON Schema, `type: ["array", "null"]` works too. A union with more than one non-null branch is ambiguous, so its
 values come back as plain hashes. If you need the model to tell "none" apart from "not mentioned", say so in your
-instructions.
+purpose.
 
 ## Contracts beyond the schema
 
@@ -110,7 +111,7 @@ Providers' strict modes don't support conditional keywords (`if`/`then`/`else` f
 `dependentSchemas` from `dependent`), so Squishling keeps them out of the schema it sends and enforces them itself.
 Output that breaks a rule is rejected like any other invalid output: the call moves on to the next attempt in its
 [escalation](configuration.md#models-and-escalation) with the errors. The model doesn't see these rules
-up front, so state them in your instructions too.
+up front, so state them in your purpose too.
 
 For anything a schema can't express (sums, lookups against your data), use
 [`squish_validate`](failures.md#output-checks-squish_validate).

@@ -13,7 +13,7 @@ module Squishling
     class << self
       def dispatch(receiver, name, args, kwargs, impl, wrapper:)
         if (frame = enclosing_frame(receiver, name, wrapper))
-          return frame.definition.coerce(impl.call)
+          return coerce_inner(frame, impl.call)
         end
 
         definition = receiver.class.squishling_definition(name)
@@ -57,6 +57,12 @@ module Squishling
 
       private
 
+      # An inner call (`super`, or the method called from squish_when or a fallback) hands its value to user code
+      # that may reshape it, so only a Hash is typed (for accessor access); the outermost return is validated in full.
+      def coerce_inner(frame, value)
+        value.is_a?(Hash) ? frame.definition.coerce(value) : value
+      end
+
       def route_to_llm(frame, definition, reason)
         log(definition, reason)
         previous = frame.phase
@@ -73,7 +79,7 @@ module Squishling
 
       # The call in progress that this one is part of, which runs its Ruby implementation without routing again:
       # a subclass override's `super` (entered through an ancestor's wrapper), or a call made while deciding or on
-      # the LLM path (squish_when, squish_fallback, an instructions proc). Only recursion from the Ruby
+      # the LLM path (squish_when, squish_fallback, a purpose proc). Only recursion from the Ruby
       # implementation itself is a new call, routed on its own.
       def enclosing_frame(receiver, name, wrapper)
         frame = frames.reverse_each.find do |candidate|

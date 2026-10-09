@@ -5,7 +5,7 @@ RSpec.describe Squishling do
     Class.new do
       include Squishling
 
-      instructions "Extract invoice fields."
+      purpose "Extract invoice fields."
       output_schema do
         string :invoice_number
         number :total
@@ -56,7 +56,7 @@ RSpec.describe Squishling do
       klass = Class.new do
         include Squishling
 
-        instructions "Summarize."
+        purpose "Summarize."
         output_schema { string :summary }
 
         def call(text) = raise(NotImplementedError)
@@ -71,7 +71,7 @@ RSpec.describe Squishling do
       klass = Class.new do
         include Squishling
 
-        instructions "Summarize."
+        purpose "Summarize."
         output_schema { string :summary }
       end
       stub_llm({ "summary" => "short" })
@@ -83,7 +83,7 @@ RSpec.describe Squishling do
       klass = Class.new do
         include Squishling
 
-        instructions "Echo."
+        purpose "Echo."
         output_schema { string :value }
         squish_when { @elastic }
 
@@ -102,10 +102,10 @@ RSpec.describe Squishling do
       Class.new do
         include Squishling
 
-        instructions "Default instructions."
+        purpose "Default purpose."
         squish_context :customer_tier, :product
 
-        squish :triage, instructions: "Triage the ticket.", model: "triage-model" do
+        squish :triage, purpose: "Triage the ticket.", model: "triage-model" do
           string :priority, enum: %w[low med high]
           string :team
         end
@@ -122,7 +122,7 @@ RSpec.describe Squishling do
       end
     end
 
-    it "uses per-method instructions, schema and model, and sends opt-in context" do
+    it "uses per-method purpose, schema and model, and sends opt-in context" do
       chats = stub_llm({ "priority" => "high", "team" => "platform" })
 
       result = triager.new(customer_tier: "enterprise", product: "API", db: Object.new).triage("down!", urgent: true)
@@ -142,7 +142,7 @@ RSpec.describe Squishling do
         include Squishling
 
         def shout(word) = { word: word.upcase }
-        squish :shout, instructions: "Shout." do
+        squish :shout, purpose: "Shout." do
           string :word
         end
       end
@@ -157,7 +157,7 @@ RSpec.describe Squishling do
       klass = Class.new do
         include Squishling
 
-        instructions "Classify."
+        purpose "Classify."
         output_schema({ type: "object", properties: { label: { type: "string" } }, required: ["label"],
                         additionalProperties: false })
       end
@@ -199,7 +199,7 @@ RSpec.describe Squishling do
           include Squishling
 
           output_schema({ type: "object", properties: {}, strict: false })
-          instructions "x"
+          purpose "x"
         end.call
       end.to raise_error(Squishling::ConfigurationError, /only supports strict/)
     end
@@ -251,7 +251,7 @@ RSpec.describe Squishling do
       klass = Class.new do
         include Squishling
 
-        instructions "Classify."
+        purpose "Classify."
         output_schema schema
       end
       stub_llm({ "label" => "ham" })
@@ -293,7 +293,7 @@ RSpec.describe Squishling do
       klass = Class.new do
         include Squishling
 
-        instructions "x"
+        purpose "x"
         output_schema { integer :count }
 
         def call(valid:) = valid ? { count: 3 } : { count: "three" }
@@ -301,6 +301,109 @@ RSpec.describe Squishling do
 
       expect(klass.call(valid: true).count).to eq(3)
       expect { klass.call(valid: false) }.to raise_error(Squishling::InvalidOutputError, /Deterministic/)
+    end
+
+    it "rejects deterministic returns that aren't the schema's object" do
+      [nil, "three", [3], Object.new, :three, { count: Float::NAN }].each do |value|
+        klass = Class.new do
+          include Squishling
+
+          purpose "x"
+          output_schema { integer :count }
+
+          define_method(:call) { value }
+        end
+
+        expect { klass.call }.to raise_error(Squishling::InvalidOutputError, /Deterministic/)
+      end
+    end
+
+    it "lets an override wrap a plain value returned by super" do
+      base = Class.new do
+        include Squishling
+
+        purpose "x"
+        output_schema { integer :count }
+
+        def call(text:) = text.size
+      end
+      sub = Class.new(base) do
+        def call(text:) = { count: super }
+      end
+
+      expect(sub.call(text: "four").count).to eq(4)
+      expect { base.call(text: "four") }.to raise_error(Squishling::InvalidOutputError, /Deterministic/)
+    end
+
+    it "passes through a result of its own class" do
+      klass = Class.new do
+        include Squishling
+
+        purpose "x"
+        output_schema { integer :count }
+
+        def call = result(count: 3)
+      end
+
+      expect(klass.call).to be_a(Data)
+      expect(klass.call.count).to eq(3)
+    end
+
+    it "re-validates a result built from a different schema" do
+      other = Class.new do
+        include Squishling
+
+        purpose "x"
+        output_schema { integer :count }
+
+        def call = { count: 3 }
+      end
+      mismatched = Class.new do
+        include Squishling
+
+        purpose "x"
+        output_schema { string :count }
+
+        def call = { count: "three" }
+      end
+      target = Class.new do
+        include Squishling
+
+        purpose "x"
+        output_schema { integer :count }
+
+        define_method(:call) { |source:| source.call }
+      end
+
+      converted = target.call(source: other.new)
+
+      expect(converted.count).to eq(3)
+      expect(converted.class).to equal(target.call(source: other.new).class)
+      expect(converted.class).not_to equal(other.call.class)
+      expect { target.call(source: mismatched.new) }.to raise_error(Squishling::InvalidOutputError, /Deterministic/)
+    end
+
+    it "validates deterministic returns against a non-object root schema" do
+      klass = Class.new do
+        include Squishling
+
+        purpose "x"
+        output_schema { array :tags, of: :string }
+
+        def call(valid:) = valid ? { tags: %w[a b] } : nil
+      end
+      array_root = Class.new do
+        include Squishling
+
+        squish(:names, purpose: "x") { array(of: :string) }
+
+        def names(valid:) = valid ? %w[a b] : "a"
+      end
+
+      expect(klass.call(valid: true).tags).to eq(%w[a b])
+      expect { klass.call(valid: false) }.to raise_error(Squishling::InvalidOutputError, /Deterministic/)
+      expect(array_root.new.names(valid: true)).to eq(%w[a b])
+      expect { array_root.new.names(valid: false) }.to raise_error(Squishling::InvalidOutputError, /Deterministic/)
     end
   end
 
@@ -334,7 +437,7 @@ RSpec.describe Squishling do
       Class.new do
         include Squishling
 
-        instructions "x"
+        purpose "x"
         output_schema { string :value }
       end
     end
@@ -366,16 +469,16 @@ RSpec.describe Squishling do
       Class.new do
         include Squishling
 
-        instructions "x"
+        purpose "x"
         output_schema { string :value }
       end
     end
 
     it "assumes a model exists when it's missing from RubyLLM's registry and a provider is given" do
-      base.squishling(model: "gpt-6-luna", provider: :openai)
+      base.squishling(model: "gpt-unknown", provider: :openai)
       chat = chat_for(base)
 
-      expect(chat.model).to eq("gpt-6-luna")
+      expect(chat.model).to eq("gpt-unknown")
       expect(chat.options).to eq(provider: :openai, assume_model_exists: true)
     end
 
@@ -393,7 +496,7 @@ RSpec.describe Squishling do
 
     it "uses the configured default provider with the default model" do
       Squishling.configure do |c|
-        c.default_model = "gpt-6-luna"
+        c.default_model = "gpt-unknown"
         c.default_provider = :openai
       end
 
@@ -401,7 +504,7 @@ RSpec.describe Squishling do
     end
 
     it "keeps a provider paired with the model declared at the same level" do
-      base.squishling(model: "gpt-6-luna", provider: :openai)
+      base.squishling(model: "gpt-unknown", provider: :openai)
       base.squish(:quick, model: "claude-haiku-4-5") { string :value }
       chat = chat_for(base, :quick)
 
@@ -410,13 +513,13 @@ RSpec.describe Squishling do
     end
 
     it "accepts a per-method provider" do
-      base.squish(:luna, model: "gpt-6-luna", provider: :openai) { string :value }
+      base.squish(:luna, model: "gpt-unknown", provider: :openai) { string :value }
 
       expect(chat_for(base, :luna).options).to eq(provider: :openai, assume_model_exists: true)
     end
 
     it "inherits the class provider in subclasses" do
-      base.squishling(model: "gpt-6-luna", provider: :openai)
+      base.squishling(model: "gpt-unknown", provider: :openai)
 
       expect(chat_for(Class.new(base)).options).to include(provider: :openai)
     end
@@ -427,7 +530,7 @@ RSpec.describe Squishling do
       Class.new do
         include Squishling
 
-        squishling model: "parent-model", instructions: "Parent."
+        squishling model: "parent-model", purpose: "Parent."
         output_schema { string :value }
         squish_when { |mode:| mode == :llm }
 
@@ -494,7 +597,7 @@ RSpec.describe Squishling do
   end
 
   describe "configuration errors" do
-    it "requires instructions for the elastic path" do
+    it "requires purpose for the elastic path" do
       klass = Class.new do
         include Squishling
 
@@ -502,7 +605,7 @@ RSpec.describe Squishling do
       end
       stub_llm
 
-      expect { klass.call }.to raise_error(Squishling::ConfigurationError, /instructions/)
+      expect { klass.call }.to raise_error(Squishling::ConfigurationError, /purpose/)
     end
 
     it "rejects inclusion into a module" do

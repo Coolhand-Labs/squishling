@@ -35,24 +35,27 @@ end
 def summarize(text) = raise NotImplementedError   # elastic until someone writes it
 ```
 
-When the Ruby implementation runs, a `Hash` it returns is validated against the schema and turned into the
-same typed result the LLM path produces. `result(...)` (alias `squishling_result`) does the same explicitly.
-Invalid deterministic output raises `Squishling::InvalidOutputError` too, so a hardened path can't silently
-drift from the contract.
+When the Ruby implementation runs, whatever it returns (a `Hash`, `nil`, a string, another schema's result, …)
+is validated against the schema and turned into the same typed result the LLM path produces.
+`squishling_result(...)` does the same explicitly; `result(...)` is a convenience alias, skipped when the class
+already has a `result` (see [Naming and collisions](naming.md)). Invalid deterministic output raises
+`Squishling::InvalidOutputError` too, so a hardened path can't silently drift from the contract.
 
 A `NotImplementedError` raised anywhere inside the method, including from code it calls, also routes to the
 LLM.
 
-Each call is routed on its own, including a squished method that calls itself on smaller inputs. A subclass
+Each call is routed on its own, including a squished method that calls itself on smaller inputs (those
+recursive calls must return schema-valid values too). A subclass
 override that calls `super` is one call: it's routed once, at the subclass. A call to the method from its own
-`squish_when` or `squish_fallback` (or an instructions proc) isn't routed again: it runs the Ruby
-implementation, so a fallback can hand the input back to Ruby with `call(**inputs)`.
+`squish_when` or `squish_fallback` (or a purpose proc) isn't routed again: it runs the Ruby
+implementation, so a fallback can hand the input back to Ruby with `call(**inputs)`. These inner calls
+return a `Hash` as the typed result and any other value unchanged; only the outermost return is validated in full.
 
 ## Hardening a path
 
 This is the workflow from [Elastic Software](https://everythingengineer.substack.com/p/beginners-write-software-with-ai):
 
-1. Ship the class with instructions and a schema but no implementation. Every call goes to the LLM.
+1. Ship the class with purpose and a schema but no implementation. Every call goes to the LLM.
 2. Watch which inputs carry the volume. `squished?` on each result tells you which path served it.
 3. Write Ruby for the high-volume cases and narrow `squish_when` so only the rest go to the LLM.
 
@@ -68,7 +71,7 @@ class TicketTriager
 
   squish_context :customer_tier, :product   # instance state sent alongside the arguments
 
-  squish :triage, instructions: "Assign a priority and team.", model: "claude-haiku-4-5" do
+  squish :triage, purpose: "Assign a priority and team.", model: "claude-haiku-4-5" do
     string :priority, enum: %w[low med high]
     string :team
   end
@@ -83,10 +86,11 @@ end
 
 `squish` accepts:
 
-- `instructions:` (replaces the class's)
-- `append_instructions:` (added to the class's, see [Appending to the instructions](#appending-to-the-instructions))
+- `purpose:` (replaces the class's)
+- `append_to_purpose:` (added to the class's, see [Appending to the purpose](#appending-to-the-purpose))
 - `output_schema:` (or a schema block)
 - `model:` or `escalation:`, `provider:`, and `params:` (generation params; see [Configuration](configuration.md))
+- `harness:` (see [Harnesses](harnesses.md))
 - `when:`, a predicate proc
 - `validate:` and `fallback:` (see [Failure handling](failures.md))
 
@@ -103,8 +107,8 @@ from the method.
 class InvoiceParser
   include Squishling
 
-  instructions "Extract invoice fields from the client's raw data."
-  append_instructions "Here is the Ruby that parses well-formed invoices, for context on the logic and goals:",
+  purpose "Extract invoice fields from the client's raw data."
+  append_to_purpose "Here is the Ruby that parses well-formed invoices, for context on the logic and goals:",
                       self
   output_schema do
     string :invoice_number
@@ -115,7 +119,7 @@ class InvoiceParser
     parsed = AcmeParser.parse(data)
     result(invoice_number: parsed.id, total: parsed.sum)
   rescue AcmeParser::ParseError => e
-    squish!(append_instructions: "The Ruby parser above failed on this input; the error is in the context.",
+    squish!(append_to_purpose: "The Ruby parser above failed on this input; the error is in the context.",
             context: { parse_error: e })
   end
 end
@@ -126,9 +130,10 @@ end
 | Option | Effect |
 |---|---|
 | `context:` | A Hash sent under `"context"` with any `squish_context` values (a same-named key wins). Exceptions are sent as `{ "class", "message" }`, never their backtrace. |
-| `append_instructions:` | Added to the declared sections; `false` (alone or first in an Array) drops them for this call |
-| `instructions:` | Replaces the instructions |
+| `append_to_purpose:` | Added to the declared sections; `false` (alone or first in an Array) drops them for this call |
+| `purpose:` | Replaces the purpose |
 | `model:` or `escalation:`, `provider:`, `params:` | E.g. send this call to a stronger model, or a whole [escalation](configuration.md#models-and-escalation), when Ruby fails. A `provider:` needs a `model:` or `escalation:`; `params:` merge key by key over the declared ones. |
+| `harness:` | Replaces the declared [harness](harnesses.md), e.g. `harness: :judged_squishsum` to double-check a hand-off |
 
 - **The output schema can't be overridden.** The call still returns the method's result type.
 - **Failures** go through the normal LLM path: a declared `squish_fallback` is used, otherwise
@@ -148,9 +153,9 @@ end
   or in a parent implementation reached through `super`. Calling it anywhere else, or from a `squish_fallback`
   (which would loop), raises `Squishling::Error`.
 
-## Appending to the instructions
+## Appending to the purpose
 
-`append_instructions` adds sections to the system prompt after the instructions. It takes items, an Array of
+`append_to_purpose` adds sections to the system prompt after the purpose. It takes items, an Array of
 them, or a block (treated as a Proc item). Each item is one of:
 
 | Item | Sent as |
@@ -164,19 +169,19 @@ them, or a block (treated as a Proc item). Each item is one of:
 class InvoiceParser
   include Squishling
 
-  append_instructions "The Ruby that parses well-formed invoices:", self, AcmeParser
-  append_instructions -> { "This client's invoices are in #{currency}." }
+  append_to_purpose "The Ruby that parses well-formed invoices:", self, AcmeParser
+  append_to_purpose -> { "This client's invoices are in #{currency}." }
 
-  squish :summarize, append_instructions: false do   # no appendices for this method
+  squish :summarize, append_to_purpose: false do   # no appendices for this method
     string :summary
   end
 end
 ```
 
-The same option goes in the class-wide call: `squishling append_instructions: ["...", self]`.
+The same option goes in the class-wide call: `squishling append_to_purpose: ["...", self]`.
 
-Sections are added down the chain: class, then subclass, then `squish :name, append_instructions:`, then
-`squish!(append_instructions:)`. `false` drops everything declared above it, so `[false, "Only this."]`
+Sections are added down the chain: class, then subclass, then `squish :name, append_to_purpose:`, then
+`squish!(append_to_purpose:)`. `false` drops everything declared above it, so `[false, "Only this."]`
 replaces it.
 
 Source is read with Ruby's own parser (Prism) the first time it's needed and cached. Some limits:
@@ -195,8 +200,8 @@ Source is read with Ruby's own parser (Prism) the first time it's needed and cac
 
 ## What the LLM sees
 
-- **System prompt:** your instructions (a String, or a Proc evaluated against the instance), then any
-  `append_instructions` sections, then a short note describing the input format.
+- **System prompt:** your purpose (a String, or a Proc evaluated against the instance), then any
+  `append_to_purpose` sections, then a short note describing the input format.
 - **User message:** JSON with the method's arguments, mapped to their parameter names. Any
   `squish_context` values, and a `squish!` call's `context:`, go under `"context"`:
 
@@ -205,11 +210,15 @@ Source is read with Ruby's own parser (Prism) the first time it's needed and cac
   "context":   { "customer_tier": "enterprise", "product": "API" } }
 ```
 
+- **Squishsum harnesses:** both samples get exactly this input, and a [judge](harnesses.md#the-judge) gets
+  the same purpose and input plus both samples' outputs.
 - **Retries and escalation:** another attempt of the same step gets the validation errors in the same conversation. A
   later [escalation](configuration.md#models-and-escalation) step, which may be a different provider (say, local
   Ollama, then hosted Anthropic Claude), gets the same JSON plus the previous model's rejected output and the
   errors, including any messages your [`squish_validate`](failures.md#output-checks-squish_validate) check
-  returned. Don't put data in those messages that you wouldn't send as an argument.
+  returned. The rejected output is model-generated and is truncated to 4,000 characters; set
+  `forward_rejected: false` on a step to start it from the original input only, without the rejected output or
+  its errors. Don't put data in those messages that you wouldn't send as an argument.
 
 `squish_context` names are read from a method of that name if there is one, otherwise from the instance
 variable. Only context you name is sent. Instance variables are never dumped wholesale, so API clients,

@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 module Squishling
-  # append_instructions: extra system-prompt sections placed after the instructions, layered
+  # append_to_purpose: extra system-prompt sections placed after the purpose, layered
   # class -> subclass -> method -> call. Each level adds to the levels above it; `false` drops them.
   module Appendices
     ITEM_TYPES = [String, Module, Method, UnboundMethod, Proc].freeze
@@ -29,7 +29,7 @@ module Squishling
 
         values = receiver.instance_exec(&item)
         (values.is_a?(Array) ? values : [values]).select(&:itself).map do |value|
-          check!(value, "#{label} append_instructions proc", procs: false)
+          check!(value, "#{label} append_to_purpose proc", procs: false)
           render_item(value)
         end
       end
@@ -43,7 +43,7 @@ module Squishling
       allowed = procs ? ITEM_TYPES : ITEM_TYPES - [Proc]
       return if allowed.any? { |type| item.is_a?(type) }
 
-      raise ConfigurationError, "#{label}: append_instructions items must be Strings, classes or modules, " \
+      raise ConfigurationError, "#{label}: append_to_purpose items must be Strings, classes or modules, " \
                                 "#{procs ? 'methods, or procs' : 'or methods'} (got #{describe(item)})"
     end
 

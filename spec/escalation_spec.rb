@@ -9,7 +9,7 @@ RSpec.describe "Squishling model escalation" do
       include Squishling
 
       squishling escalation: [{ model: "claude-haiku-4-5", attempts: 2 }, "claude-sonnet-5-5"]
-      instructions "Classify."
+      purpose "Classify."
       output_schema { string :label }
     end
   end
@@ -100,11 +100,115 @@ RSpec.describe "Squishling model escalation" do
       expect(chats.last.messages.first).to include('{"label":1}', "not a string")
     end
 
+    it "starts a step from the original input alone with forward_rejected: false" do
+      klass.squishling(escalation: ["a", { model: "b", forward_rejected: false }, "c"])
+      chats = stub_llm({ "label" => 1 }, { "label" => 2 }, { "label" => "ok" })
+
+      expect(klass.call(text: "x").label).to eq("ok")
+      input = JSON.generate(arguments: { text: "x" })
+      expect(chats[1].messages).to eq([input])
+      expect(chats[2].messages.first).to include('{"label":2}', "not a string")
+    end
+
+    it "still retries a forward_rejected: false step in one conversation" do
+      klass.squishling(escalation: [{ model: "a", attempts: 2, forward_rejected: false }])
+      chats = stub_llm({ "label" => 1 }, { "label" => "ok" })
+
+      expect(klass.call(text: "x").label).to eq("ok")
+      expect(chats.size).to eq(1)
+      expect(chats.first.messages.last).to include("not a string")
+    end
+
+    it "starts a forward_rejected: false step from the input alone after a provider error" do
+      klass.squishling(escalation: ["a", "b", { model: "c", forward_rejected: false }])
+      chats = stub_llm({ "label" => 1 }, RubyLLM::ServerError.new("boom"), { "label" => "ok" })
+
+      expect(klass.call(text: "x").label).to eq("ok")
+      expect(chats.last.messages).to eq([JSON.generate(arguments: { text: "x" })])
+    end
+
+    it "treats steps that differ only in forward_rejected as different steps" do
+      klass.squishling(escalation: ["a", { model: "a", forward_rejected: false }])
+      chats = stub_llm({ "label" => 1 }, { "label" => "ok" })
+
+      klass.call(text: "x")
+      expect(chats.size).to eq(2)
+      expect(chats.last.messages).to eq([JSON.generate(arguments: { text: "x" })])
+    end
+
+    it "takes forward_rejected: from default_escalation" do
+      Squishling.config.default_escalation = ["a", { model: "b", forward_rejected: false }]
+      plain = Class.new do
+        include Squishling
+
+        squishling
+        purpose "Classify."
+        output_schema { string :label }
+      end
+      chats = stub_llm({ "label" => 1 }, { "label" => "ok" })
+
+      plain.call(text: "x")
+      expect(chats.last.messages).to eq([JSON.generate(arguments: { text: "x" })])
+    end
+
+    it "caps the rejected output it forwards" do
+      long = "x" * (Squishling::Invoker::MAX_FORWARDED_CHARS + 50)
+      chats = stub_llm(long, { "label" => "ok" })
+      klass.squishling(escalation: %w[a b])
+
+      expect(klass.call(text: "x").label).to eq("ok")
+      forwarded = chats.last.messages.first
+      expect(forwarded).to include("x" * Squishling::Invoker::MAX_FORWARDED_CHARS, "[truncated, 50 more characters]")
+      expect(forwarded).not_to include("x" * (Squishling::Invoker::MAX_FORWARDED_CHARS + 1))
+    end
+
+    it "forwards a rejected output under the cap untouched" do
+      chats = stub_llm({ "label" => 1 }, { "label" => "ok" })
+      klass.squishling(escalation: %w[a b])
+
+      klass.call(text: "x")
+      expect(chats.last.messages.first).to include('{"label":1}')
+      expect(chats.last.messages.first).not_to include("truncated")
+    end
+
     it "raises LLMError with its cause when the last model fails" do
       error = RubyLLM::ServerError.new("boom")
       stub_llm(nil, nil, error)
 
       expect { klass.call(text: "x") }.to raise_error(Squishling::LLMError, /boom/) { |e| expect(e.cause).to equal(error) }
+    end
+
+    it "raises LLMError, not InvalidOutputError, when the last step fails after an earlier step's invalid output" do
+      error = RubyLLM::ServerError.new("overloaded")
+      chats = stub_llm({ "label" => 1 }, { "label" => 2 }, error)
+
+      expect { klass.call(text: "x") }
+        .to raise_error(Squishling::LLMError, /overloaded/) { |e| expect(e.cause).to equal(error) }
+      expect(chats.map(&:model)).to eq(%w[claude-haiku-4-5 claude-sonnet-5-5])
+      expect(chats.last.messages.size).to eq(1)
+      expect(chats.last.messages.first).to include('{"label":2}', "not a string")
+    end
+
+    it "starts a fresh chat after a mid-path LLMError and still reports the final LLMError" do
+      klass.squishling(escalation: [{ model: "claude-haiku-4-5", attempts: 3 }])
+      first = RubyLLM::RateLimitError.new("slow down")
+      last = RubyLLM::ServerError.new("boom")
+      chats = stub_llm({ "label" => 1 }, first, last)
+
+      expect { klass.call(text: "x") }
+        .to raise_error(Squishling::LLMError, /boom/) { |e| expect(e.cause).to equal(last) }
+      expect(chats.map { |chat| chat.messages.size }).to eq([2, 1])
+      expect(chats.last.messages.first).to include('{"label":1}', "not a string")
+    end
+
+    it "hands the final LLMError to squish_fallback instead of raising" do
+      klass.squish_fallback { |error, **| { label: error.class.name } }
+      stub_llm({ "label" => 1 }, { "label" => 2 }, RubyLLM::ServerError.new("overloaded"))
+
+      result = klass.call(text: "x")
+
+      expect(result.label).to eq("Squishling::LLMError")
+      expect(result).not_to be_squished
     end
 
     it "never escalates a configuration error" do
@@ -115,7 +219,7 @@ RSpec.describe "Squishling model escalation" do
     end
 
     it "names the failing step's params when the provider rejects a later step" do
-      klass.squishling(escalation: ["claude-haiku-4-5", { model: "gpt-6-luna", params: { temperature: 0.1 } }])
+      klass.squishling(escalation: ["claude-haiku-4-5", { model: "gpt-unknown", params: { temperature: 0.1 } }])
       stub_llm(nil, RubyLLM::BadRequestError.new("unsupported temperature"))
 
       expect { klass.call(text: "x") }.to raise_error(Squishling::ConfigurationError, /temperature.*0\.1/)
@@ -165,7 +269,7 @@ RSpec.describe "Squishling model escalation" do
       Class.new do
         include Squishling
 
-        instructions "x"
+        purpose "x"
         output_schema { string :value }
       end
     end
@@ -228,7 +332,8 @@ RSpec.describe "Squishling model escalation" do
     end
 
     it "applies the level's provider to steps without their own" do
-      base.squishling(escalation: ["gpt-6-luna", { model: "claude-opus-5-5", provider: :anthropic }], provider: :openai)
+      base.squishling(escalation: ["gpt-unknown", { model: "claude-opus-5-5", provider: :anthropic }],
+        provider: :openai)
       chats = stub_llm(nil, { "value" => "v" })
 
       base.call
@@ -239,7 +344,7 @@ RSpec.describe "Squishling model escalation" do
 
     it "merges step params over the class params, letting nil unset a key" do
       base.squishling(params: { temperature: 0.2, top_p: 0.9 },
-        escalation: ["claude-haiku-4-5", { model: "gpt-6-luna", provider: :openai,
+        escalation: ["claude-haiku-4-5", { model: "gpt-unknown", provider: :openai,
                                            params: { temperature: nil, thinking: { effort: :high } } }])
       chats = stub_llm(nil, { "value" => "v" })
 
@@ -271,7 +376,9 @@ RSpec.describe "Squishling model escalation" do
       [[{ model: "a", attempts: "2" }], /attempts: must be a positive Integer/],
       [[{ model: "a", order: 1 }, "b"], /every step an order: or none \(1 of 2/],
       [[{ model: "a", order: 1 }, { model: "b", order: 1 }], /duplicate order: 1/],
-      [[{ model: "a", order: 1.5 }], /order: must be an Integer/]
+      [[{ model: "a", order: 1.5 }], /order: must be an Integer/],
+      [[{ model: "a", forward_rejected: "no" }], /forward_rejected: must be true or false/],
+      [[{ model: "a", forward_rejected: nil }], /forward_rejected: must be true or false/]
     ].each do |escalation, message|
       it "rejects escalation #{escalation.inspect} at declaration time" do
         expect { base.squishling(escalation:) }.to raise_error(Squishling::ConfigurationError, message)

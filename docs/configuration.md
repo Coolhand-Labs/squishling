@@ -17,6 +17,7 @@ Squishling.configure do |config|
   config.default_model = "claude-sonnet-5-5"   # or default_escalation, below
   config.default_provider = nil
   config.default_params = { temperature: 0 }
+  config.default_harness = :escalation
   config.logger = Rails.logger
 end
 ```
@@ -27,7 +28,9 @@ end
 | `default_escalation` | `nil` | The universal [escalation](#models-and-escalation): models tried in order. Assigning it clears `default_model`, and vice versa. |
 | `default_provider` | `nil` | The provider for `default_model`/`default_escalation` steps that don't name one. Only needed for models missing from RubyLLM's registry (see below). |
 | `default_params` | `{}` | Generation params for every call (temperature, reasoning effort, top_p, …), overridable per class, per method, and per escalation step. See [Generation params](#generation-params). |
-| `logger` | `nil` | Any `Logger`. Debug lines when a call routes to the LLM, warnings on each escalation and when a fallback is used. |
+| `squawk` | `nil` | A callable run after every LLM attempt with the raw output, for sending it to an error tracker or tracing tool. Also settable per class and per method. See [Observing every attempt](failures.md#observing-every-attempt-squawk). |
+| `default_harness` | `nil` (`:escalation`) | How every squishling class that doesn't declare its own uses its escalation: `:escalation`, `:squishsum`, `:judged_squishsum`, or a Hash with `type:` and options. See [Harnesses](harnesses.md). |
+| `logger` | `nil` | Any `Logger`. Debug lines when a call routes to the LLM, warnings on each escalation and when a fallback is used. Never includes the raw model response; see [what ends up in errors and logs](failures.md#what-ends-up-in-errors-and-logs). |
 
 Transport-level retries (rate limits, 5xx, timeouts) are configured on RubyLLM itself
 (`RubyLLM.config.max_retries`, `request_timeout`).
@@ -61,6 +64,7 @@ Each step is a model name, or a Hash with:
 | `attempts:` | `1` | How many attempts this step gets before escalating to the next one. |
 | `order:` | position | An Integer; steps run lowest first. Give every step an `order:` or none (duplicates are rejected). Gaps are fine. |
 | `provider:` | the level's `provider:` | See [Providers](#providers-and-newly-released-models). |
+| `forward_rejected:` | `true` | Set `false` to start this step from the original input alone, without the previous step's rejected output and its errors (see below). |
 | `params:` | `{}` | [Generation params](#generation-params) for this step, merged over the class and method params key by key. |
 
 Without `order:`, steps run in the order written. With it, the order is explicit and doesn't depend on position:
@@ -105,10 +109,13 @@ end
 Passing both `model:` and `escalation:` in one declaration raises `ConfigurationError`, and so does a list passed as
 `model:`. Across separate declarations (a reopened class, or two config assignments), the latest one wins.
 
-Consecutive attempts of the same step (same model, provider, and params, e.g. `attempts: 2`) continue one
-conversation. Moving to a different step starts a fresh chat with the original input plus the previous output and why
-it was rejected, so no provider-specific history crosses providers. Configuration errors (bad credentials, an unknown model, a request the provider rejects) never move to the
-next attempt. See [Failure handling](failures.md).
+Consecutive attempts of the same step (same model, provider, params, and `forward_rejected:`, e.g. `attempts: 2`)
+continue one conversation. Moving to a different step starts a fresh chat with the original input plus the previous
+output and why it was rejected, so no provider-specific history crosses providers. That rejected output is
+model-generated and is sent to the next step's provider, even when it is a different one, truncated to 4,000
+characters. If you don't want a step to see it (say, because the next step is a different provider), set
+`forward_rejected: false` on that step and it starts from the original input only. Configuration errors (bad
+credentials, an unknown model, a request the provider rejects) never move to the next attempt. See [Failure handling](failures.md).
 
 ## Providers and newly released models
 
@@ -116,9 +123,9 @@ RubyLLM looks models up in its bundled registry. To use a model that isn't there
 OpenAI or Anthropic model, name its provider next to it. Squishling then tells RubyLLM to assume the model exists:
 
 ```ruby
-squishling model: "gpt-6-luna", provider: :openai
+squishling model: "gpt-7-preview", provider: :openai
 squish :triage, model: "claude-haiku-4-5", provider: :anthropic
-Squishling.configure { |c| c.default_model = "gpt-6-luna"; c.default_provider = :openai }
+Squishling.configure { |c| c.default_model = "gpt-7-preview"; c.default_provider = :openai }
 ```
 
 A provider is paired with the model or escalation declared at the same level, and applies to that escalation's steps
@@ -163,22 +170,33 @@ end
   ```
 
 - Keys that Squishling or RubyLLM control (`model`, `messages`, `input`, `instructions`, `system`, `stream`,
-  `response_format`, `text`, `output_config`, `tools`, `tool_choice`, `schema`, …) raise `ConfigurationError`,
-  because they would override the model, the conversation, or the strict output format.
+  `response_format`, `text`, `output_config`, `tools`, `tool_choice`, `schema`, and the camelCase and plural
+  spellings other providers use, such as `systemInstruction`, `toolConfig`/`tool_config`, `outputConfig`, `inputs`, …)
+  raise `ConfigurationError`, because they would override the model, the conversation, or the strict output format.
+- **Nested containers** such as Gemini's `generationConfig` (and `generation_config` for Gemini Interactions) and
+  Mistral Conversations' `completion_args` accept ordinary settings, but reject the keys inside them that carry the
+  output format or tools (`responseMimeType`, `responseSchema`, `responseJsonSchema`, `response_format`, `tools`,
+  `tool_choice`, `toolConfig`, and their snake_case spellings). Use `output_schema` instead:
+
+  ```ruby
+  squishling params: { generationConfig: { topK: 5 } }                      # ok
+  squishling params: { generationConfig: { responseMimeType: "text/plain" } } # ConfigurationError
+  ```
+
 - If a provider rejects a param, the call raises `Squishling::ConfigurationError` naming the params. It isn't
   retried or sent to `squish_fallback`. See [Failure handling](failures.md).
 
 ## Inheritance
 
-Subclasses inherit the model or escalation, provider, generation params (merged key by key), instructions, output schema,
+Subclasses inherit the model or escalation, provider, harness, generation params (merged key by key), purpose, output schema,
 `squish_when` predicate, `squish_context` names, `squish_validate`, `squish_fallback`, and every `squish` declaration. Overrides in a subclass, including
 overridden methods, are routed the same way.
 
-`append_instructions` sections are added to, not replaced: a subclass's sections follow its parent's, and
-`append_instructions false` drops the inherited ones. See [Appending to the instructions](routing.md#appending-to-the-instructions).
+`append_to_purpose` sections are added to, not replaced: a subclass's sections follow its parent's, and
+`append_to_purpose false` drops the inherited ones. See [Appending to the purpose](routing.md#appending-to-the-purpose).
 
 ## Per-call overrides
 
-Inside a squished method, `squish!` sends the call to the LLM with its own `instructions:`,
-`append_instructions:`, `context:`, `model:` or `escalation:` (with `provider:`), and `params:`. Each layers over the method and class
+Inside a squished method, `squish!` sends the call to the LLM with its own `purpose:`,
+`append_to_purpose:`, `context:`, `model:` or `escalation:` (with `provider:`), `params:`, and `harness:`. Each layers over the method and class
 settings the same way they layer over each other. See [Handing off to the LLM](routing.md#handing-off-to-the-llm-with-squish).

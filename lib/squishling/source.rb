@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 module Squishling
-  # Ruby source for append_instructions items: a class or module body, or a single method, rendered as a
+  # Ruby source for append_to_purpose items: a class or module body, or a single method, rendered as a
   # fenced code block. Parsed with Prism (a default gem since Ruby 3.3), loaded the first time it's needed.
   module Source
     # owner => { method name, or nil for the module itself => rendered source }. Weak keys, so classes replaced
@@ -30,7 +30,7 @@ module Squishling
       def module_source(mod)
         constant = constant_location(mod)
         sources = constant ? class_bodies(mod, constant) : method_defs(mod)
-        raise ConfigurationError, "append_instructions: source for #{mod.inspect} isn't available" if sources.empty?
+        raise ConfigurationError, "append_to_purpose: source for #{mod.inspect} isn't available" if sources.empty?
 
         [display_name(mod), sources.join("\n\n")]
       end
@@ -58,7 +58,7 @@ module Squishling
       def method_source(method)
         label = method_label(method)
         source = def_source(method)
-        raise ConfigurationError, "append_instructions: source for #{label} isn't available" unless source
+        raise ConfigurationError, "append_to_purpose: source for #{label} isn't available" unless source
 
         [label, source]
       end
@@ -84,7 +84,7 @@ module Squishling
       # A squished method resolves to Squishling's wrapper; show the implementation beneath it.
       def unwrap(method)
         Wrapper.implementation(method) or
-          raise ConfigurationError, "append_instructions: #{method.name} has no implementation to show"
+          raise ConfigurationError, "append_to_purpose: #{method.name} has no implementation to show"
       end
 
       # Named after the def that's shown, so an alias is labeled by its original name.
@@ -162,7 +162,7 @@ module Squishling
         text = File.read(file, encoding: Encoding::UTF_8).scrub
         [Prism.parse(text).value, text.lines]
       rescue SystemCallError => e
-        raise ConfigurationError, "append_instructions: can't read #{file} (#{e.class})"
+        raise ConfigurationError, "append_to_purpose: can't read #{file} (#{e.class})"
       end
 
       # Give the node's first line its source line's indentation (it may start mid-line, as in

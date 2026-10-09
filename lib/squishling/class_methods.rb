@@ -6,25 +6,36 @@ module Squishling
     DEFAULT_METHOD = :call
 
     # Set class-wide options in one call:
-    #   squishling model: "claude-sonnet-5-5", instructions: "...", output_schema: MySchema
+    #   squishling model: "claude-sonnet-5-5", purpose: "...", output_schema: MySchema
     # model: is a single attempt; escalation: is a list of models tried in order (see ModelPath):
     #   squishling escalation: [{ model: "claude-haiku-4-5", attempts: 2 }, "claude-sonnet-5-5", "claude-opus-5-5"]
     # Pass provider: alongside model: for models missing from RubyLLM's registry, e.g.
-    #   squishling model: "gpt-6-luna", provider: :openai
+    #   squishling model: "gpt-7-preview", provider: :openai
     # params: are generation params merged over the configured defaults (see Configuration#default_params):
     #   squishling params: { temperature: 0.1, top_p: 0.9 }
-    # append_instructions: adds sections after the instructions (see #append_instructions):
-    #   squishling append_instructions: ["The Ruby that handles well-formed input:", self]
-    def squishling(model: nil, escalation: nil, provider: nil, params: nil, instructions: nil,
-      append_instructions: nil, output_schema: nil)
+    # append_to_purpose: adds sections after the purpose (see #append_to_purpose):
+    #   squishling append_to_purpose: ["The Ruby that handles well-formed input:", self]
+    # harness: chooses how the escalation is used (see Harness):
+    #   squishling harness: :judged_squishsum
+    # squawk: is called after every LLM attempt with the raw output (see Configuration#squawk); false silences
+    # an inherited one:
+    #   squishling squawk: ->(output:, metadata:, error:) { Tracer.record(output, metadata, error) }
+    def squishling(model: nil, escalation: nil, provider: nil, params: nil, harness: nil, purpose: nil,
+      append_to_purpose: nil, output_schema: nil, squawk: nil)
       path = ModelPath.declare(model, escalation, to_s)
       @squishling_model_path = path if path
       @squishling_provider = provider if provider
       @squishling_params = Params.normalize(params, "#{self} params") if params
-      self.instructions(instructions) if instructions
-      self.append_instructions(append_instructions) unless append_instructions.nil?
+      @squishling_harness = Harness.normalize(harness, to_s) unless harness.nil?
+      self.purpose(purpose) if purpose
+      self.append_to_purpose(append_to_purpose) unless append_to_purpose.nil?
       self.output_schema(output_schema) if output_schema
+      @squishling_squawk = Squawk.validate(squawk, to_s) unless squawk.nil?
       self
+    end
+
+    def squishling_squawk
+      squishling_lookup(:@squishling_squawk)
     end
 
     # The class's (or nearest ancestor's) model or escalation, as normalized steps.
@@ -36,33 +47,37 @@ module Squishling
       squishling_lookup(:@squishling_provider)
     end
 
+    def squishling_harness
+      squishling_lookup(:@squishling_harness)
+    end
+
     # Generation params merged down the inheritance chain, so a subclass overrides individual keys.
     def squishling_params
       squishling_inherited(:squishling_params, {}).merge(@squishling_params || {})
     end
 
     # The system prompt. A String, or a Proc evaluated against the instance.
-    def instructions(text = nil, &block)
-      return squishling_lookup(:@squishling_instructions) if text.nil? && block.nil?
+    def purpose(text = nil, &block)
+      return squishling_lookup(:@squishling_purpose) if text.nil? && block.nil?
 
-      @squishling_instructions = block || text
+      @squishling_purpose = block || text
     end
 
-    # Sections appended to the system prompt after the instructions, added to by subclasses, `squish`, and
+    # Sections appended to the system prompt after the purpose, added to by subclasses, `squish`, and
     # `squish!`. Items: Strings; a class or module (`self` for this class) or a method (`instance_method(:call)`),
     # sent as its Ruby source; or a Proc evaluated against the instance. `false` drops inherited items.
-    #   append_instructions "Here is the Ruby that parses well-formed invoices:", self
-    #   append_instructions { "This client's invoices are in #{currency}." }
-    def append_instructions(*items, &block)
+    #   append_to_purpose "Here is the Ruby that parses well-formed invoices:", self
+    #   append_to_purpose { "This client's invoices are in #{currency}." }
+    def append_to_purpose(*items, &block)
       items = items.first if items.size == 1 && items.first.is_a?(Array)
       items += [block] if block
-      (@squishling_append_instructions ||= []).concat(Appendices.normalize(items, "#{self} append_instructions"))
+      (@squishling_append_to_purpose ||= []).concat(Appendices.normalize(items, "#{self} append_to_purpose"))
       self
     end
 
     # Every level's items in declaration order, `false` markers included (see Appendices.resolve).
-    def squishling_append_instructions
-      squishling_inherited(:squishling_append_instructions, []) + (@squishling_append_instructions || [])
+    def squishling_append_to_purpose
+      squishling_inherited(:squishling_append_to_purpose, []) + (@squishling_append_to_purpose || [])
     end
 
     # The output format: a Schematist::Schema subclass (RubyLLM::Schema with the ruby_llm-schema shim),
@@ -85,7 +100,7 @@ module Squishling
 
     # Called with the error and the method's inputs (as keywords) when the LLM path fails with an
     # InvalidOutputError or LLMError, evaluated against the instance. Its return value is used as
-    # the result (hashes are validated and typed); re-raise to propagate.
+    # the result (validated against the schema and typed like a deterministic return); re-raise to propagate.
     #   squish_fallback { |error, **inputs| { priority: "medium", team: "support" } }
     def squish_fallback(&block)
       @squishling_fallback = block
@@ -118,21 +133,24 @@ module Squishling
     end
 
     # Make methods elastic. Each may override the class-level settings:
-    #   squish :triage, instructions: "...", escalation: %w[claude-haiku-4-5 claude-sonnet-5-5], when: ->(**) { true },
-    #                   fallback: ->(error, **) { { priority: "medium" } }, append_instructions: [...],
-    #                   validate: ->(result, **) { "team is required" if result.team.empty? } do
+    #   squish :triage, purpose: "...", escalation: %w[claude-haiku-4-5 claude-sonnet-5-5], when: ->(**) { true },
+    #                   fallback: ->(error, **) { { priority: "medium" } }, append_to_purpose: [...],
+    #                   validate: ->(result, **) { "team is required" if result.team.empty? },
+    #                   harness: :squishsum, squawk: ->(output:, error:, **) { Tracer.record(output, error) } do
     #     string :priority
     #   end
-    def squish(*names, instructions: nil, append_instructions: nil, output_schema: nil, model: nil, escalation: nil,
-      provider: nil, params: nil, when: nil, fallback: nil, validate: nil, &schema_block)
+    def squish(*names, purpose: nil, append_to_purpose: nil, output_schema: nil, model: nil, escalation: nil,
+      provider: nil, params: nil, harness: nil, when: nil, fallback: nil, validate: nil, squawk: nil, &schema_block)
       schema = schema_block ? Schematist::Schema.create(&schema_block) : output_schema
       model = ModelPath.declare(model, escalation, "#{self} squish")
       params &&= Params.normalize(params, "#{self} squish params")
-      unless append_instructions.nil?
-        append_instructions = Appendices.normalize(append_instructions, "#{self} squish append_instructions")
+      harness = Harness.normalize(harness, "#{self} squish") unless harness.nil?
+      unless append_to_purpose.nil?
+        append_to_purpose = Appendices.normalize(append_to_purpose, "#{self} squish append_to_purpose")
       end
-      options = { instructions:, append_instructions:, output_schema: schema, model:, provider:, params:,
-                  predicate: binding.local_variable_get(:when), fallback:, validator: validate }.compact
+      squawk = Squawk.validate(squawk, "#{self} squish")
+      options = { purpose:, append_to_purpose:, output_schema: schema, model:, provider:, params:, harness:,
+                  predicate: binding.local_variable_get(:when), fallback:, validator: validate, squawk: }.compact
 
       names.map(&:to_sym).each do |name|
         (@squishling_methods ||= {})[name] = options

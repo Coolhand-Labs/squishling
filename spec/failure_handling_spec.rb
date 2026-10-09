@@ -6,7 +6,7 @@ RSpec.describe "Squishling failure handling" do
       include Squishling
 
       squishling escalation: [{ model: "test-model", attempts: 2 }]
-      instructions "Classify."
+      purpose "Classify."
       output_schema { string :label }
     end
   end
@@ -31,6 +31,52 @@ RSpec.describe "Squishling failure handling" do
 
       expect(klass.call(text: "x").label).to eq("ok")
       expect(chats.first.messages.last).to include("not valid JSON")
+    end
+
+    describe "model output in messages and logs" do
+      let(:log) { StringIO.new }
+
+      before { Squishling.configure { |c| c.logger = Logger.new(log) } }
+
+      it "keeps unparseable output out of the error, the log, and the retry message" do
+        chats = stub_llm('{"label": SECRET_TOKEN oops}', '{"label": SECRET_TOKEN oops}')
+
+        expect { klass.call(text: "x") }.to raise_error(Squishling::InvalidOutputError, /not valid JSON/) do |e|
+          expect(e.message).not_to include("SECRET_TOKEN")
+          expect(e.errors.join).not_to include("SECRET_TOKEN")
+          expect(e.raw).to include("SECRET_TOKEN")
+        end
+        expect(log.string).to include("not valid JSON")
+        expect(log.string).not_to include("SECRET_TOKEN")
+        expect(chats.first.messages.last).not_to include("SECRET_TOKEN")
+      end
+
+      it "reports where parsing failed" do
+        stub_llm('{"label": SECRET_TOKEN oops}', '{"label": SECRET_TOKEN oops}')
+
+        expect { klass.call(text: "x") }.to raise_error(Squishling::InvalidOutputError, /at line 1 column \d+/)
+      end
+
+      it "reports a failure without a position" do
+        allow(JSON).to receive(:parse).and_call_original
+        allow(JSON).to receive(:parse).with("SECRET_TOKEN")
+          .and_raise(JSON::ParserError, "unexpected token at 'SECRET_TOKEN'")
+        stub_llm("SECRET_TOKEN", "SECRET_TOKEN")
+
+        expect { klass.call(text: "x") }
+          .to raise_error(Squishling::InvalidOutputError, "LLM output was invalid after 2 attempts: " \
+                                                          "response was not valid JSON")
+      end
+
+      it "doesn't echo rejected values in schema errors" do
+        klass.output_schema { string :label, enum: %w[a b] }
+        stub_llm({ "label" => "SECRET_TOKEN" }, { "label" => "SECRET_TOKEN" })
+
+        expect { klass.call(text: "x") }.to raise_error(Squishling::InvalidOutputError, /not one of/) do |e|
+          expect(e.message).not_to include("SECRET_TOKEN")
+        end
+        expect(log.string).not_to include("SECRET_TOKEN")
+      end
     end
 
     it "parses JSON wrapped in a markdown code fence" do
@@ -122,7 +168,7 @@ RSpec.describe "Squishling failure handling" do
         include Squishling
 
         squishling escalation: [{ model: "test-model", attempts: 2 }]
-        instructions "Classify."
+        purpose "Classify."
         output_schema { string :label }
         squish_fallback do |error, text:|
           @seen = [error.class, text]
@@ -162,6 +208,64 @@ RSpec.describe "Squishling failure handling" do
       stub_llm(nil, nil)
 
       expect { klass.call(text: "hi") }.to raise_error(Squishling::InvalidOutputError, /Deterministic/)
+    end
+
+    it "rejects a fallback return that isn't the schema's object" do
+      stub_llm(nil, nil)
+
+      [nil, "fallback", [1], Object.new].each do |value|
+        klass.squish_fallback { |_error, **| value }
+
+        expect { klass.call(text: "hi") }.to raise_error(Squishling::InvalidOutputError, /Deterministic/)
+        stub_llm(nil, nil)
+      end
+    end
+
+    it "re-validates a fallback return built from a different schema" do
+      other = Class.new do
+        include Squishling
+
+        purpose "x"
+        output_schema { string :label }
+
+        def call = { label: "other" }
+      end
+      mismatched = Class.new do
+        include Squishling
+
+        purpose "x"
+        output_schema { integer :label }
+
+        def call = { label: 1 }
+      end
+      stub_llm(nil, nil)
+
+      klass.squish_fallback { |_error, **| other.call }
+      converted = klass.call(text: "hi")
+      expect(converted.label).to eq("other")
+      expect(converted.class).not_to equal(other.call.class)
+
+      stub_llm(nil, nil)
+      klass.squish_fallback { |_error, **| mismatched.call }
+      expect { klass.call(text: "hi") }.to raise_error(Squishling::InvalidOutputError, /Deterministic/)
+    end
+
+    it "lets a fallback post-process a plain value from calling the method itself" do
+      klass.squish_when { |**| true }
+      klass.squish_fallback { |_error, **inputs| { label: call(**inputs) || "default" } }
+      klass.define_method(:call) { |text:| text == "skip" ? nil : text }
+      stub_llm(nil, nil)
+
+      expect(klass.call(text: "skip").label).to eq("default")
+    end
+
+    it "lets squish_when consume a plain value from calling the method itself" do
+      klass.squish_when { |**inputs| call(**inputs).nil? }
+      klass.define_method(:call) { |text:| text == "skip" ? nil : { label: text } }
+      stub_llm(label: "from llm")
+
+      expect(klass.call(text: "skip").label).to eq("from llm")
+      expect(klass.call(text: "keep").label).to eq("keep")
     end
 
     it "can re-raise to propagate the error" do

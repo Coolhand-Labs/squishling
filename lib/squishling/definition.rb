@@ -9,42 +9,47 @@ module Squishling
 
     attr_reader :klass, :name, :call_context
 
-    def initialize(klass:, name:, instructions: nil, append_instructions: nil, output_schema: nil, model: nil,
-      provider: nil, params: nil, predicate: nil, fallback: nil, validator: nil, call_context: {})
+    def initialize(klass:, name:, purpose: nil, append_to_purpose: nil, output_schema: nil, model: nil,
+      provider: nil, params: nil, harness: nil, predicate: nil, fallback: nil, validator: nil, squawk: nil,
+      call_context: {})
       @klass = klass
       @name = name
-      @instructions = instructions
-      @append_instructions = append_instructions
+      @purpose = purpose
+      @append_to_purpose = append_to_purpose
       @output_schema = output_schema
       @model = model
       @provider = provider
       @params = params
+      @harness = harness
       @predicate = predicate
       @fallback = fallback
       @validator = validator
+      @squawk = squawk
       @call_context = call_context
     end
 
     # This definition with one call's overrides on top. The output schema, predicate, fallback, and validator
     # can't be overridden: the call must still return the method's result type.
-    def for_call(instructions: nil, append_instructions: nil, context: nil, model: nil, escalation: nil,
-      provider: nil, params: nil)
+    def for_call(purpose: nil, append_to_purpose: nil, context: nil, model: nil, escalation: nil,
+      provider: nil, params: nil, harness: nil)
       call_path = ModelPath.declare(model, escalation, "#{label} squish!")
       raise ConfigurationError, "#{label}: squish! provider: needs a model: or escalation:" if provider && !call_path
       unless context.nil? || (context.is_a?(Hash) && context.each_key.all?(NAME_KEY))
         raise ConfigurationError, "#{label}: squish! context: must be a Hash with String or Symbol keys"
       end
 
-      appended = Appendices.normalize(append_instructions, "#{label} squish!") unless append_instructions.nil?
+      appended = Appendices.normalize(append_to_purpose, "#{label} squish!") unless append_to_purpose.nil?
       call_params = params && Params.normalize(params, "#{label} squish! params")
+      call_harness = Harness.normalize(harness, "#{label} squish!") unless harness.nil?
       self.class.new(
         klass:, name:, output_schema: @output_schema, predicate: @predicate, fallback: @fallback,
-        validator: @validator,
-        instructions: instructions || @instructions,
-        append_instructions: [*@append_instructions, *appended],
+        validator: @validator, squawk: @squawk,
+        purpose: purpose || @purpose,
+        append_to_purpose: [*@append_to_purpose, *appended],
         model: call_path || @model, provider: call_path ? provider : @provider,
         # merge, not Params.resolve: a nil at the method level must still unset the class's key.
         params: call_params ? (@params || {}).merge(call_params) : @params,
+        harness: call_harness || @harness,
         call_context: @call_context.merge((context || {}).transform_keys(&:to_sym))
       )
     end
@@ -53,17 +58,17 @@ module Squishling
       "#{klass}##{name}"
     end
 
-    # The system prompt: the instructions, then each append_instructions section.
-    def instructions(receiver)
-      value = @instructions || klass.instructions
+    # The system prompt: the purpose, then each append_to_purpose section.
+    def purpose(receiver)
+      value = @purpose || klass.purpose
       value = receiver.instance_exec(&value) if value.is_a?(Proc)
       return value if value.nil? || value.empty?
 
-      [value, *Appendices.render(append_instructions, receiver, label)].join("\n\n")
+      [value, *Appendices.render(append_to_purpose, receiver, label)].join("\n\n")
     end
 
-    def append_instructions
-      Appendices.resolve(klass.squishling_append_instructions + (@append_instructions || []))
+    def append_to_purpose
+      Appendices.resolve(klass.squishling_append_to_purpose + (@append_to_purpose || []))
     end
 
     def schema
@@ -78,8 +83,13 @@ module Squishling
       config = Squishling.config
       entries, provider = [[@model, @provider], [klass.squishling_model_path, klass.squishling_provider],
                            [config.default_model_path, config.default_provider]].find(&:first)
-      entries ||= [{ model: nil, attempts: 1 }]
+      entries ||= [{ model: nil, attempts: 1, forward_rejected: true }]
       ModelPath.steps(entries, provider:, params:)
+    end
+
+    # How the escalation is used (see Harness): the method's, the class's, the configured default, or :escalation.
+    def harness
+      @harness || klass.squishling_harness || Squishling.config.default_harness || Harness::DEFAULT
     end
 
     # Generation params: config defaults, overridden key by key by the class, then by the method.
@@ -90,6 +100,12 @@ module Squishling
     # Extra output checks run on schema-valid LLM results (see ClassMethods#squish_validate).
     def validator
       @validator || klass.squishling_validator
+    end
+
+    # The observability hook: the method's, else the class's, else the configured one. `false` at a level
+    # silences the levels above it.
+    def squawk
+      [@squawk, klass.squishling_squawk, Squishling.config.squawk].find { |hook| !hook.nil? } || nil
     end
 
     def context_names
@@ -115,42 +131,61 @@ module Squishling
       coerce(receiver.instance_exec(e, **inputs, &handler))
     end
 
-    # Deterministic return values: hashes are validated and turned into the typed result;
-    # anything else (including an already-built result) passes through.
+    # Deterministic and fallback return values: with an output_schema, every value is validated and
+    # typed like an LLM result. Without one, the value passes through untouched.
     def coerce(value)
-      value.is_a?(Hash) && schema ? build_result(value, squished: false) : value
+      schema ? build_result(value, squished: false) : value
     end
 
+    # A result of this schema's own class passes through; any other result is re-validated via to_h.
     def build_result(attrs, squished:)
       raise ConfigurationError, "#{label} has no output_schema" unless schema
-      return attrs if attrs.is_a?(Result::Instance)
+      return attrs if schema.result_class && attrs.is_a?(schema.result_class)
 
-      data = Schema.jsonify(attrs)
-      errors = schema.validate(data)
+      attrs = attrs.to_h if attrs.is_a?(Result::Instance)
+      data, errors = jsonify_return(attrs)
+      errors = schema.validate(data) if errors.empty?
       raise InvalidOutputError.new(errors:, raw: attrs, source: "Deterministic") if errors.any?
 
       schema.build(data, squished:)
     end
 
-    # Map positional and keyword arguments onto the original method's parameter names.
+    # Map positional and keyword arguments onto the original method's parameter names. A positional with no
+    # name (a destructuring parameter, or one beyond the declared parameters) is sent as arg0, arg1, ...
     def bind_arguments(args, kwargs)
       positional = args.dup
       bound = {}
+      unnamed = 0
 
       parameters.each do |type, param|
         case type
         when :req, :opt
-          bound[param] = positional.shift unless positional.empty? || param.nil?
+          next if positional.empty?
+
+          value = positional.shift
+          if param
+            bound[param] = value
+          else
+            bound[:"arg#{unnamed}"] = value
+            unnamed += 1
+          end
         when :rest
           bound[param.nil? || param == :* ? :args : param] = positional.shift(positional.size)
         end
       end
-      positional.each_with_index { |value, index| bound[:"arg#{index}"] = value }
+      positional.each_with_index { |value, index| bound[:"arg#{unnamed + index}"] = value }
 
       bound.merge(kwargs)
     end
 
     private
+
+    # Values JSON can't represent (NaN, Infinity, cycles) are invalid output, not a raw JSON error.
+    def jsonify_return(attrs)
+      [Schema.jsonify(attrs), []]
+    rescue JSON::GeneratorError, JSON::NestingError => e
+      [nil, [e.message]]
+    end
 
     # The implementation's parameters, beneath the prepended wrappers.
     def parameters

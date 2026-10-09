@@ -23,8 +23,16 @@ module Squishling
     # with_thinking; any other key (top_p, max_tokens, seed, ...) is passed to the provider as-is.
     attr_reader :default_params
 
+    # How every squishling class that doesn't declare its own harness uses its escalation (see Harness):
+    # :escalation (the default), :squishsum, :judged_squishsum, or a Hash with type: and its options.
+    attr_reader :default_harness
+
     # Optional Logger for routing and escalation decisions.
     attr_accessor :logger
+
+    # Optional callable run after every LLM attempt with the raw output (see Squawk), e.g.
+    #   ->(output:, metadata:, error:) { Tracer.record(output, metadata, error) }
+    attr_reader :squawk
 
     def initialize
       @default_model = nil
@@ -32,7 +40,9 @@ module Squishling
       @default_model_path = nil
       @default_provider = nil
       @default_params = {}
+      @default_harness = nil
       @logger = nil
+      @squawk = nil
     end
 
     def default_model=(model)
@@ -47,8 +57,16 @@ module Squishling
       @default_escalation = escalation
     end
 
+    def squawk=(hook)
+      @squawk = Squawk.validate(hook, "Squishling.configure")
+    end
+
     def default_params=(params)
       @default_params = Params.normalize(params, "default_params")
+    end
+
+    def default_harness=(harness)
+      @default_harness = harness.nil? ? nil : Harness.normalize(harness, "default_harness")
     end
 
     MAX_RETRIES_REMOVED = "max_retries was removed; use default_escalation (or a class/method escalation:) " \
