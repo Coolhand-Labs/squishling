@@ -107,17 +107,17 @@ RSpec.describe Squishling::Params do
         end
     end
 
+    it "rejects the camelCase and plural request keys of the Gemini, Bedrock Converse, and Mistral protocols" do
+      %i[systemInstruction cachedContent toolConfig tool_config outputConfig inputs].each do |key|
+        expect { base.squishling(params: { key => {} }) }
+          .to raise_error(Squishling::ConfigurationError, /#{key} can't be set through params/)
+      end
+    end
+
     it "allows provider-specific nested config such as Gemini's generationConfig" do
       base.squishling(params: { generationConfig: { topK: 5 } })
 
       expect(generation_for(base)).to eq(provider_options: { generationConfig: { topK: 5 } })
-    end
-
-    it "rejects other protocols' top-level keys for the conversation, output format, or tools" do
-      %i[inputs outputConfig toolConfig tool_config systemInstruction].each do |key|
-        expect { base.squishling(params: { key => {} }) }
-          .to raise_error(Squishling::ConfigurationError, /#{key} can't be set through params/)
-      end
     end
 
     it "rejects every reserved nested key inside each allowed container, as symbols or strings" do

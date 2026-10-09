@@ -9,9 +9,9 @@ module Squishling
     # overriding RubyLLM's defaults, so these would silently replace the model, the conversation,
     # or the strict output format.
     RESERVED_KEYS = %i[
-      model messages input inputs instructions contents system system_instruction stream stream_options store include
-      response_format text output_config tools tool_choice schema
-      outputConfig toolConfig tool_config systemInstruction
+      model messages input inputs instructions contents system system_instruction systemInstruction cachedContent
+      stream stream_options store include response_format text output_config outputConfig tools tool_choice
+      toolConfig tool_config schema
     ].freeze
 
     # Some protocols carry the structured-output format (or tool selection) inside a container that is

@@ -162,10 +162,10 @@ end
   squish :triage, model: "gpt-6-luna", provider: :openai, params: { temperature: nil, thinking: { effort: :low } }
   ```
 
-- Keys that Squishling or RubyLLM control (`model`, `messages`, `input`/`inputs`, `instructions`, `system`, `stream`,
-  `response_format`, `text`, `output_config`, `tools`, `tool_choice`, `schema`, …) raise `ConfigurationError`,
-  because they would override the model, the conversation, or the strict output format. This includes the
-  camelCase spellings some protocols use (`outputConfig`, `toolConfig`/`tool_config`, `systemInstruction`).
+- Keys that Squishling or RubyLLM control (`model`, `messages`, `input`, `instructions`, `system`, `stream`,
+  `response_format`, `text`, `output_config`, `tools`, `tool_choice`, `schema`, and the camelCase and plural
+  spellings other providers use, such as `systemInstruction`, `toolConfig`/`tool_config`, `outputConfig`, `inputs`, …)
+  raise `ConfigurationError`, because they would override the model, the conversation, or the strict output format.
 - **Nested containers** such as Gemini's `generationConfig` (and `generation_config` for Gemini Interactions) and
   Mistral Conversations' `completion_args` accept ordinary settings, but reject the keys inside them that carry the
   output format or tools (`responseMimeType`, `responseSchema`, `responseJsonSchema`, `response_format`, `tools`,
