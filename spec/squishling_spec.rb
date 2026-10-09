@@ -305,15 +305,16 @@ RSpec.describe Squishling do
   end
 
   describe "invalid LLM output" do
-    it "retries with the validation errors, then succeeds" do
+    it "retries with the validation errors when a step has two attempts, then succeeds" do
+      invoice_parser.squishling(escalation: [{ model: "m", attempts: 2 }])
       chats = stub_llm({ "invoice_number" => 5 }, llm_invoice)
 
       expect(invoice_parser.call(client_name: "globex", data: "").total).to eq(1250.0)
-      expect(chats.first.messages.last).to include("did not match the required schema")
+      expect(chats.first.messages.last).to include("Your previous response was rejected")
     end
 
-    it "raises after exhausting retries" do
-      Squishling.configure { |c| c.max_retries = 2 }
+    it "raises after exhausting the escalation" do
+      Squishling.configure { |c| c.default_escalation = [{ model: "m", attempts: 3 }] }
       chats = stub_llm("not json", { "total" => "x" }, { "total" => "y" })
 
       expect { invoice_parser.call(client_name: "globex", data: "") }

@@ -10,7 +10,7 @@ module Squishling
     attr_reader :klass, :name, :call_context
 
     def initialize(klass:, name:, instructions: nil, append_instructions: nil, output_schema: nil, model: nil,
-      provider: nil, params: nil, predicate: nil, fallback: nil, call_context: {})
+      provider: nil, params: nil, predicate: nil, fallback: nil, validator: nil, call_context: {})
       @klass = klass
       @name = name
       @instructions = instructions
@@ -21,13 +21,16 @@ module Squishling
       @params = params
       @predicate = predicate
       @fallback = fallback
+      @validator = validator
       @call_context = call_context
     end
 
-    # This definition with one call's overrides on top. The output schema and predicate can't be overridden:
-    # the call must still return the method's result type.
-    def for_call(instructions: nil, append_instructions: nil, context: nil, model: nil, provider: nil, params: nil)
-      raise ConfigurationError, "#{label}: squish! provider: needs a model:" if provider && !model
+    # This definition with one call's overrides on top. The output schema, predicate, fallback, and validator
+    # can't be overridden: the call must still return the method's result type.
+    def for_call(instructions: nil, append_instructions: nil, context: nil, model: nil, escalation: nil,
+      provider: nil, params: nil)
+      call_path = ModelPath.declare(model, escalation, "#{label} squish!")
+      raise ConfigurationError, "#{label}: squish! provider: needs a model: or escalation:" if provider && !call_path
       unless context.nil? || (context.is_a?(Hash) && context.each_key.all?(NAME_KEY))
         raise ConfigurationError, "#{label}: squish! context: must be a Hash with String or Symbol keys"
       end
@@ -36,9 +39,10 @@ module Squishling
       call_params = params && Params.normalize(params, "#{label} squish! params")
       self.class.new(
         klass:, name:, output_schema: @output_schema, predicate: @predicate, fallback: @fallback,
+        validator: @validator,
         instructions: instructions || @instructions,
         append_instructions: [*@append_instructions, *appended],
-        model: model || @model, provider: model ? provider : @provider,
+        model: call_path || @model, provider: call_path ? provider : @provider,
         # merge, not Params.resolve: a nil at the method level must still unset the class's key.
         params: call_params ? (@params || {}).merge(call_params) : @params,
         call_context: @call_context.merge((context || {}).transform_keys(&:to_sym))
@@ -67,25 +71,25 @@ module Squishling
       raw && Schema.for(raw)
     end
 
-    def model
-      model_and_provider.first
-    end
-
-    def provider
-      model_and_provider.last
-    end
-
-    # A provider travels with the model declared at the same level (method, class, or config),
-    # so a per-method Anthropic model never inherits a class-level OpenAI provider.
-    def model_and_provider
+    # One ModelPath::Step per attempt, from the first level (method, class, or config) that declares a model
+    # or escalation, or a single attempt on RubyLLM's default model. A provider travels with the model declared
+    # at the same level, so a per-method Anthropic model never inherits a class-level OpenAI provider.
+    def escalation_path
       config = Squishling.config
-      [[@model, @provider], [klass.squishling_model, klass.squishling_provider],
-       [config.default_model, config.default_provider]].find(&:first) || [nil, nil]
+      entries, provider = [[@model, @provider], [klass.squishling_model_path, klass.squishling_provider],
+                           [config.default_model_path, config.default_provider]].find(&:first)
+      entries ||= [{ model: nil, attempts: 1 }]
+      ModelPath.steps(entries, provider:, params:)
     end
 
     # Generation params: config defaults, overridden key by key by the class, then by the method.
     def params
       Params.resolve(Squishling.config.default_params, klass.squishling_params, @params)
+    end
+
+    # Extra output checks run on schema-valid LLM results (see ClassMethods#squish_validate).
+    def validator
+      @validator || klass.squishling_validator
     end
 
     def context_names

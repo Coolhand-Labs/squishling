@@ -7,16 +7,19 @@ module Squishling
   # missing API key). Never retried and never passed to squish_fallback.
   class ConfigurationError < Error; end
 
-  # Output that didn't match the schema: from the LLM after all retries, or from the deterministic path.
+  # Output that didn't match the schema (or a squish_validate check): from the LLM after every attempt in the
+  # escalation, or from the deterministic path.
   class InvalidOutputError < Error
-    attr_reader :errors, :raw, :attempts
+    # models: the model ids tried, one per attempt (nil entries mean RubyLLM's default model).
+    attr_reader :errors, :raw, :attempts, :models
 
-    def initialize(errors:, raw: nil, source: "LLM", attempts: nil)
+    def initialize(errors:, raw: nil, source: "LLM", attempts: nil, models: nil)
       @errors = errors
       @raw = raw
       @attempts = attempts
+      @models = models
       tries = attempts ? " after #{attempts} attempt#{'s' unless attempts == 1}" : ""
-      super("#{source} output did not match the output schema#{tries}: #{errors.join('; ')}")
+      super("#{source} output was invalid#{tries}: #{errors.join('; ')}")
     end
   end
 

@@ -101,7 +101,7 @@ RSpec.describe Squishling, "#squish!" do
     expect(chats.first.instructions).to start_with("Recover the name.\n\n")
   end
 
-  it "escalates to another model and params for one call" do
+  it "hands off to another model and params for one call" do
     klass = parser(model: "gpt-6-luna", provider: :openai, params: { top_p: 0.5 }) do
       squishling model: "claude-haiku-4-5", params: { temperature: 0.2 }
     end
@@ -126,7 +126,7 @@ RSpec.describe Squishling, "#squish!" do
     expect(chats.first.generation).to eq(provider_options: { top_p: 0.5 })
   end
 
-  it "can escalate again to a stronger model after a failed attempt" do
+  it "can hand off again to a stronger model after a failed attempt" do
     klass = Class.new do
       include Squishling
 
@@ -146,6 +146,37 @@ RSpec.describe Squishling, "#squish!" do
     expect(result.squished?).to be(true)
     expect(chats.map(&:model)).to eq(%w[small-model big-model])
     expect(JSON.parse(chats.last.messages.first)["context"]).to eq("record_length" => 3)
+  end
+
+  it "accepts an escalation: for this call, replacing the declared model" do
+    klass = Class.new do
+      include Squishling
+
+      squishling model: "declared-model"
+      instructions "Parse."
+      output_schema { string :name }
+
+      def call(**) = squish!(escalation: [{ model: "small-model", attempts: 2 }, "big-model"], provider: :openai)
+    end
+    chats = stub_llm(nil, RubyLLM::ServiceUnavailableError.new("down"), { "name" => "Ada" })
+
+    expect(klass.call(record: "Ada").name).to eq("Ada")
+    expect(chats.map(&:model)).to eq(%w[small-model big-model]) # attempts 1-2 share a chat
+    expect(chats.first.messages.size).to eq(2)
+    expect(chats.map(&:options)).to all(include(provider: :openai))
+  end
+
+  it "rejects model: and escalation: together" do
+    klass = Class.new do
+      include Squishling
+
+      instructions "Parse."
+      output_schema { string :name }
+
+      def call(**) = squish!(model: "a", escalation: %w[b])
+    end
+
+    expect { klass.call(record: "Ada") }.to raise_error(Squishling::ConfigurationError, /not both/)
   end
 
   it "uses the declared fallback when the LLM fails" do
