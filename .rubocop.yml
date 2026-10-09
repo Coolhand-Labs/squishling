@@ -181,4 +181,5 @@ RSpec/DescribeClass:
     - 'spec/failure_handling_spec.rb'
     - 'spec/optional_fields_spec.rb'
     - 'spec/escalation_spec.rb'
+    - 'spec/squawk_spec.rb'
     - 'spec/contracts_spec.rb'

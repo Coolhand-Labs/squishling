@@ -25,6 +25,53 @@ produced it. Set `forward_rejected: false` on a step to leave both out. `Invalid
 (the last response), `attempts`, and `models` (the model tried on each attempt). With a `logger` configured, every
 escalation is logged as a warning.
 
+### What ends up in errors and logs
+
+Model output can echo sensitive input, so the raw response is kept in one place: `InvalidOutputError#raw` (plus the opt-in `squawk` hook below).
+`InvalidOutputError#message`, `#errors`, and `config.logger` warnings are built from these:
+
+- For unparseable JSON, only the position (`response was not valid JSON (at line 1 column 7)`), never the parser's
+  snippet of the response.
+- JSON Schema errors, which name the schema path and the rule that failed. They never contain the rejected value, but
+  they do name an extra key the model added (`object property at /foo is a disallowed additional property`), and
+  that key name is chosen by the model.
+- Your own `squish_validate` messages, verbatim. If you interpolate result values into them, those values reach
+  the message, the logger, and the next attempt's prompt.
+
+The same applies to anything you log yourself, such as `error.message` in a [fallback](#fallbacks). Use `error.raw`
+only where you are willing to store model output. To send the output of every attempt somewhere on purpose, use
+[`squawk`](#observing-every-attempt-squawk).
+
+## Observing every attempt (`squawk`)
+
+`squawk` is an opt-in hook for sending what the model returned to an error tracker or tracing tool. It runs after
+every LLM attempt, accepted or rejected, and does nothing unless you set it:
+
+```ruby
+Squishling.configure do |config|
+  config.squawk = lambda do |output:, metadata:, error:|
+    ObservabilitySolution.record(output, metadata, error) if error
+  end
+end
+```
+
+| Keyword | Value |
+|---|---|
+| `output` | The raw response: a Hash or String, or `nil` when the provider call itself failed |
+| `error` | `nil` for an accepted attempt. Otherwise the `InvalidOutputError` (with `errors` and `raw`) or `LLMError` that ended the attempt |
+| `metadata` | `label` (`"Class#method"`), `attempt`, `attempts` (the escalation's length), `final` (the last attempt), `model`, `provider`, `params`, `input` (the JSON sent: arguments and named context only), `usage` (token counts, when RubyLLM reports them) |
+
+- Set it globally with `config.squawk`, per class with `squishling squawk: ...`, or per method with
+  `squish :triage, squawk: ...`. The method's hook wins over the class's, which wins over the configured one;
+  `squawk: false` silences an inherited hook. Subclasses and `squish!` calls inherit it.
+- Any object that responds to `call` works. The hook receives only the keywords it declares, unless it takes `**`,
+  so a lambda that wants just `error:` is fine and new metadata fields won't break it.
+- It runs inline, so keep it quick. Exceptions it raises propagate unchanged and fail the call, like any of your own
+  code, so rescue inside the hook if an outage in your tracing tool shouldn't.
+- `output` is the same object the result is built from, so treat it as read-only.
+- It isn't called for a `ConfigurationError`, for deterministic and fallback returns, or for an attempt where your own
+  `squish_validate` raises (that exception propagates first).
+
 ## Output checks (`squish_validate`)
 
 The schema covers shape and types. For rules it can't express, such as cross-field arithmetic or a lookup against

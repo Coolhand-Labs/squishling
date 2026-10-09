@@ -26,6 +26,10 @@ module Squishling
     # Optional Logger for routing and escalation decisions.
     attr_accessor :logger
 
+    # Optional callable run after every LLM attempt with the raw output (see Squawk), e.g.
+    #   ->(output:, metadata:, error:) { Tracer.record(output, metadata, error) }
+    attr_reader :squawk
+
     def initialize
       @default_model = nil
       @default_escalation = nil
@@ -33,6 +37,7 @@ module Squishling
       @default_provider = nil
       @default_params = {}
       @logger = nil
+      @squawk = nil
     end
 
     def default_model=(model)
@@ -45,6 +50,10 @@ module Squishling
       @default_model_path = ModelPath.from_escalation(escalation, "default_escalation")
       @default_model = nil
       @default_escalation = escalation
+    end
+
+    def squawk=(hook)
+      @squawk = Squawk.validate(hook, "Squishling.configure")
     end
 
     def default_params=(params)
