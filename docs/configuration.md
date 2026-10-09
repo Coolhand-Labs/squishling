@@ -167,8 +167,9 @@ end
   ```
 
 - Keys that Squishling or RubyLLM control (`model`, `messages`, `input`, `instructions`, `system`, `stream`,
-  `response_format`, `text`, `output_config`, `tools`, `tool_choice`, `schema`, …) raise `ConfigurationError`,
-  because they would override the model, the conversation, or the strict output format.
+  `response_format`, `text`, `output_config`, `tools`, `tool_choice`, `schema`, and the camelCase and plural
+  spellings other providers use, such as `systemInstruction`, `toolConfig`, `outputConfig`, `inputs`, …) raise
+  `ConfigurationError`, because they would override the model, the conversation, or the strict output format.
 - If a provider rejects a param, the call raises `Squishling::ConfigurationError` naming the params. It isn't
   retried or sent to `squish_fallback`. See [Failure handling](failures.md).
 

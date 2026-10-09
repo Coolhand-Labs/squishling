@@ -20,9 +20,10 @@ Squishling validates output itself with [json_schemer](https://github.com/davish
 RubyLLM doesn't, and some providers don't enforce strict mode. When the next attempt is on the same step (same
 model, provider, params, and `forward_rejected:`), the re-ask happens in the same conversation, so the model sees
 what it got wrong. A different step gets a fresh chat with the original input plus the rejected output (truncated to
-4,000 characters) and its errors; set `forward_rejected: false` on a step to leave both out. `InvalidOutputError`
-exposes `errors`, `raw` (the last response), `attempts`, and `models` (the model tried on each attempt). With a
-`logger` configured, every escalation is logged as a warning.
+4,000 characters) and its errors, so that output is sent to the next step's provider, which may not be the one that
+produced it. Set `forward_rejected: false` on a step to leave both out. `InvalidOutputError` exposes `errors`, `raw`
+(the last response), `attempts`, and `models` (the model tried on each attempt). With a `logger` configured, every
+escalation is logged as a warning.
 
 ## Output checks (`squish_validate`)
 
