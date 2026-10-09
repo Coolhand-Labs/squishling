@@ -12,6 +12,8 @@ require_relative "squishling/params"
 require_relative "squishling/model_path"
 require_relative "squishling/result"
 require_relative "squishling/schema"
+require_relative "squishling/source"
+require_relative "squishling/appendices"
 require_relative "squishling/definition"
 require_relative "squishling/invoker"
 require_relative "squishling/router"
@@ -52,4 +54,15 @@ module Squishling
   end
 
   alias_method :result, :squishling_result
+
+  # Hand the squished method currently executing to the LLM, e.g. from a `rescue` when the Ruby path can't
+  # handle this input. Returns the typed result (squished? true, or false when the declared fallback supplied
+  # it); return it from the method. The overrides apply to this call only: append_instructions adds to (or,
+  # with false, replaces) the declared sections, context is sent alongside the declared squish_context,
+  # model/escalation (one or the other)/provider/instructions replace the declared ones, and params merge key
+  # by key over them.
+  def squish!(append_instructions: nil, context: nil, instructions: nil, model: nil, escalation: nil, provider: nil,
+    params: nil)
+    Router.escalate(self, { append_instructions:, context:, instructions:, model:, escalation:, provider:, params: })
+  end
 end

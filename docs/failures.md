@@ -55,8 +55,8 @@ end
 
 | Error | Raised when |
 |---|---|
-| `Squishling::Error` | Base class for everything below |
-| `Squishling::ConfigurationError` | Missing instructions or schema, a non-strict schema, invalid or reserved params, bad credentials, an unknown model, a request the provider rejects (400) |
+| `Squishling::Error` | Base class for everything below. Raised directly for misuse at call time, e.g. `result` or `squish!` called outside a squished method |
+| `Squishling::ConfigurationError` | Missing instructions or schema, a non-strict schema, invalid or reserved params, an invalid `model:`/`escalation:` declaration, an invalid `append_instructions` item or unavailable source, bad credentials, an unknown model, a request the provider rejects (400) |
 | `Squishling::InvalidOutputError` | LLM output still invalid (schema or `squish_validate`) after every attempt in the escalation, or a deterministic/fallback return that doesn't match the schema |
 | `Squishling::LLMError` | The provider call failed on the last attempt in the escalation, after RubyLLM's own retries, including context-length errors (`cause` holds the original) |
 
@@ -84,7 +84,10 @@ end
 - To propagate the error instead, re-raise it with `raise error`.
 - Per method: `squish :triage, fallback: ->(error, **inputs) { ... }`.
 - Subclasses inherit the class-level fallback.
+- Calls handed to the LLM with `squish!` use the fallback too. A fallback can't call `squish!` itself; that
+  raises `Squishling::Error` rather than looping. See [Escalating from Ruby](routing.md#escalating-from-ruby-with-squish).
 - Without a fallback, the error propagates.
 
 Routing to Ruby code isn't automatic on failure. The predicate already chose the LLM for this input, so the
-fallback is where you decide whether Ruby code can handle it after all.
+fallback is where you decide whether Ruby code can handle it after all. Calling the method from its fallback
+(`call(**inputs)`) runs its Ruby implementation directly, without routing it back to the LLM.

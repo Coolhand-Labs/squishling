@@ -3,14 +3,27 @@
 Every squished method call is routed to one of two paths: the method's own Ruby implementation (the
 *deterministic* path) or an LLM call (the *elastic* path). Both return the same validated, typed result.
 
+## Which methods are squished
+
+- **`call`** is squished by default, and `InvoiceParser.call(...)` is shorthand for `new.call(...)`.
+- **Any other method** is squished once you declare it with `squish :name, ...` (see [Entry points](#entry-points)).
+- **Methods you don't declare are never wrapped.** They're plain Ruby, though a squished method can call them,
+  and they can call `squish!` on its behalf.
+
 ## When a call goes to the LLM
 
-A squished call goes to the LLM when either:
+A squished call runs its Ruby implementation unless one of these sends it to the LLM:
 
-- **its `squish_when` predicate is truthy.** The predicate receives the method's inputs as keywords and is
-  evaluated against the instance, so it can read instance state too. Accept `**` to ignore inputs you
-  don't need.
-- **the method has no implementation.** It's either not defined, or it raises `NotImplementedError`.
+| Trigger | Declared where | Decided |
+|---|---|---|
+| `squish_when` (or `when:`) predicate is truthy | class, or per method | before Ruby runs |
+| The method has no implementation: it isn't defined, or it raises `NotImplementedError` | the method body | when Ruby gives up |
+| `squish!` | inside the method, e.g. in a `rescue` | after Ruby has partly run, see [Escalating from Ruby](#escalating-from-ruby-with-squish) |
+
+With no predicate and a working implementation, every call runs Ruby.
+
+The predicate receives the method's inputs as keywords and is evaluated against the instance, so it can read
+instance state too. Accept `**` to ignore inputs you don't need.
 
 ```ruby
 class InvoiceParser
@@ -22,13 +35,18 @@ end
 def summarize(text) = raise NotImplementedError   # elastic until someone writes it
 ```
 
-Otherwise the Ruby implementation runs. A `Hash` it returns is validated against the schema and turned into
-the same typed result the LLM path produces. `result(...)` (alias `squishling_result`) does the same
-explicitly. Invalid deterministic output raises `Squishling::InvalidOutputError` too, so a hardened path
-can't silently drift from the contract.
+When the Ruby implementation runs, a `Hash` it returns is validated against the schema and turned into the
+same typed result the LLM path produces. `result(...)` (alias `squishling_result`) does the same explicitly.
+Invalid deterministic output raises `Squishling::InvalidOutputError` too, so a hardened path can't silently
+drift from the contract.
 
 A `NotImplementedError` raised anywhere inside the method, including from code it calls, also routes to the
 LLM.
+
+Each call is routed on its own, including a squished method that calls itself on smaller inputs. A subclass
+override that calls `super` is one call: it's routed once, at the subclass. A call to the method from its own
+`squish_when` or `squish_fallback` (or an instructions proc) isn't routed again: it runs the Ruby
+implementation, so a fallback can hand the input back to Ruby with `call(**inputs)`.
 
 ## Hardening a path
 
@@ -42,8 +60,7 @@ Callers never change, because both paths return the same result class.
 
 ## Entry points
 
-`call` is squished by default, and `InvoiceParser.call(...)` is shorthand for `new.call(...)`. Squish other
-methods with `squish`, optionally overriding the class-level settings per method:
+Squish methods other than `call` with `squish`, optionally overriding the class-level settings per method:
 
 ```ruby
 class TicketTriager
@@ -66,7 +83,8 @@ end
 
 `squish` accepts:
 
-- `instructions:`
+- `instructions:` (replaces the class's)
+- `append_instructions:` (added to the class's, see [Appending to the instructions](#appending-to-the-instructions))
 - `output_schema:` (or a schema block)
 - `model:` or `escalation:`, `provider:`, and `params:` (generation params; see [Configuration](configuration.md))
 - `when:`, a predicate proc
@@ -74,12 +92,113 @@ end
 
 `squish` can come before or after the method's `def`.
 
+## Escalating from Ruby with `squish!`
+
+Call `squish!` inside a squished method to hand *this call* to the LLM: for example, when the Ruby parser
+fails on an input it wasn't written for. It sends the call's arguments, as any LLM call would, and returns the
+typed result (`squished?` is `true`, or `false` if the declared `squish_fallback` supplied it). Return that result
+from the method.
+
+```ruby
+class InvoiceParser
+  include Squishling
+
+  instructions "Extract invoice fields from the client's raw data."
+  append_instructions "Here is the Ruby that parses well-formed invoices, for context on the logic and goals:",
+                      self
+  output_schema do
+    string :invoice_number
+    number :total
+  end
+
+  def call(client_name:, data:)
+    parsed = AcmeParser.parse(data)
+    result(invoice_number: parsed.id, total: parsed.sum)
+  rescue AcmeParser::ParseError => e
+    squish!(append_instructions: "The Ruby parser above failed on this input; the error is in the context.",
+            context: { parse_error: e })
+  end
+end
+```
+
+`squish!` takes these overrides, all optional and all for this call only:
+
+| Option | Effect |
+|---|---|
+| `context:` | A Hash sent under `"context"` with any `squish_context` values (a same-named key wins). Exceptions are sent as `{ "class", "message" }`, never their backtrace. |
+| `append_instructions:` | Added to the declared sections; `false` (alone or first in an Array) drops them for this call |
+| `instructions:` | Replaces the instructions |
+| `model:` or `escalation:`, `provider:`, `params:` | E.g. send this call to a stronger model, or a whole [escalation](configuration.md#models-and-escalation), when Ruby fails. A `provider:` needs a `model:` or `escalation:`; `params:` merge key by key over the declared ones. |
+
+- **The output schema can't be overridden.** The call still returns the method's result type.
+- **Failures** go through the normal LLM path: a declared `squish_fallback` is used, otherwise
+  `InvalidOutputError` or `LLMError` is raised. When you call `squish!` from a `rescue`, Ruby sets the
+  rescued error as the `cause` of whatever is raised, so you can rescue the LLM failure and raise your own:
+
+  ```ruby
+  rescue AcmeParser::ParseError => e
+    begin
+      squish!(context: { parse_error: e })
+    rescue Squishling::InvalidOutputError, Squishling::LLMError
+      raise InvoiceUnreadable, "neither Ruby nor the LLM could parse invoice #{client_name}"
+    end
+  ```
+
+- It works anywhere beneath a squished method on the same object: in the method itself, in a helper it calls,
+  or in a parent implementation reached through `super`. Calling it anywhere else, or from a `squish_fallback`
+  (which would loop), raises `Squishling::Error`.
+
+## Appending to the instructions
+
+`append_instructions` adds sections to the system prompt after the instructions. It takes items, an Array of
+them, or a block (treated as a Proc item). Each item is one of:
+
+| Item | Sent as |
+|---|---|
+| a String | itself |
+| a class or module (`self` inside a class body is that class) | its Ruby source, including bodies that reopen it in other files (see the limits below) |
+| a method (`instance_method(:call)`, `AcmeParser.method(:parse)`) | that method's source |
+| a Proc | evaluated against the instance on each call; it can return any of the above, an Array of them, or `nil`/`false` to add nothing (`-> { strict? && "Be strict." }`) |
+
+```ruby
+class InvoiceParser
+  include Squishling
+
+  append_instructions "The Ruby that parses well-formed invoices:", self, AcmeParser
+  append_instructions -> { "This client's invoices are in #{currency}." }
+
+  squish :summarize, append_instructions: false do   # no appendices for this method
+    string :summary
+  end
+end
+```
+
+The same option goes in the class-wide call: `squishling append_instructions: ["...", self]`.
+
+Sections are added down the chain: class, then subclass, then `squish :name, append_instructions:`, then
+`squish!(append_instructions:)`. `false` drops everything declared above it, so `[false, "Only this."]`
+replaces it.
+
+Source is read with Ruby's own parser (Prism) the first time it's needed and cached. Some limits:
+
+- A class's source is every `class`/`module` body that defines one of its methods, plus the one where its
+  constant is first assigned (including `Parser = Class.new do ... end`). A body that reopens the class
+  without defining a method isn't included.
+- A class without a constant (built with `Class.new` and never assigned, nested in an anonymous module, or given
+  a temporary name) is sent method by method: each of its own `def`s, without the code around them.
+- A class built from a `Struct.new`/`Data.define` block (`Point = Struct.new(:x) do ... end`) isn't found; reopen
+  it with `class Point` or append its methods individually.
+- Only `def`s count. Methods made with `define_method` or `attr_*` aren't shown, and a method item made that way
+  raises `ConfigurationError`, as does code with no source file, such as code generated by `eval`.
+
+**Appended source is sent to your provider.** Don't append classes that hold secrets in constants.
+
 ## What the LLM sees
 
-- **System prompt:** your instructions (a String, or a Proc evaluated against the instance) plus a short note
-  describing the input format.
+- **System prompt:** your instructions (a String, or a Proc evaluated against the instance), then any
+  `append_instructions` sections, then a short note describing the input format.
 - **User message:** JSON with the method's arguments, mapped to their parameter names. Any
-  `squish_context` values go under `"context"`:
+  `squish_context` values, and a `squish!` call's `context:`, go under `"context"`:
 
 ```json
 { "arguments": { "ticket_text": "API is down!" },

@@ -50,8 +50,9 @@ Flag any change that breaks one of these; they are behavior contracts, not style
   attempt in the escalation),
   `LLMError` (provider/transport failure after RubyLLM's HTTP retries, original as `cause`). Never wrap or
   swallow exceptions raised by the user's own Ruby code.
-- **Only named context leaves the process.** The LLM sees method arguments plus `squish_context` values —
-  never instance variables wholesale.
+- **Only named context leaves the process.** The LLM sees method arguments, `squish_context` values, a
+  `squish!` call's `context:`, and source the developer explicitly passes to `append_instructions` — never
+  instance variables wholesale. Exceptions in context are sent as class and message only.
 - **Params can't override what Squishling owns.** Provider-specific params are merged into the request last
   (RubyLLM's `with_provider_options`), so `Params::RESERVED_KEYS` (model, messages, structured-output format, tools, streaming) stay rejected. A
   provider 400 is a `ConfigurationError`, never something a fallback absorbs.
@@ -61,10 +62,12 @@ Flag any change that breaks one of these; they are behavior contracts, not style
 ## Public API
 
 The public surface is `Squishling.configure`/`config`, the `include Squishling` DSL (`squishling` — including its
-`model:`/`escalation:` (steps with `model:`, `attempts:`, `order:`, `provider:`, `params:`)/`provider:`/`params:` options —
-`instructions`, `output_schema`, `squish_when`, `squish_context`, `squish` (including `validate:`),
-`squish_validate`, `squish_fallback`, `result`/`squishling_result`), `Squishling::Configuration` options, result
-objects (`squished?`, `to_h`, `[]`), and the error classes (including `InvalidOutputError#models`). Don't break it without a clear migration path in the changelog.
+`model:`/`escalation:` (steps with `model:`, `attempts:`, `order:`, `provider:`, `params:`)/`provider:`/`params:`/
+`append_instructions:` options — `instructions`, `append_instructions`, `output_schema`, `squish_when`,
+`squish_context`, `squish` (including `validate:`), `squish_validate`, `squish_fallback`, `result`/`squishling_result`,
+`squish!` (including `model:`/`escalation:`)), `Squishling::Configuration` options, result objects (`squished?`,
+`to_h`, `[]`), and the error classes (including `InvalidOutputError#models`). Don't break it without a clear
+migration path in the changelog.
 
 ## Changelog and versioning
 
