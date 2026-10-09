@@ -78,7 +78,7 @@ module Squishling
       config = Squishling.config
       entries, provider = [[@model, @provider], [klass.squishling_model_path, klass.squishling_provider],
                            [config.default_model_path, config.default_provider]].find(&:first)
-      entries ||= [{ model: nil, attempts: 1 }]
+      entries ||= [{ model: nil, attempts: 1, forward_rejected: true }]
       ModelPath.steps(entries, provider:, params:)
     end
 

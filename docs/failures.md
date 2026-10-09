@@ -18,11 +18,12 @@ A failed attempt moves on to the next one; once the last fails, the error is rai
 
 Squishling validates output itself with [json_schemer](https://github.com/davishmcclurg/json_schemer), because
 RubyLLM doesn't, and some providers don't enforce strict mode. When the next attempt is on the same step (same
-model, provider, and params), the re-ask happens in the same conversation, so the model sees what it got wrong. A
-different step gets a fresh chat with the original input plus the rejected output and its errors, so that output is
-sent to the next step's provider, which may not be the one that produced it. `InvalidOutputError` exposes `errors`,
-`raw` (the last response), `attempts`, and `models` (the model tried on each attempt). With a `logger` configured,
-every escalation is logged as a warning.
+model, provider, params, and `forward_rejected:`), the re-ask happens in the same conversation, so the model sees
+what it got wrong. A different step gets a fresh chat with the original input plus the rejected output (truncated to
+4,000 characters) and its errors, so that output is sent to the next step's provider, which may not be the one that
+produced it. Set `forward_rejected: false` on a step to leave both out. `InvalidOutputError` exposes `errors`, `raw`
+(the last response), `attempts`, and `models` (the model tried on each attempt). With a `logger` configured, every
+escalation is logged as a warning.
 
 ## Output checks (`squish_validate`)
 

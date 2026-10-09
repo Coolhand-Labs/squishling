@@ -8,6 +8,9 @@ module Squishling
       present, holds additional state about the caller. Respond only with JSON matching the required schema.
     NOTE
 
+    # The most of a rejected output that is forwarded to the next escalation step.
+    MAX_FORWARDED_CHARS = 4_000
+
     def initialize(definition, receiver, inputs)
       @definition = definition
       @receiver = receiver
@@ -16,7 +19,8 @@ module Squishling
 
     # Makes each attempt of the escalation (Definition#escalation_path) until an output passes the schema and
     # the squish_validate check. Consecutive attempts on the same step continue the same conversation, so the
-    # model sees what it got wrong; a new step starts a fresh chat told about the last rejected output.
+    # model sees what it got wrong; a new step starts a fresh chat told about the last rejected output (unless
+    # the step sets forward_rejected: false).
     def call
       @instructions = @definition.instructions(@receiver)
       @schema = @definition.schema
@@ -36,7 +40,7 @@ module Squishling
           message = retry_message(rejected.last)
         else
           chat = start_chat(step)
-          message = rejected ? escalation_message(input, *rejected) : input
+          message = rejected && step.forward_rejected ? escalation_message(input, *rejected) : input
         end
 
         begin
@@ -222,10 +226,15 @@ module Squishling
       "Your previous response was rejected:\n- #{errors.join("\n- ")}\nRespond again with corrected JSON only."
     end
 
-    # The first message to a fresh chat after an earlier model's output was rejected.
+    # The first message to a fresh chat after an earlier model's output was rejected. The rejected output is
+    # model-generated and may cross providers, so it is capped at MAX_FORWARDED_CHARS.
     def escalation_message(input, raw, errors)
       previous = raw.is_a?(String) ? raw : JSON.generate(raw)
       previous = "(an empty response)" if previous.strip.empty? || raw.nil?
+      if previous.length > MAX_FORWARDED_CHARS
+        omitted = previous.length - MAX_FORWARDED_CHARS
+        previous = "#{previous[0, MAX_FORWARDED_CHARS]}... [truncated, #{omitted} more characters]"
+      end
       "#{input}\n\nA previous attempt at this request returned:\n#{previous}\n" \
         "It was rejected:\n- #{errors.join("\n- ")}\nRespond with corrected JSON only."
     end

@@ -61,6 +61,7 @@ Each step is a model name, or a Hash with:
 | `attempts:` | `1` | How many attempts this step gets before escalating to the next one. |
 | `order:` | position | An Integer; steps run lowest first. Give every step an `order:` or none (duplicates are rejected). Gaps are fine. |
 | `provider:` | the level's `provider:` | See [Providers](#providers-and-newly-released-models). |
+| `forward_rejected:` | `true` | Set `false` to start this step from the original input alone, without the previous step's rejected output and its errors (see below). |
 | `params:` | `{}` | [Generation params](#generation-params) for this step, merged over the class and method params key by key. |
 
 Without `order:`, steps run in the order written. With it, the order is explicit and doesn't depend on position:
@@ -105,10 +106,13 @@ end
 Passing both `model:` and `escalation:` in one declaration raises `ConfigurationError`, and so does a list passed as
 `model:`. Across separate declarations (a reopened class, or two config assignments), the latest one wins.
 
-Consecutive attempts of the same step (same model, provider, and params, e.g. `attempts: 2`) continue one
-conversation. Moving to a different step starts a fresh chat with the original input plus the previous output and why
-it was rejected, so no provider-specific history crosses providers. Configuration errors (bad credentials, an unknown model, a request the provider rejects) never move to the
-next attempt. See [Failure handling](failures.md).
+Consecutive attempts of the same step (same model, provider, params, and `forward_rejected:`, e.g. `attempts: 2`)
+continue one conversation. Moving to a different step starts a fresh chat with the original input plus the previous
+output and why it was rejected, so no provider-specific history crosses providers. That rejected output is
+model-generated and is sent to the next step's provider, even when it is a different one, truncated to 4,000
+characters. If you don't want a step to see it (say, because the next step is a different provider), set
+`forward_rejected: false` on that step and it starts from the original input only. Configuration errors (bad
+credentials, an unknown model, a request the provider rejects) never move to the next attempt. See [Failure handling](failures.md).
 
 ## Providers and newly released models
 

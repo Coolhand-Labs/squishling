@@ -9,12 +9,14 @@ module Squishling
   #     { model: "claude-opus-5-5", params: { thinking: { effort: :high } } }
   #   ]
   # attempts: (default 1) retries a step; order: (all steps or none, unique, lowest first) makes the order
-  # explicit instead of positional.
+  # explicit instead of positional. forward_rejected: false starts a step from the original input alone, without
+  # the previous step's rejected output.
   module ModelPath
-    # One attempt: the model, its provider, and the fully resolved generation params.
-    Step = Data.define(:model, :provider, :params)
+    # One attempt: the model, its provider, the fully resolved generation params, and whether the previous
+    # step's rejected output is shown to it.
+    Step = Data.define(:model, :provider, :params, :forward_rejected)
 
-    STEP_KEYS = %i[model provider params attempts order].freeze
+    STEP_KEYS = %i[model provider params attempts order forward_rejected].freeze
 
     module_function
 
@@ -54,7 +56,7 @@ module Squishling
     def steps(path, provider:, params:)
       path.flat_map do |step|
         attempt = Step.new(model: step[:model], provider: step[:provider] || provider,
-          params: Params.resolve(params, step[:params]))
+          params: Params.resolve(params, step[:params]), forward_rejected: step[:forward_rejected])
         [attempt] * step[:attempts]
       end
     end
@@ -76,7 +78,8 @@ module Squishling
 
     def normalize_step(step, label)
       case step
-      when String, Symbol then { model: model_name(step, label), provider: nil, params: nil, attempts: 1 }
+      when String, Symbol
+        { model: model_name(step, label), provider: nil, params: nil, attempts: 1, forward_rejected: true }
       when Hash then normalize_hash(step, label)
       else
         raise ConfigurationError, "#{label}: each step must be a model name or a Hash with model:, got #{step.inspect}"
@@ -100,8 +103,14 @@ module Squishling
         raise ConfigurationError, "#{label} (#{model}): order: must be an Integer, got #{step[:order].inspect}"
       end
 
+      forward_rejected = step.fetch(:forward_rejected, true)
+      unless [true, false].include?(forward_rejected)
+        raise ConfigurationError,
+          "#{label} (#{model}): forward_rejected: must be true or false, got #{forward_rejected.inspect}"
+      end
+
       params = step[:params] && Params.normalize(step[:params], "#{label} (#{model}) params")
-      normalized = { model:, provider: step[:provider], params:, attempts: }
+      normalized = { model:, provider: step[:provider], params:, attempts:, forward_rejected: }
       step.key?(:order) ? normalized.merge(order: step[:order]) : normalized
     end
 
