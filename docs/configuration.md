@@ -181,4 +181,4 @@ overridden methods, are routed the same way.
 
 Inside a squished method, `squish!` sends the call to the LLM with its own `instructions:`,
 `append_instructions:`, `context:`, `model:` or `escalation:` (with `provider:`), and `params:`. Each layers over the method and class
-settings the same way they layer over each other. See [Escalating from Ruby](routing.md#escalating-from-ruby-with-squish).
+settings the same way they layer over each other. See [Handing off to the LLM](routing.md#handing-off-to-the-llm-with-squish).

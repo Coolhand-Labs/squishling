@@ -85,7 +85,7 @@ end
 - Per method: `squish :triage, fallback: ->(error, **inputs) { ... }`.
 - Subclasses inherit the class-level fallback.
 - Calls handed to the LLM with `squish!` use the fallback too. A fallback can't call `squish!` itself; that
-  raises `Squishling::Error` rather than looping. See [Escalating from Ruby](routing.md#escalating-from-ruby-with-squish).
+  raises `Squishling::Error` rather than looping. See [Handing off to the LLM](routing.md#handing-off-to-the-llm-with-squish).
 - Without a fallback, the error propagates.
 
 Routing to Ruby code isn't automatic on failure. The predicate already chose the LLM for this input, so the

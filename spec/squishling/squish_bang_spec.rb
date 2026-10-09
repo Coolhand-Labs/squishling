@@ -101,7 +101,7 @@ RSpec.describe Squishling, "#squish!" do
     expect(chats.first.instructions).to start_with("Recover the name.\n\n")
   end
 
-  it "escalates to another model and params for one call" do
+  it "hands off to another model and params for one call" do
     klass = parser(model: "gpt-6-luna", provider: :openai, params: { top_p: 0.5 }) do
       squishling model: "claude-haiku-4-5", params: { temperature: 0.2 }
     end
@@ -126,7 +126,7 @@ RSpec.describe Squishling, "#squish!" do
     expect(chats.first.generation).to eq(provider_options: { top_p: 0.5 })
   end
 
-  it "can escalate again to a stronger model after a failed attempt" do
+  it "can hand off again to a stronger model after a failed attempt" do
     klass = Class.new do
       include Squishling
 

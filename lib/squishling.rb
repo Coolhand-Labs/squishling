@@ -63,6 +63,6 @@ module Squishling
   # by key over them.
   def squish!(append_instructions: nil, context: nil, instructions: nil, model: nil, escalation: nil, provider: nil,
     params: nil)
-    Router.escalate(self, { append_instructions:, context:, instructions:, model:, escalation:, provider:, params: })
+    Router.hand_off(self, { append_instructions:, context:, instructions:, model:, escalation:, provider:, params: })
   end
 end

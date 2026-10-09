@@ -71,7 +71,7 @@ InvoiceParser.call(vendor: "acme", document: scanned_text).squished? # => true  
 
 Both calls return the same result class. If the LLM can't deliver either, `squish_fallback` decides what to
 return, or the error is raised with the original `ParseError` as its cause. See
-[Escalating from Ruby](docs/routing.md#escalating-from-ruby-with-squish).
+[Handing off to the LLM](docs/routing.md#handing-off-to-the-llm-with-squish).
 
 ## Installation
 

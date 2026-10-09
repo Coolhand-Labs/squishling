@@ -18,7 +18,7 @@ A squished call runs its Ruby implementation unless one of these sends it to the
 |---|---|---|
 | `squish_when` (or `when:`) predicate is truthy | class, or per method | before Ruby runs |
 | The method has no implementation: it isn't defined, or it raises `NotImplementedError` | the method body | when Ruby gives up |
-| `squish!` | inside the method, e.g. in a `rescue` | after Ruby has partly run, see [Escalating from Ruby](#escalating-from-ruby-with-squish) |
+| `squish!` | inside the method, e.g. in a `rescue` | after Ruby has partly run, see [Handing off to the LLM](#handing-off-to-the-llm-with-squish) |
 
 With no predicate and a working implementation, every call runs Ruby.
 
@@ -92,7 +92,7 @@ end
 
 `squish` can come before or after the method's `def`.
 
-## Escalating from Ruby with `squish!`
+## Handing off to the LLM with `squish!`
 
 Call `squish!` inside a squished method to hand *this call* to the LLM: for example, when the Ruby parser
 fails on an input it wasn't written for. It sends the call's arguments, as any LLM call would, and returns the
