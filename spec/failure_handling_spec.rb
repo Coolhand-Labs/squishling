@@ -6,7 +6,7 @@ RSpec.describe "Squishling failure handling" do
       include Squishling
 
       squishling escalation: [{ model: "test-model", attempts: 2 }]
-      instructions "Classify."
+      purpose "Classify."
       output_schema { string :label }
     end
   end
@@ -168,7 +168,7 @@ RSpec.describe "Squishling failure handling" do
         include Squishling
 
         squishling escalation: [{ model: "test-model", attempts: 2 }]
-        instructions "Classify."
+        purpose "Classify."
         output_schema { string :label }
         squish_fallback do |error, text:|
           @seen = [error.class, text]
@@ -225,7 +225,7 @@ RSpec.describe "Squishling failure handling" do
       other = Class.new do
         include Squishling
 
-        instructions "x"
+        purpose "x"
         output_schema { string :label }
 
         def call = { label: "other" }
@@ -233,7 +233,7 @@ RSpec.describe "Squishling failure handling" do
       mismatched = Class.new do
         include Squishling
 
-        instructions "x"
+        purpose "x"
         output_schema { integer :label }
 
         def call = { label: 1 }

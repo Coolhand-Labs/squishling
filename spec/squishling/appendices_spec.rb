@@ -8,7 +8,7 @@ RSpec.describe Squishling::Appendices do
     Class.new do
       include Squishling
 
-      instructions "Base."
+      purpose "Base."
       output_schema { string :value }
       squish_when { true }
       class_eval(&) if block_given?
@@ -21,14 +21,14 @@ RSpec.describe Squishling::Appendices do
     chats.first.instructions
   end
 
-  it "appends strings after the instructions and before the input note" do
-    klass = base_class { append_instructions "First.", "Second." }
+  it "appends strings after the purpose and before the input note" do
+    klass = base_class { append_to_purpose "First.", "Second." }
 
     expect(system_prompt(klass)).to eq("Base.\n\nFirst.\n\nSecond.\n\n#{Squishling::Invoker::INPUT_NOTE}")
   end
 
   it "accepts an Array through the squishling option" do
-    klass = base_class { squishling append_instructions: ["From squishling."] }
+    klass = base_class { squishling append_to_purpose: ["From squishling."] }
 
     expect(system_prompt(klass)).to start_with("Base.\n\nFrom squishling.\n\n")
   end
@@ -47,8 +47,8 @@ RSpec.describe Squishling::Appendices do
     klass = Class.new do
       include Squishling
 
-      instructions "Base."
-      append_instructions self
+      purpose "Base."
+      append_to_purpose self
       output_schema { string :value }
 
       def call = raise(NotImplementedError)
@@ -59,7 +59,7 @@ RSpec.describe Squishling::Appendices do
   end
 
   it "sends one method's source, beneath Squishling's wrapper" do
-    klass = base_class { append_instructions instance_method(:call) }
+    klass = base_class { append_to_purpose instance_method(:call) }
     klass.class_eval do
       def call
         { value: "ruby" }
@@ -72,8 +72,8 @@ RSpec.describe Squishling::Appendices do
 
   it "evaluates procs against the instance on each call" do
     klass = base_class do
-      append_instructions -> { "Tier: #{tier}." }, -> {}, -> { strict? && "Be strict." }, -> { ["A.", "B."] }
-      append_instructions { "From a block." }
+      append_to_purpose -> { "Tier: #{tier}." }, -> {}, -> { strict? && "Be strict." }, -> { ["A.", "B."] }
+      append_to_purpose { "From a block." }
 
       def tier = "gold"
       def strict? = false
@@ -83,26 +83,26 @@ RSpec.describe Squishling::Appendices do
   end
 
   it "adds a subclass's items to the parent's" do
-    parent = base_class { append_instructions "Parent." }
-    child = Class.new(parent) { append_instructions "Child." }
+    parent = base_class { append_to_purpose "Parent." }
+    child = Class.new(parent) { append_to_purpose "Child." }
 
     expect(system_prompt(child)).to start_with("Base.\n\nParent.\n\nChild.\n\n")
     expect(system_prompt(parent)).to start_with("Base.\n\nParent.\n\n#{Squishling::Invoker::INPUT_NOTE}")
   end
 
   it "drops inherited items with false" do
-    parent = base_class { append_instructions "Parent." }
-    child = Class.new(parent) { append_instructions false, "Child only." }
+    parent = base_class { append_to_purpose "Parent." }
+    child = Class.new(parent) { append_to_purpose false, "Child only." }
 
     expect(system_prompt(child)).to eq("Base.\n\nChild only.\n\n#{Squishling::Invoker::INPUT_NOTE}")
   end
 
   it "adds per-method items to the class's, or replaces them with false" do
     klass = base_class do
-      append_instructions "Class."
-      squish :added, append_instructions: "Method.", when: -> { true }
-      squish :replaced, append_instructions: [false, "Method only."], when: -> { true }
-      squish :dropped, append_instructions: false, when: -> { true }
+      append_to_purpose "Class."
+      squish :added, append_to_purpose: "Method.", when: -> { true }
+      squish :replaced, append_to_purpose: [false, "Method only."], when: -> { true }
+      squish :dropped, append_to_purpose: false, when: -> { true }
     end
 
     expect(system_prompt(klass, :added)).to start_with("Base.\n\nClass.\n\nMethod.\n\n")
@@ -111,16 +111,16 @@ RSpec.describe Squishling::Appendices do
   end
 
   it "rejects unsupported items when declared" do
-    expect { base_class { append_instructions 42 } }
+    expect { base_class { append_to_purpose 42 } }
       .to raise_error(Squishling::ConfigurationError, /items must be Strings.*got 42/)
-    expect { base_class { squish :x, append_instructions: [:symbol] } }
+    expect { base_class { squish :x, append_to_purpose: [:symbol] } }
       .to raise_error(Squishling::ConfigurationError, /got :symbol/)
   end
 
   it "rejects unsupported values returned by a proc" do
-    klass = base_class { append_instructions -> { 42 } }
-    hash = base_class { append_instructions -> { { a: 1 } } }
-    object = base_class { append_instructions -> { Object.new } }
+    klass = base_class { append_to_purpose -> { 42 } }
+    hash = base_class { append_to_purpose -> { { a: 1 } } }
+    object = base_class { append_to_purpose -> { Object.new } }
 
     expect { system_prompt(klass) }.to raise_error(Squishling::ConfigurationError, /proc.*or methods \(got 42\)/)
     expect { system_prompt(hash) }.to raise_error(Squishling::ConfigurationError, /\(got an instance of Hash\)/)
@@ -130,7 +130,7 @@ RSpec.describe Squishling::Appendices do
   it "raises ConfigurationError when the source isn't available" do
     # Code generated at runtime has no file to read.
     generated = Class.new.tap { |k| k.class_eval("def x = 1", "(generated)", 1) } # rubocop:disable Style/EvalWithLocation
-    klass = base_class { append_instructions generated }
+    klass = base_class { append_to_purpose generated }
 
     expect { system_prompt(klass) }.to raise_error(Squishling::ConfigurationError, /source for .* isn't available/)
   end

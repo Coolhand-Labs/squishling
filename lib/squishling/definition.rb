@@ -9,12 +9,12 @@ module Squishling
 
     attr_reader :klass, :name, :call_context
 
-    def initialize(klass:, name:, instructions: nil, append_instructions: nil, output_schema: nil, model: nil,
+    def initialize(klass:, name:, purpose: nil, append_to_purpose: nil, output_schema: nil, model: nil,
       provider: nil, params: nil, predicate: nil, fallback: nil, validator: nil, squawk: nil, call_context: {})
       @klass = klass
       @name = name
-      @instructions = instructions
-      @append_instructions = append_instructions
+      @purpose = purpose
+      @append_to_purpose = append_to_purpose
       @output_schema = output_schema
       @model = model
       @provider = provider
@@ -28,7 +28,7 @@ module Squishling
 
     # This definition with one call's overrides on top. The output schema, predicate, fallback, and validator
     # can't be overridden: the call must still return the method's result type.
-    def for_call(instructions: nil, append_instructions: nil, context: nil, model: nil, escalation: nil,
+    def for_call(purpose: nil, append_to_purpose: nil, context: nil, model: nil, escalation: nil,
       provider: nil, params: nil)
       call_path = ModelPath.declare(model, escalation, "#{label} squish!")
       raise ConfigurationError, "#{label}: squish! provider: needs a model: or escalation:" if provider && !call_path
@@ -36,13 +36,13 @@ module Squishling
         raise ConfigurationError, "#{label}: squish! context: must be a Hash with String or Symbol keys"
       end
 
-      appended = Appendices.normalize(append_instructions, "#{label} squish!") unless append_instructions.nil?
+      appended = Appendices.normalize(append_to_purpose, "#{label} squish!") unless append_to_purpose.nil?
       call_params = params && Params.normalize(params, "#{label} squish! params")
       self.class.new(
         klass:, name:, output_schema: @output_schema, predicate: @predicate, fallback: @fallback,
         validator: @validator, squawk: @squawk,
-        instructions: instructions || @instructions,
-        append_instructions: [*@append_instructions, *appended],
+        purpose: purpose || @purpose,
+        append_to_purpose: [*@append_to_purpose, *appended],
         model: call_path || @model, provider: call_path ? provider : @provider,
         # merge, not Params.resolve: a nil at the method level must still unset the class's key.
         params: call_params ? (@params || {}).merge(call_params) : @params,
@@ -54,17 +54,17 @@ module Squishling
       "#{klass}##{name}"
     end
 
-    # The system prompt: the instructions, then each append_instructions section.
-    def instructions(receiver)
-      value = @instructions || klass.instructions
+    # The system prompt: the purpose, then each append_to_purpose section.
+    def purpose(receiver)
+      value = @purpose || klass.purpose
       value = receiver.instance_exec(&value) if value.is_a?(Proc)
       return value if value.nil? || value.empty?
 
-      [value, *Appendices.render(append_instructions, receiver, label)].join("\n\n")
+      [value, *Appendices.render(append_to_purpose, receiver, label)].join("\n\n")
     end
 
-    def append_instructions
-      Appendices.resolve(klass.squishling_append_instructions + (@append_instructions || []))
+    def append_to_purpose
+      Appendices.resolve(klass.squishling_append_to_purpose + (@append_to_purpose || []))
     end
 
     def schema

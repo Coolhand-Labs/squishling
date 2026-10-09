@@ -22,9 +22,9 @@ module Squishling
     # model sees what it got wrong; a new step starts a fresh chat told about the last rejected output (unless
     # the step sets forward_rejected: false).
     def call
-      @instructions = @definition.instructions(@receiver)
+      @purpose = @definition.purpose(@receiver)
       @schema = @definition.schema
-      raise ConfigurationError, "#{@definition.label} has no instructions" if @instructions.nil? || @instructions.empty?
+      raise ConfigurationError, "#{@definition.label} has no purpose" if @purpose.nil? || @purpose.empty?
       raise ConfigurationError, "#{@definition.label} has no output_schema" unless @schema
 
       path = @path = @definition.escalation_path
@@ -74,7 +74,7 @@ module Squishling
 
     def start_chat(step)
       chat = build_chat(step)
-      chat.with_instructions("#{@instructions}\n\n#{INPUT_NOTE}")
+      chat.with_instructions("#{@purpose}\n\n#{INPUT_NOTE}")
       chat.with_schema(@schema.llm_schema)
       apply_params(chat, step.params)
       chat

@@ -105,7 +105,7 @@ end
 | Error | Raised when |
 |---|---|
 | `Squishling::Error` | Base class for everything below. Raised directly for misuse at call time, e.g. `result` or `squish!` called outside a squished method |
-| `Squishling::ConfigurationError` | Missing instructions or schema, a non-strict schema, invalid or reserved params, an invalid `model:`/`escalation:` declaration, an invalid `append_instructions` item or unavailable source, bad credentials, an unknown model, a request the provider rejects (400) |
+| `Squishling::ConfigurationError` | Missing purpose or schema, a non-strict schema, invalid or reserved params, an invalid `model:`/`escalation:` declaration, an invalid `append_to_purpose` item or unavailable source, bad credentials, an unknown model, a request the provider rejects (400) |
 | `Squishling::InvalidOutputError` | LLM output still invalid (schema or `squish_validate`) after every attempt in the escalation, or a deterministic/fallback return that doesn't match the schema |
 | `Squishling::LLMError` | The provider call failed on the last attempt in the escalation, after RubyLLM's own retries, including context-length errors (`cause` holds the original) |
 

@@ -5,7 +5,7 @@ RSpec.describe "Squishling optional (nullable) fields" do
     Class.new do
       include Squishling
 
-      instructions "Summarize the visit."
+      purpose "Summarize the visit."
       output_schema do
         array :symptoms, of: :string
         optional :vitals do
@@ -73,7 +73,7 @@ RSpec.describe "Squishling optional (nullable) fields" do
     raw = Class.new do
       include Squishling
 
-      instructions "x"
+      purpose "x"
       output_schema(
         type: "object",
         properties: {
@@ -93,7 +93,7 @@ RSpec.describe "Squishling optional (nullable) fields" do
     union = Class.new do
       include Squishling
 
-      instructions "x"
+      purpose "x"
       output_schema do
         any_of :value do
           object { string :a }

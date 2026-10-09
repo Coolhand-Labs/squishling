@@ -5,7 +5,7 @@ RSpec.describe Squishling::Params do
     Class.new do
       include Squishling
 
-      instructions "Extract."
+      purpose "Extract."
       output_schema { string :value }
     end
   end

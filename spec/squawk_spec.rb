@@ -8,7 +8,7 @@ RSpec.describe "Squishling squawk" do
       include Squishling
 
       squishling escalation: [{ model: "test-model", attempts: 2 }]
-      instructions "Classify."
+      purpose "Classify."
       output_schema { string :label }
 
       def initialize

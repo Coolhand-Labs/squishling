@@ -186,15 +186,15 @@ end
 
 ## Inheritance
 
-Subclasses inherit the model or escalation, provider, generation params (merged key by key), instructions, output schema,
+Subclasses inherit the model or escalation, provider, generation params (merged key by key), purpose, output schema,
 `squish_when` predicate, `squish_context` names, `squish_validate`, `squish_fallback`, and every `squish` declaration. Overrides in a subclass, including
 overridden methods, are routed the same way.
 
-`append_instructions` sections are added to, not replaced: a subclass's sections follow its parent's, and
-`append_instructions false` drops the inherited ones. See [Appending to the instructions](routing.md#appending-to-the-instructions).
+`append_to_purpose` sections are added to, not replaced: a subclass's sections follow its parent's, and
+`append_to_purpose false` drops the inherited ones. See [Appending to the purpose](routing.md#appending-to-the-purpose).
 
 ## Per-call overrides
 
-Inside a squished method, `squish!` sends the call to the LLM with its own `instructions:`,
-`append_instructions:`, `context:`, `model:` or `escalation:` (with `provider:`), and `params:`. Each layers over the method and class
+Inside a squished method, `squish!` sends the call to the LLM with its own `purpose:`,
+`append_to_purpose:`, `context:`, `model:` or `escalation:` (with `provider:`), and `params:`. Each layers over the method and class
 settings the same way they layer over each other. See [Handing off to the LLM](routing.md#handing-off-to-the-llm-with-squish).

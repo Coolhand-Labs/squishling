@@ -20,7 +20,7 @@ method unimplemented: every call goes to the LLM, and its output is validated ag
 class PaymentWebhook
   include Squishling
 
-  instructions "Normalize this payment provider's webhook into our payment event."
+  purpose "Normalize this payment provider's webhook into our payment event."
   output_schema do
     string  :event, enum: %w[succeeded failed refunded disputed]
     integer :amount_cents
@@ -49,8 +49,8 @@ parser raises, `squish!` sends this call to the LLM with the error and the parse
 class InvoiceParser
   include Squishling
 
-  instructions "Extract the invoice fields from the vendor's document."
-  append_instructions "The Ruby parser that handles well-formed invoices:", self   # this class's source
+  purpose "Extract the invoice fields from the vendor's document."
+  append_to_purpose "The Ruby parser that handles well-formed invoices:", self   # this class's source
   output_schema do
     string :invoice_number
     number :total
@@ -60,7 +60,7 @@ class InvoiceParser
     invoice = VendorFormats.fetch(vendor).parse(document)
     result(invoice_number: invoice.number, total: invoice.total)
   rescue VendorFormats::ParseError => e
-    squish!(append_instructions: "The parser failed on this document; the error is in the context.",
+    squish!(append_to_purpose: "The parser failed on this document; the error is in the context.",
             context: { parse_error: e })
   end
 end
@@ -91,7 +91,7 @@ end
 
 ## How it works
 
-A squishling class needs **instructions** (the system prompt) and an **output schema** (the shape of the result,
+A squishling class needs a **purpose** (the system prompt) and an **output schema** (the shape of the result,
 validated on both paths). A squished call goes to the LLM when:
 
 - its `squish_when` predicate is truthy for these inputs,
@@ -104,7 +104,7 @@ Otherwise the Ruby runs, and whatever it returns is validated and typed like LLM
 
 - **One contract, two paths**: Ruby returns and LLM output are validated against the same strict schema and
   returned as the same typed `Data` objects. `squished?` tells you which path served a call.
-- **Your code as context**: `append_instructions` adds sections to the prompt, including a class's or method's
+- **Your code as context**: `append_to_purpose` adds sections to the prompt, including a class's or method's
   own Ruby source.
 - **Any RubyLLM provider and model**: OpenAI, Anthropic Claude, Google Gemini, AWS Bedrock, OpenRouter, and more.
   Set a universal, per-class, per-method, or per-call model, plus layered generation params (temperature,
@@ -130,7 +130,7 @@ Otherwise the Ruby runs, and whatever it returns is validated and typed like LLM
       { model: "claude-haiku-4-5", provider: :bedrock },       # small hosted model
       { model: "claude-opus-5-5", provider: :anthropic }       # last resort
     ]
-    # instructions, output_schema, ...
+    # purpose, output_schema, ...
   end
   ```
 - **Output contracts**: beyond the strict schema, conditional rules (`given`) and Ruby checks (`squish_validate`)
@@ -145,10 +145,11 @@ Otherwise the Ruby runs, and whatever it returns is validated and typed like LLM
 ## Documentation
 
 - [Configuration](docs/configuration.md): options, models and escalation, providers, generation params, inheritance
-- [Routing](docs/routing.md): when a call goes to the LLM, `squish!`, `append_instructions`, hardening a path,
+- [Routing](docs/routing.md): when a call goes to the LLM, `squish!`, `append_to_purpose`, hardening a path,
   what the LLM sees
 - [Output schemas](docs/schemas.md): schema forms, strict mode, typed results, optional vs. empty, contracts
 - [Failure handling](docs/failures.md): escalation, `squish_validate`, error classes, fallbacks
+- [Naming and collisions](docs/naming.md): the methods `include Squishling` adds and what happens when a name is taken
 - [Live examples](examples/README.md): end-to-end tests against Anthropic Claude Haiku and OpenAI GPT-6 Luna
 
 ## Development

@@ -3,7 +3,7 @@
 module Squishling
   class Error < StandardError; end
 
-  # A programming or setup mistake (missing instructions/schema, non-strict schema, unknown model,
+  # A programming or setup mistake (missing purpose/schema, non-strict schema, unknown model,
   # missing API key). Never retried and never passed to squish_fallback.
   class ConfigurationError < Error; end
 

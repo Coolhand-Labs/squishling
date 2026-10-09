@@ -5,7 +5,7 @@ RSpec.describe Squishling do
     Class.new do
       include Squishling
 
-      instructions "Extract invoice fields."
+      purpose "Extract invoice fields."
       output_schema do
         string :invoice_number
         number :total
@@ -56,7 +56,7 @@ RSpec.describe Squishling do
       klass = Class.new do
         include Squishling
 
-        instructions "Summarize."
+        purpose "Summarize."
         output_schema { string :summary }
 
         def call(text) = raise(NotImplementedError)
@@ -71,7 +71,7 @@ RSpec.describe Squishling do
       klass = Class.new do
         include Squishling
 
-        instructions "Summarize."
+        purpose "Summarize."
         output_schema { string :summary }
       end
       stub_llm({ "summary" => "short" })
@@ -83,7 +83,7 @@ RSpec.describe Squishling do
       klass = Class.new do
         include Squishling
 
-        instructions "Echo."
+        purpose "Echo."
         output_schema { string :value }
         squish_when { @elastic }
 
@@ -102,10 +102,10 @@ RSpec.describe Squishling do
       Class.new do
         include Squishling
 
-        instructions "Default instructions."
+        purpose "Default purpose."
         squish_context :customer_tier, :product
 
-        squish :triage, instructions: "Triage the ticket.", model: "triage-model" do
+        squish :triage, purpose: "Triage the ticket.", model: "triage-model" do
           string :priority, enum: %w[low med high]
           string :team
         end
@@ -122,7 +122,7 @@ RSpec.describe Squishling do
       end
     end
 
-    it "uses per-method instructions, schema and model, and sends opt-in context" do
+    it "uses per-method purpose, schema and model, and sends opt-in context" do
       chats = stub_llm({ "priority" => "high", "team" => "platform" })
 
       result = triager.new(customer_tier: "enterprise", product: "API", db: Object.new).triage("down!", urgent: true)
@@ -142,7 +142,7 @@ RSpec.describe Squishling do
         include Squishling
 
         def shout(word) = { word: word.upcase }
-        squish :shout, instructions: "Shout." do
+        squish :shout, purpose: "Shout." do
           string :word
         end
       end
@@ -157,7 +157,7 @@ RSpec.describe Squishling do
       klass = Class.new do
         include Squishling
 
-        instructions "Classify."
+        purpose "Classify."
         output_schema({ type: "object", properties: { label: { type: "string" } }, required: ["label"],
                         additionalProperties: false })
       end
@@ -199,7 +199,7 @@ RSpec.describe Squishling do
           include Squishling
 
           output_schema({ type: "object", properties: {}, strict: false })
-          instructions "x"
+          purpose "x"
         end.call
       end.to raise_error(Squishling::ConfigurationError, /only supports strict/)
     end
@@ -251,7 +251,7 @@ RSpec.describe Squishling do
       klass = Class.new do
         include Squishling
 
-        instructions "Classify."
+        purpose "Classify."
         output_schema schema
       end
       stub_llm({ "label" => "ham" })
@@ -293,7 +293,7 @@ RSpec.describe Squishling do
       klass = Class.new do
         include Squishling
 
-        instructions "x"
+        purpose "x"
         output_schema { integer :count }
 
         def call(valid:) = valid ? { count: 3 } : { count: "three" }
@@ -308,7 +308,7 @@ RSpec.describe Squishling do
         klass = Class.new do
           include Squishling
 
-          instructions "x"
+          purpose "x"
           output_schema { integer :count }
 
           define_method(:call) { value }
@@ -322,7 +322,7 @@ RSpec.describe Squishling do
       base = Class.new do
         include Squishling
 
-        instructions "x"
+        purpose "x"
         output_schema { integer :count }
 
         def call(text:) = text.size
@@ -339,7 +339,7 @@ RSpec.describe Squishling do
       klass = Class.new do
         include Squishling
 
-        instructions "x"
+        purpose "x"
         output_schema { integer :count }
 
         def call = result(count: 3)
@@ -353,7 +353,7 @@ RSpec.describe Squishling do
       other = Class.new do
         include Squishling
 
-        instructions "x"
+        purpose "x"
         output_schema { integer :count }
 
         def call = { count: 3 }
@@ -361,7 +361,7 @@ RSpec.describe Squishling do
       mismatched = Class.new do
         include Squishling
 
-        instructions "x"
+        purpose "x"
         output_schema { string :count }
 
         def call = { count: "three" }
@@ -369,7 +369,7 @@ RSpec.describe Squishling do
       target = Class.new do
         include Squishling
 
-        instructions "x"
+        purpose "x"
         output_schema { integer :count }
 
         define_method(:call) { |source:| source.call }
@@ -387,7 +387,7 @@ RSpec.describe Squishling do
       klass = Class.new do
         include Squishling
 
-        instructions "x"
+        purpose "x"
         output_schema { array :tags, of: :string }
 
         def call(valid:) = valid ? { tags: %w[a b] } : nil
@@ -395,7 +395,7 @@ RSpec.describe Squishling do
       array_root = Class.new do
         include Squishling
 
-        squish(:names, instructions: "x") { array(of: :string) }
+        squish(:names, purpose: "x") { array(of: :string) }
 
         def names(valid:) = valid ? %w[a b] : "a"
       end
@@ -437,7 +437,7 @@ RSpec.describe Squishling do
       Class.new do
         include Squishling
 
-        instructions "x"
+        purpose "x"
         output_schema { string :value }
       end
     end
@@ -469,7 +469,7 @@ RSpec.describe Squishling do
       Class.new do
         include Squishling
 
-        instructions "x"
+        purpose "x"
         output_schema { string :value }
       end
     end
@@ -530,7 +530,7 @@ RSpec.describe Squishling do
       Class.new do
         include Squishling
 
-        squishling model: "parent-model", instructions: "Parent."
+        squishling model: "parent-model", purpose: "Parent."
         output_schema { string :value }
         squish_when { |mode:| mode == :llm }
 
@@ -597,7 +597,7 @@ RSpec.describe Squishling do
   end
 
   describe "configuration errors" do
-    it "requires instructions for the elastic path" do
+    it "requires purpose for the elastic path" do
       klass = Class.new do
         include Squishling
 
@@ -605,7 +605,7 @@ RSpec.describe Squishling do
       end
       stub_llm
 
-      expect { klass.call }.to raise_error(Squishling::ConfigurationError, /instructions/)
+      expect { klass.call }.to raise_error(Squishling::ConfigurationError, /purpose/)
     end
 
     it "rejects inclusion into a module" do
