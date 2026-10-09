@@ -141,6 +141,8 @@ Otherwise the Ruby runs, and whatever it returns is validated and typed like LLM
   reject bad output and trigger the next attempt.
 - **Defined failure behavior**: provider errors become `Squishling::LLMError`, and `squish_fallback` lets you decide
   what to return when every attempt fails.
+- **Observability**: the opt-in [`squawk`](docs/failures.md#observing-every-attempt-squawk) hook sends every attempt's
+  raw output to your error tracker. Model output stays out of error messages and logs otherwise.
 - **Opt-in context**: only method arguments, the instance state you name with `squish_context`, the `context:` you
   pass to `squish!`, and the source you choose to append are sent to the provider. The one addition: when
   [escalation](docs/configuration.md#models-and-escalation) moves to the next step, that step also sees the previous
@@ -153,8 +155,8 @@ Otherwise the Ruby runs, and whatever it returns is validated and typed like LLM
   what the LLM sees
 - [Output schemas](docs/schemas.md): schema forms, strict mode, typed results, optional vs. empty, contracts
 - [Failure handling](docs/failures.md): escalation, `squish_validate`, error classes, fallbacks
-- [Naming and collisions](docs/naming.md): the methods `include Squishling` adds and what happens when a name is taken
 - [Harnesses](docs/harnesses.md): escalation, squishsum, and judged squishsum (chat or Jev judges)
+- [Naming and collisions](docs/naming.md): the methods `include Squishling` adds and what happens when a name is taken
 - [Live examples](examples/README.md): end-to-end tests against Anthropic Claude Haiku and OpenAI GPT-6 Luna
 
 ## Development

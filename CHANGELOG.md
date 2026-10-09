@@ -7,6 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-09
+
+### Added
+
+- Harnesses: a `harness:` option (on `squishling`, `squish`, `squish!`, and `default_harness` in
+  `Squishling.configure`) chooses how a call uses its escalation. `:escalation` is the existing behavior and stays
+  the default. `:squishsum` asks the first escalation step twice, concurrently, and accepts the result only when the
+  two samples agree (exact match, or a custom `compare:`). `:judged_squishsum` sends a disagreement to a judge: the
+  next escalation step or a dedicated `judge:` step, either a chat model or a Jev-style decision model through
+  `RubyLLM.judge`, with a default prompt you can override through `judge_instructions:`. Samples that still disagree
+  raise the new `Squishling::DisagreementError < InvalidOutputError`, which carries both typed results, and
+  `squish_fallback` remains the only fallback. See [Harnesses](docs/harnesses.md). (#16)
+- `squawk`, an opt-in hook for sending what the model returned to an error tracker or tracing tool. It is called after
+  every LLM attempt (every sample and judge attempt under a harness) with `output:`, `metadata:`, and `error:`, and
+  can be set on `Squishling.configure`, `squishling`, and `squish`. It does nothing by default, and exceptions it
+  raises propagate unchanged. (#15)
+- `forward_rejected:` on escalation steps. When an attempt is rejected and the next step starts, the previous
+  output is forwarded to that step's provider by default (unchanged behavior); set `forward_rejected: false` to start
+  that step from the original input alone. (#14)
+- `include Squishling` raises `ConfigurationError` when the class inherits a method Squishling would override (for
+  example `Sinatra::Base.call`) instead of silently shadowing it. See [Naming and collisions](docs/naming.md). (#17)
+
+### Changed
+
+- **Breaking:** the DSL method `instructions` is now `purpose`, and `append_instructions` is now `append_to_purpose`,
+  including the `instructions:`/`append_instructions:` keywords on `squishling`, `squish`, and `squish!`. There are no
+  aliases. Rename them in your classes: `instructions "..."` becomes `purpose "..."`, and
+  `append_instructions: [...]` becomes `append_to_purpose: [...]`. The error for a missing prompt now says
+  "has no purpose". (#17)
+- **Breaking:** `ruby_llm` must now be `~> 2.1` (was `~> 2.0`); run `bundle update ruby_llm`. (#16)
+- **Breaking:** every value a method with an `output_schema` returns is now validated and typed, not only Hashes. On
+  the Ruby path and in `squish_fallback`, a `nil`, String, Array, or other non-Hash return that used to pass through
+  now raises `InvalidOutputError`; return a Hash (or `result(...)`) that matches the schema. A result of the schema's
+  own class passes through, another schema's result is re-validated, and values JSON can't represent (`NaN`,
+  `Infinity`, cycles) raise `InvalidOutputError` instead of a raw JSON error. Inner calls (`super`, or the method
+  called from `squish_when` or a fallback) still only type Hashes, so overrides can reshape values. (#13)
+- The `result` alias for `squishling_result` is no longer added when the class already has a `result` (its own or
+  inherited); use `squishling_result` there. (#17)
+- `InvalidOutputError#message` and `config.logger` warnings no longer quote the model's response. For unparseable JSON
+  they report only the line and column; the raw output stays in `InvalidOutputError#raw`. (#15)
+
+### Security
+
+- Params can no longer replace the strict output format or tools through the containers that also hold ordinary
+  settings: `generationConfig`/`generation_config` (Google Gemini) and `completion_args` (Mistral Conversations) now
+  reject their format and tool keys, with symbol or string keys, and a non-Hash value for them is rejected.
+  `tool_config` is reserved at the top level. Settings such as `topK` still work. (#12)
+- The previous model's rejected output forwarded to the next escalation step is capped at 4,000 characters
+  (`Invoker::MAX_FORWARDED_CHARS`), with a truncation marker. (#14)
+- Model output is kept out of error messages and logs (see the `InvalidOutputError#message` change above); `squawk`
+  is the one sanctioned way for it to leave the process. (#15)
+
 ## [0.2.0] - 2026-10-09
 
 ### Added
