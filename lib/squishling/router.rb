@@ -13,7 +13,7 @@ module Squishling
     class << self
       def dispatch(receiver, name, args, kwargs, impl, wrapper:)
         if (frame = enclosing_frame(receiver, name, wrapper))
-          return frame.definition.coerce(impl.call)
+          return coerce_inner(frame, impl.call)
         end
 
         definition = receiver.class.squishling_definition(name)
@@ -56,6 +56,12 @@ module Squishling
       end
 
       private
+
+      # An inner call (`super`, or the method called from squish_when or a fallback) hands its value to user code
+      # that may reshape it, so only a Hash is typed (for accessor access); the outermost return is validated in full.
+      def coerce_inner(frame, value)
+        value.is_a?(Hash) ? frame.definition.coerce(value) : value
+      end
 
       def route_to_llm(frame, definition, reason)
         log(definition, reason)

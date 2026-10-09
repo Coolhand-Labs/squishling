@@ -302,6 +302,109 @@ RSpec.describe Squishling do
       expect(klass.call(valid: true).count).to eq(3)
       expect { klass.call(valid: false) }.to raise_error(Squishling::InvalidOutputError, /Deterministic/)
     end
+
+    it "rejects deterministic returns that aren't the schema's object" do
+      [nil, "three", [3], Object.new, :three, { count: Float::NAN }].each do |value|
+        klass = Class.new do
+          include Squishling
+
+          instructions "x"
+          output_schema { integer :count }
+
+          define_method(:call) { value }
+        end
+
+        expect { klass.call }.to raise_error(Squishling::InvalidOutputError, /Deterministic/)
+      end
+    end
+
+    it "lets an override wrap a plain value returned by super" do
+      base = Class.new do
+        include Squishling
+
+        instructions "x"
+        output_schema { integer :count }
+
+        def call(text:) = text.size
+      end
+      sub = Class.new(base) do
+        def call(text:) = { count: super }
+      end
+
+      expect(sub.call(text: "four").count).to eq(4)
+      expect { base.call(text: "four") }.to raise_error(Squishling::InvalidOutputError, /Deterministic/)
+    end
+
+    it "passes through a result of its own class" do
+      klass = Class.new do
+        include Squishling
+
+        instructions "x"
+        output_schema { integer :count }
+
+        def call = result(count: 3)
+      end
+
+      expect(klass.call).to be_a(Data)
+      expect(klass.call.count).to eq(3)
+    end
+
+    it "re-validates a result built from a different schema" do
+      other = Class.new do
+        include Squishling
+
+        instructions "x"
+        output_schema { integer :count }
+
+        def call = { count: 3 }
+      end
+      mismatched = Class.new do
+        include Squishling
+
+        instructions "x"
+        output_schema { string :count }
+
+        def call = { count: "three" }
+      end
+      target = Class.new do
+        include Squishling
+
+        instructions "x"
+        output_schema { integer :count }
+
+        define_method(:call) { |source:| source.call }
+      end
+
+      converted = target.call(source: other.new)
+
+      expect(converted.count).to eq(3)
+      expect(converted.class).to equal(target.call(source: other.new).class)
+      expect(converted.class).not_to equal(other.call.class)
+      expect { target.call(source: mismatched.new) }.to raise_error(Squishling::InvalidOutputError, /Deterministic/)
+    end
+
+    it "validates deterministic returns against a non-object root schema" do
+      klass = Class.new do
+        include Squishling
+
+        instructions "x"
+        output_schema { array :tags, of: :string }
+
+        def call(valid:) = valid ? { tags: %w[a b] } : nil
+      end
+      array_root = Class.new do
+        include Squishling
+
+        squish(:names, instructions: "x") { array(of: :string) }
+
+        def names(valid:) = valid ? %w[a b] : "a"
+      end
+
+      expect(klass.call(valid: true).tags).to eq(%w[a b])
+      expect { klass.call(valid: false) }.to raise_error(Squishling::InvalidOutputError, /Deterministic/)
+      expect(array_root.new.names(valid: true)).to eq(%w[a b])
+      expect { array_root.new.names(valid: false) }.to raise_error(Squishling::InvalidOutputError, /Deterministic/)
+    end
   end
 
   describe "invalid LLM output" do
