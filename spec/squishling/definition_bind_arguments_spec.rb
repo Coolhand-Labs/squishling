@@ -48,10 +48,24 @@ RSpec.describe Squishling::Definition, "#bind_arguments" do
     expect(sent_arguments(klass, 1, tone: "formal")).to eq("args" => [1], "tone" => "formal")
   end
 
-  it "names extra positionals arg0, arg1 when the method takes none" do
+  it "binds a plain required positional by its parameter name" do
     klass = klass_with { def call(first) = first }
 
     expect(sent_arguments(klass, "a")).to eq("first" => "a")
+  end
+
+  it "names positionals arg0, arg1 when their parameters have no name" do
+    klass = klass_with { def call(first, (second, third)) = [first, second, third] }
+
+    expect(sent_arguments(klass, "a", [1, 2])).to eq("first" => "a", "arg0" => [1, 2])
+  end
+
+  it "keeps later arguments on their own names when an unnamed parameter comes first or in the middle" do
+    leading = klass_with { def call((a, b), second) = [a, b, second] }
+    middle = klass_with { def call(first, (a, b), third) = [first, a, b, third] }
+
+    expect(sent_arguments(leading, [1, 2], "x")).to eq("arg0" => [1, 2], "second" => "x")
+    expect(sent_arguments(middle, "f", [1, 2], "t")).to eq("first" => "f", "arg0" => [1, 2], "third" => "t")
   end
 
   it "routes an anonymous splat method to the LLM when its Ruby implementation is missing" do

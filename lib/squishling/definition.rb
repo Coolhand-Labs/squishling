@@ -132,20 +132,30 @@ module Squishling
       schema.build(data, squished:)
     end
 
-    # Map positional and keyword arguments onto the original method's parameter names.
+    # Map positional and keyword arguments onto the original method's parameter names. A positional with no
+    # name (a destructuring parameter, or one beyond the declared parameters) is sent as arg0, arg1, ...
     def bind_arguments(args, kwargs)
       positional = args.dup
       bound = {}
+      unnamed = 0
 
       parameters.each do |type, param|
         case type
         when :req, :opt
-          bound[param] = positional.shift unless positional.empty? || param.nil?
+          next if positional.empty?
+
+          value = positional.shift
+          if param
+            bound[param] = value
+          else
+            bound[:"arg#{unnamed}"] = value
+            unnamed += 1
+          end
         when :rest
           bound[param.nil? || param == :* ? :args : param] = positional.shift(positional.size)
         end
       end
-      positional.each_with_index { |value, index| bound[:"arg#{index}"] = value }
+      positional.each_with_index { |value, index| bound[:"arg#{unnamed + index}"] = value }
 
       bound.merge(kwargs)
     end

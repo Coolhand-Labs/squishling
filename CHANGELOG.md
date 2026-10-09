@@ -34,6 +34,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `squish!`'s Ruby-to-LLM handoff is now described as "handing off", so "escalation" only means the model list.
   `squish!` also accepts `escalation:` (instead of `model:`) for one call. (#6)
 
+### Fixed
+
+- A method with an unnamed positional parameter (a destructuring parameter such as `def call((a, b), second)`) sent
+  every later argument to the LLM under the wrong name. Each argument now keeps its own name, and unnamed ones are
+  sent as `arg0`, `arg1`, and so on.
+
 ### Security
 
 - Params can no longer override the system prompt, tool config, or structured-output format through the camelCase
