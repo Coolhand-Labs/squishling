@@ -166,10 +166,10 @@ module Squishling
       end
 
       log_warning("samples disagreed, asking the judge (#{judge.step.display_name})")
-      choice, reason = judge.verdict(first, second)
+      choice, reason, detail = judge.verdict(first, second)
       return { a: first, b: second }.fetch(choice) unless choice == :neither
 
-      raise DisagreementError.new(candidates: [first, second], verdict: :neither, reason:,
+      raise DisagreementError.new(candidates: [first, second], verdict: :neither, reason:, detail:,
         models: models + [judge.step.model])
     end
 

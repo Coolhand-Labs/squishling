@@ -48,6 +48,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `InvalidOutputError#message` and `config.logger` warnings no longer quote the model's response. For unparseable JSON
   they report only the line and column; the raw output stays in `InvalidOutputError#raw`. (#15)
 
+### Fixed
+
+- A number a model writes outside the range JSON can represent (such as `1e400`, which parses to `Infinity`) was
+  accepted as a valid `number`, while the same value from a Ruby method was rejected. It is now invalid output on the
+  LLM path too, and no longer raises a bare `JSON::GeneratorError` when `:squishsum` compares samples.
+
 ### Security
 
 - Params can no longer replace the strict output format or tools through the containers that also hold ordinary
@@ -57,7 +63,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The previous model's rejected output forwarded to the next escalation step is capped at 4,000 characters
   (`Invoker::MAX_FORWARDED_CHARS`), with a truncation marker. (#14)
 - Model output is kept out of error messages and logs (see the `InvalidOutputError#message` change above); `squawk`
-  is the one sanctioned way for it to leave the process. (#15)
+  is the one sanctioned way for it to leave the process. (#15) A chat judge's `reason` is model-written, so
+  `DisagreementError#message` and the logs no longer include it; read it from `DisagreementError#reason`. A
+  `:judgment` judge's message still carries the choice and probability, and a choice other than `a`, `b`, or `neither`
+  is no longer repeated.
+- At most 20 validation errors are fed back to the model, logged, and put in `InvalidOutputError#message` for one
+  invalid output, so a very large malformed response can no longer produce a megabyte-sized retry message or log
+  line.
 
 ## [0.2.0] - 2026-10-09
 
