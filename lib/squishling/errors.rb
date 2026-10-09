@@ -23,6 +23,24 @@ module Squishling
     end
   end
 
+  # The squishsum harnesses' samples were valid but didn't agree, and either no judge was declared
+  # (verdict nil) or the judge rejected both (verdict :neither, with its reason). candidates holds the two
+  # typed results, so a squish_fallback can still return one of them, and raw both as Hashes. models names the
+  # model behind each role (sample a, sample b, then the judge if one ran), not one entry per attempt; attempts
+  # is nil.
+  class DisagreementError < InvalidOutputError
+    attr_reader :candidates, :verdict, :reason
+
+    def initialize(candidates:, verdict: nil, reason: nil, models: nil)
+      @candidates = candidates
+      @verdict = verdict
+      @reason = reason
+      error = verdict ? "the judge rejected both samples" : "the two samples disagreed"
+      error += " (#{reason})" if reason && !reason.strip.empty?
+      super(errors: [error], raw: candidates.map(&:to_h), models:)
+    end
+  end
+
   # The LLM call itself failed (rate limit, server error, timeout, connection) after RubyLLM's own
   # HTTP retries. The original exception is available as #cause.
   class LLMError < Error; end

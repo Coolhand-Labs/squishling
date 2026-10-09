@@ -10,7 +10,8 @@ module Squishling
     attr_reader :klass, :name, :call_context
 
     def initialize(klass:, name:, purpose: nil, append_to_purpose: nil, output_schema: nil, model: nil,
-      provider: nil, params: nil, predicate: nil, fallback: nil, validator: nil, squawk: nil, call_context: {})
+      provider: nil, params: nil, harness: nil, predicate: nil, fallback: nil, validator: nil, squawk: nil,
+      call_context: {})
       @klass = klass
       @name = name
       @purpose = purpose
@@ -19,6 +20,7 @@ module Squishling
       @model = model
       @provider = provider
       @params = params
+      @harness = harness
       @predicate = predicate
       @fallback = fallback
       @validator = validator
@@ -29,7 +31,7 @@ module Squishling
     # This definition with one call's overrides on top. The output schema, predicate, fallback, and validator
     # can't be overridden: the call must still return the method's result type.
     def for_call(purpose: nil, append_to_purpose: nil, context: nil, model: nil, escalation: nil,
-      provider: nil, params: nil)
+      provider: nil, params: nil, harness: nil)
       call_path = ModelPath.declare(model, escalation, "#{label} squish!")
       raise ConfigurationError, "#{label}: squish! provider: needs a model: or escalation:" if provider && !call_path
       unless context.nil? || (context.is_a?(Hash) && context.each_key.all?(NAME_KEY))
@@ -38,6 +40,7 @@ module Squishling
 
       appended = Appendices.normalize(append_to_purpose, "#{label} squish!") unless append_to_purpose.nil?
       call_params = params && Params.normalize(params, "#{label} squish! params")
+      call_harness = Harness.normalize(harness, "#{label} squish!") unless harness.nil?
       self.class.new(
         klass:, name:, output_schema: @output_schema, predicate: @predicate, fallback: @fallback,
         validator: @validator, squawk: @squawk,
@@ -46,6 +49,7 @@ module Squishling
         model: call_path || @model, provider: call_path ? provider : @provider,
         # merge, not Params.resolve: a nil at the method level must still unset the class's key.
         params: call_params ? (@params || {}).merge(call_params) : @params,
+        harness: call_harness || @harness,
         call_context: @call_context.merge((context || {}).transform_keys(&:to_sym))
       )
     end
@@ -81,6 +85,11 @@ module Squishling
                            [config.default_model_path, config.default_provider]].find(&:first)
       entries ||= [{ model: nil, attempts: 1, forward_rejected: true }]
       ModelPath.steps(entries, provider:, params:)
+    end
+
+    # How the escalation is used (see Harness): the method's, the class's, the configured default, or :escalation.
+    def harness
+      @harness || klass.squishling_harness || Squishling.config.default_harness || Harness::DEFAULT
     end
 
     # Generation params: config defaults, overridden key by key by the class, then by the method.

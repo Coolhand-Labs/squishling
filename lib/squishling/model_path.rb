@@ -14,7 +14,12 @@ module Squishling
   module ModelPath
     # One attempt: the model, its provider, the fully resolved generation params, and whether the previous
     # step's rejected output is shown to it.
-    Step = Data.define(:model, :provider, :params, :forward_rejected)
+    Step = Data.define(:model, :provider, :params, :forward_rejected) do
+      # The model for logs and messages (nil means RubyLLM's default model).
+      def display_name
+        model || "RubyLLM default model"
+      end
+    end
 
     STEP_KEYS = %i[model provider params attempts order forward_rejected].freeze
 

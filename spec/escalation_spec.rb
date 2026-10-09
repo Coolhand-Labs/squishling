@@ -219,7 +219,7 @@ RSpec.describe "Squishling model escalation" do
     end
 
     it "names the failing step's params when the provider rejects a later step" do
-      klass.squishling(escalation: ["claude-haiku-4-5", { model: "gpt-6-luna", params: { temperature: 0.1 } }])
+      klass.squishling(escalation: ["claude-haiku-4-5", { model: "gpt-unknown", params: { temperature: 0.1 } }])
       stub_llm(nil, RubyLLM::BadRequestError.new("unsupported temperature"))
 
       expect { klass.call(text: "x") }.to raise_error(Squishling::ConfigurationError, /temperature.*0\.1/)
@@ -332,7 +332,8 @@ RSpec.describe "Squishling model escalation" do
     end
 
     it "applies the level's provider to steps without their own" do
-      base.squishling(escalation: ["gpt-6-luna", { model: "claude-opus-5-5", provider: :anthropic }], provider: :openai)
+      base.squishling(escalation: ["gpt-unknown", { model: "claude-opus-5-5", provider: :anthropic }],
+        provider: :openai)
       chats = stub_llm(nil, { "value" => "v" })
 
       base.call
@@ -343,7 +344,7 @@ RSpec.describe "Squishling model escalation" do
 
     it "merges step params over the class params, letting nil unset a key" do
       base.squishling(params: { temperature: 0.2, top_p: 0.9 },
-        escalation: ["claude-haiku-4-5", { model: "gpt-6-luna", provider: :openai,
+        escalation: ["claude-haiku-4-5", { model: "gpt-unknown", provider: :openai,
                                            params: { temperature: nil, thinking: { effort: :high } } }])
       chats = stub_llm(nil, { "value" => "v" })
 

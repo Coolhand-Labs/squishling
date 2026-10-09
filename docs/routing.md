@@ -90,6 +90,7 @@ end
 - `append_to_purpose:` (added to the class's, see [Appending to the purpose](#appending-to-the-purpose))
 - `output_schema:` (or a schema block)
 - `model:` or `escalation:`, `provider:`, and `params:` (generation params; see [Configuration](configuration.md))
+- `harness:` (see [Harnesses](harnesses.md))
 - `when:`, a predicate proc
 - `validate:` and `fallback:` (see [Failure handling](failures.md))
 
@@ -132,6 +133,7 @@ end
 | `append_to_purpose:` | Added to the declared sections; `false` (alone or first in an Array) drops them for this call |
 | `purpose:` | Replaces the purpose |
 | `model:` or `escalation:`, `provider:`, `params:` | E.g. send this call to a stronger model, or a whole [escalation](configuration.md#models-and-escalation), when Ruby fails. A `provider:` needs a `model:` or `escalation:`; `params:` merge key by key over the declared ones. |
+| `harness:` | Replaces the declared [harness](harnesses.md), e.g. `harness: :judged_squishsum` to double-check a hand-off |
 
 - **The output schema can't be overridden.** The call still returns the method's result type.
 - **Failures** go through the normal LLM path: a declared `squish_fallback` is used, otherwise
@@ -208,6 +210,8 @@ Source is read with Ruby's own parser (Prism) the first time it's needed and cac
   "context":   { "customer_tier": "enterprise", "product": "API" } }
 ```
 
+- **Squishsum harnesses:** both samples get exactly this input, and a [judge](harnesses.md#the-judge) gets
+  the same purpose and input plus both samples' outputs.
 - **Retries and escalation:** another attempt of the same step gets the validation errors in the same conversation. A
   later [escalation](configuration.md#models-and-escalation) step, which may be a different provider (say, local
   Ollama, then hosted Anthropic Claude), gets the same JSON plus the previous model's rejected output and the

@@ -79,7 +79,7 @@ return, or the error is raised with the original `ParseError` as its cause. See
 gem "squishling"
 ```
 
-Requires Ruby 3.3+ and RubyLLM 2.x. Configure your provider API keys in RubyLLM as usual, then optionally set a
+Requires Ruby 3.3+ and RubyLLM 2.1+. Configure your provider API keys in RubyLLM as usual, then optionally set a
 universal model, or an escalation of models to try in order:
 
 ```ruby
@@ -133,6 +133,10 @@ Otherwise the Ruby runs, and whatever it returns is validated and typed like LLM
     # purpose, output_schema, ...
   end
   ```
+- **[Harnesses](docs/harnesses.md)**: choose how a call uses its escalation with `harness:`
+  - [`:escalation`](docs/configuration.md#models-and-escalation) (default): try each attempt until one passes
+  - [`:squishsum`](docs/harnesses.md#samples): two concurrent samples, accepted only if they agree
+  - [`:judged_squishsum`](docs/harnesses.md#the-judge): a chat or Jev judge picks between disagreeing samples
 - **Output contracts**: beyond the strict schema, conditional rules (`given`) and Ruby checks (`squish_validate`)
   reject bad output and trigger the next attempt.
 - **Defined failure behavior**: provider errors become `Squishling::LLMError`, and `squish_fallback` lets you decide
@@ -150,6 +154,7 @@ Otherwise the Ruby runs, and whatever it returns is validated and typed like LLM
 - [Output schemas](docs/schemas.md): schema forms, strict mode, typed results, optional vs. empty, contracts
 - [Failure handling](docs/failures.md): escalation, `squish_validate`, error classes, fallbacks
 - [Naming and collisions](docs/naming.md): the methods `include Squishling` adds and what happens when a name is taken
+- [Harnesses](docs/harnesses.md): escalation, squishsum, and judged squishsum (chat or Jev judges)
 - [Live examples](examples/README.md): end-to-end tests against Anthropic Claude Haiku and OpenAI GPT-6 Luna
 
 ## Development

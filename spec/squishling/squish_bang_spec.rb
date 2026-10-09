@@ -102,14 +102,14 @@ RSpec.describe Squishling, "#squish!" do
   end
 
   it "hands off to another model and params for one call" do
-    klass = parser(model: "gpt-6-luna", provider: :openai, params: { top_p: 0.5 }) do
+    klass = parser(model: "gpt-unknown", provider: :openai, params: { top_p: 0.5 }) do
       squishling model: "claude-haiku-4-5", params: { temperature: 0.2 }
     end
     chats = stub_llm({ "name" => "Ada" })
 
     klass.call(record: "Ada")
 
-    expect(chats.first.model).to eq("gpt-6-luna")
+    expect(chats.first.model).to eq("gpt-unknown")
     expect(chats.first.options).to eq(provider: :openai, assume_model_exists: true)
     expect(chats.first.generation).to eq(temperature: 0.2, provider_options: { top_p: 0.5 })
   end

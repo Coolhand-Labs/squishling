@@ -15,6 +15,7 @@ A failed attempt moves on to the next one; once the last fails, the error is rai
 | Malformed or truncated JSON | Moves to the next attempt, then raises `InvalidOutputError`. JSON wrapped in a markdown code fence is accepted. |
 | JSON that doesn't match the schema (wrong types, missing or extra keys, `null` in a non-`optional` field, a broken [conditional rule](schemas.md#contracts-beyond-the-schema), root not an object) | Moves to the next attempt with the validation errors, then raises `InvalidOutputError` |
 | Schema-valid output that [`squish_validate`](#output-checks-squish_validate) rejects | Moves to the next attempt with your messages, then raises `InvalidOutputError` |
+| With a [squishsum harness](harnesses.md): two valid samples that differ, with no judge or a judge that rejects both | Raises `Squishling::DisagreementError` (an `InvalidOutputError`), carrying both typed `candidates` |
 
 Squishling validates output itself with [json_schemer](https://github.com/davishmcclurg/json_schemer), because
 RubyLLM doesn't, and some providers don't enforce strict mode. When the next attempt is on the same step (same
@@ -22,7 +23,9 @@ model, provider, params, and `forward_rejected:`), the re-ask happens in the sam
 what it got wrong. A different step gets a fresh chat with the original input plus the rejected output (truncated to
 4,000 characters) and its errors, so that output is sent to the next step's provider, which may not be the one that
 produced it. Set `forward_rejected: false` on a step to leave both out. `InvalidOutputError` exposes `errors`, `raw`
-(the last response), `attempts`, and `models` (the model tried on each attempt). With a `logger` configured, every
+(the last response), `attempts`, and `models` (the model tried on each attempt); for a
+[`DisagreementError`](harnesses.md#when-the-harness-fails), `raw` holds both candidates, `attempts` is `nil`, and
+`models` has one entry per role (sample a, sample b, then the judge). With a `logger` configured, every
 escalation is logged as a warning.
 
 ### What ends up in errors and logs
@@ -69,6 +72,7 @@ end
 - It runs inline, so keep it quick. Exceptions it raises propagate unchanged and fail the call, like any of your own
   code, so rescue inside the hook if an outage in your tracing tool shouldn't.
 - `output` is the same object the result is built from, so treat it as read-only.
+- Under a [harness](harnesses.md), it runs for every sample and judge attempt too, each with its own `input`.
 - It isn't called for a `ConfigurationError`, for deterministic and fallback returns, or for an attempt where your own
   `squish_validate` raises (that exception propagates first).
 
@@ -107,14 +111,15 @@ end
 | `Squishling::Error` | Base class for everything below. Raised directly for misuse at call time, e.g. `result` or `squish!` called outside a squished method |
 | `Squishling::ConfigurationError` | Missing purpose or schema, a non-strict schema, invalid or reserved params, an invalid `model:`/`escalation:` declaration, an invalid `append_to_purpose` item or unavailable source, bad credentials, an unknown model, a request the provider rejects (400) |
 | `Squishling::InvalidOutputError` | LLM output still invalid (schema or `squish_validate`) after every attempt in the escalation, or a deterministic/fallback return that doesn't match the schema |
+| `Squishling::DisagreementError` | A subclass of `InvalidOutputError`: a [squishsum harness](harnesses.md#when-the-harness-fails)'s samples disagreed and no judge accepted either. `candidates`, `verdict`, and `reason` describe what happened |
 | `Squishling::LLMError` | The provider call failed on the last attempt in the escalation, after RubyLLM's own retries, including context-length errors (`cause` holds the original) |
 
 Errors raised by your own Ruby code are not wrapped.
 
 ## Fallbacks
 
-Use `squish_fallback` to decide what happens when every attempt fails, with `InvalidOutputError` or
-`LLMError`.
+Use `squish_fallback` to decide what happens when the LLM path fails with `InvalidOutputError` (including a
+squishsum `DisagreementError`) or `LLMError`. It's the one fallback for every [harness](harnesses.md).
 It receives the error plus the method's inputs as keywords, and runs against the instance:
 
 ```ruby

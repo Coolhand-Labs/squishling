@@ -10,20 +10,23 @@ module Squishling
     # model: is a single attempt; escalation: is a list of models tried in order (see ModelPath):
     #   squishling escalation: [{ model: "claude-haiku-4-5", attempts: 2 }, "claude-sonnet-5-5", "claude-opus-5-5"]
     # Pass provider: alongside model: for models missing from RubyLLM's registry, e.g.
-    #   squishling model: "gpt-6-luna", provider: :openai
+    #   squishling model: "gpt-7-preview", provider: :openai
     # params: are generation params merged over the configured defaults (see Configuration#default_params):
     #   squishling params: { temperature: 0.1, top_p: 0.9 }
     # append_to_purpose: adds sections after the purpose (see #append_to_purpose):
     #   squishling append_to_purpose: ["The Ruby that handles well-formed input:", self]
+    # harness: chooses how the escalation is used (see Harness):
+    #   squishling harness: :judged_squishsum
     # squawk: is called after every LLM attempt with the raw output (see Configuration#squawk); false silences
     # an inherited one:
     #   squishling squawk: ->(output:, metadata:, error:) { Tracer.record(output, metadata, error) }
-    def squishling(model: nil, escalation: nil, provider: nil, params: nil, purpose: nil,
+    def squishling(model: nil, escalation: nil, provider: nil, params: nil, harness: nil, purpose: nil,
       append_to_purpose: nil, output_schema: nil, squawk: nil)
       path = ModelPath.declare(model, escalation, to_s)
       @squishling_model_path = path if path
       @squishling_provider = provider if provider
       @squishling_params = Params.normalize(params, "#{self} params") if params
+      @squishling_harness = Harness.normalize(harness, to_s) unless harness.nil?
       self.purpose(purpose) if purpose
       self.append_to_purpose(append_to_purpose) unless append_to_purpose.nil?
       self.output_schema(output_schema) if output_schema
@@ -42,6 +45,10 @@ module Squishling
 
     def squishling_provider
       squishling_lookup(:@squishling_provider)
+    end
+
+    def squishling_harness
+      squishling_lookup(:@squishling_harness)
     end
 
     # Generation params merged down the inheritance chain, so a subclass overrides individual keys.
@@ -129,19 +136,20 @@ module Squishling
     #   squish :triage, purpose: "...", escalation: %w[claude-haiku-4-5 claude-sonnet-5-5], when: ->(**) { true },
     #                   fallback: ->(error, **) { { priority: "medium" } }, append_to_purpose: [...],
     #                   validate: ->(result, **) { "team is required" if result.team.empty? },
-    #                   squawk: ->(output:, error:, **) { Tracer.record(output, error) } do
+    #                   harness: :squishsum, squawk: ->(output:, error:, **) { Tracer.record(output, error) } do
     #     string :priority
     #   end
     def squish(*names, purpose: nil, append_to_purpose: nil, output_schema: nil, model: nil, escalation: nil,
-      provider: nil, params: nil, when: nil, fallback: nil, validate: nil, squawk: nil, &schema_block)
+      provider: nil, params: nil, harness: nil, when: nil, fallback: nil, validate: nil, squawk: nil, &schema_block)
       schema = schema_block ? Schematist::Schema.create(&schema_block) : output_schema
       model = ModelPath.declare(model, escalation, "#{self} squish")
       params &&= Params.normalize(params, "#{self} squish params")
+      harness = Harness.normalize(harness, "#{self} squish") unless harness.nil?
       unless append_to_purpose.nil?
         append_to_purpose = Appendices.normalize(append_to_purpose, "#{self} squish append_to_purpose")
       end
       squawk = Squawk.validate(squawk, "#{self} squish")
-      options = { purpose:, append_to_purpose:, output_schema: schema, model:, provider:, params:,
+      options = { purpose:, append_to_purpose:, output_schema: schema, model:, provider:, params:, harness:,
                   predicate: binding.local_variable_get(:when), fallback:, validator: validate, squawk: }.compact
 
       names.map(&:to_sym).each do |name|

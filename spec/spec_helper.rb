@@ -9,9 +9,10 @@ class FakeChat
 
   attr_reader :model, :options, :instructions, :schema, :messages
 
-  def initialize(model:, responses:, **options)
+  def initialize(model:, responses:, on_ask: nil, **options)
     @model = model
     @options = options
+    @on_ask = on_ask
     @responses = responses
     @messages = []
   end
@@ -52,10 +53,14 @@ class FakeChat
     self
   end
 
-  # Exception responses (instances or classes) are raised instead of returned.
+  # Exception responses (instances or classes) are raised instead of returned. The squishsum harnesses ask
+  # from worker threads, so responses shared across chats are taken under a lock.
+  SHIFT_LOCK = Mutex.new
+
   def ask(message)
     @messages << message
-    response = @responses.shift
+    @on_ask&.call(self)
+    response = SHIFT_LOCK.synchronize { @responses.shift }
     raise response if response.is_a?(Exception) || (response.is_a?(Class) && response < Exception)
 
     response.is_a?(Response) ? response : Response.new(response)
@@ -70,6 +75,33 @@ module LLMHelpers
       FakeChat.new(model:, responses:, **options).tap { |chat| chats << chat }
     end
     chats
+  end
+
+  # Stub RubyLLM.chat with one list of responses per chat, in the order the chats are created. on_ask is
+  # called with the chat before each response is taken.
+  def stub_llm_chats(*responses_per_chat, on_ask: nil)
+    chats = []
+    allow(RubyLLM).to receive(:chat) do |model: nil, **options|
+      responses = responses_per_chat.fetch(chats.size) { raise "unexpected chat ##{chats.size + 1} (#{model})" }
+      FakeChat.new(model:, responses: responses.dup, on_ask:, **options).tap { |chat| chats << chat }
+    end
+    chats
+  end
+
+  # Stub RubyLLM.judge; each answer (a winner choice and its probabilities, or an exception) is used for
+  # successive judgments. Returns the recorded calls: { input:, questions:, options: }.
+  def stub_judgment(*answers)
+    calls = []
+    allow(RubyLLM).to receive(:judge) do |input, questions:, **options|
+      calls << { input:, questions:, options: }
+      answer = answers.shift
+      raise answer if answer.is_a?(Exception) || (answer.is_a?(Class) && answer < Exception)
+
+      choice = RubyLLM::Choice.new(choice: answer.fetch(:choice), probabilities: answer.fetch(:probabilities),
+        confidence: answer.fetch(:probabilities).values.max)
+      RubyLLM::Judgment.new(answers: { winner: choice }, model: options[:model])
+    end
+    calls
   end
 end
 

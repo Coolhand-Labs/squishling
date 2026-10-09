@@ -475,10 +475,10 @@ RSpec.describe Squishling do
     end
 
     it "assumes a model exists when it's missing from RubyLLM's registry and a provider is given" do
-      base.squishling(model: "gpt-6-luna", provider: :openai)
+      base.squishling(model: "gpt-unknown", provider: :openai)
       chat = chat_for(base)
 
-      expect(chat.model).to eq("gpt-6-luna")
+      expect(chat.model).to eq("gpt-unknown")
       expect(chat.options).to eq(provider: :openai, assume_model_exists: true)
     end
 
@@ -496,7 +496,7 @@ RSpec.describe Squishling do
 
     it "uses the configured default provider with the default model" do
       Squishling.configure do |c|
-        c.default_model = "gpt-6-luna"
+        c.default_model = "gpt-unknown"
         c.default_provider = :openai
       end
 
@@ -504,7 +504,7 @@ RSpec.describe Squishling do
     end
 
     it "keeps a provider paired with the model declared at the same level" do
-      base.squishling(model: "gpt-6-luna", provider: :openai)
+      base.squishling(model: "gpt-unknown", provider: :openai)
       base.squish(:quick, model: "claude-haiku-4-5") { string :value }
       chat = chat_for(base, :quick)
 
@@ -513,13 +513,13 @@ RSpec.describe Squishling do
     end
 
     it "accepts a per-method provider" do
-      base.squish(:luna, model: "gpt-6-luna", provider: :openai) { string :value }
+      base.squish(:luna, model: "gpt-unknown", provider: :openai) { string :value }
 
       expect(chat_for(base, :luna).options).to eq(provider: :openai, assume_model_exists: true)
     end
 
     it "inherits the class provider in subclasses" do
-      base.squishling(model: "gpt-6-luna", provider: :openai)
+      base.squishling(model: "gpt-unknown", provider: :openai)
 
       expect(chat_for(Class.new(base)).options).to include(provider: :openai)
     end
