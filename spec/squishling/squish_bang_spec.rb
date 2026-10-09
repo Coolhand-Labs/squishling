@@ -8,7 +8,7 @@ RSpec.describe Squishling, "#squish!" do
     Class.new do
       include Squishling
 
-      instructions "Parse the record."
+      purpose "Parse the record."
       output_schema { string :name }
       define_method(:overrides) { overrides }
       class_eval(&) if block_given?
@@ -75,8 +75,8 @@ RSpec.describe Squishling, "#squish!" do
       .to eq("tier" => "gold", "parse_error" => { "class" => "ArgumentError", "message" => 'no comma in "Ada"' })
   end
 
-  it "adds per-call append_instructions to the declared ones" do
-    klass = parser(append_instructions: "The Ruby parser failed.") { append_instructions "Class." }
+  it "adds per-call append_to_purpose to the declared ones" do
+    klass = parser(append_to_purpose: "The Ruby parser failed.") { append_to_purpose "Class." }
     chats = stub_llm({ "name" => "Ada" })
 
     klass.call(record: "Ada")
@@ -84,8 +84,8 @@ RSpec.describe Squishling, "#squish!" do
     expect(chats.first.instructions).to start_with("Parse the record.\n\nClass.\n\nThe Ruby parser failed.\n\n")
   end
 
-  it "drops the declared append_instructions for one call with false" do
-    klass = parser(append_instructions: false) { append_instructions "Class." }
+  it "drops the declared append_to_purpose for one call with false" do
+    klass = parser(append_to_purpose: false) { append_to_purpose "Class." }
     chats = stub_llm({ "name" => "Ada" })
 
     klass.call(record: "Ada")
@@ -93,10 +93,10 @@ RSpec.describe Squishling, "#squish!" do
     expect(chats.first.instructions).to eq("Parse the record.\n\n#{Squishling::Invoker::INPUT_NOTE}")
   end
 
-  it "replaces the instructions for one call" do
+  it "replaces the purpose for one call" do
     chats = stub_llm({ "name" => "Ada" })
 
-    parser(instructions: "Recover the name.").call(record: "Ada")
+    parser(purpose: "Recover the name.").call(record: "Ada")
 
     expect(chats.first.instructions).to start_with("Recover the name.\n\n")
   end
@@ -130,7 +130,7 @@ RSpec.describe Squishling, "#squish!" do
     klass = Class.new do
       include Squishling
 
-      instructions "Parse."
+      purpose "Parse."
       output_schema { string :name }
 
       def call(record:)
@@ -153,7 +153,7 @@ RSpec.describe Squishling, "#squish!" do
       include Squishling
 
       squishling model: "declared-model"
-      instructions "Parse."
+      purpose "Parse."
       output_schema { string :name }
 
       def call(**) = squish!(escalation: [{ model: "small-model", attempts: 2 }, "big-model"], provider: :openai)
@@ -170,7 +170,7 @@ RSpec.describe Squishling, "#squish!" do
     klass = Class.new do
       include Squishling
 
-      instructions "Parse."
+      purpose "Parse."
       output_schema { string :name }
 
       def call(**) = squish!(model: "a", escalation: %w[b])
@@ -202,7 +202,7 @@ RSpec.describe Squishling, "#squish!" do
     klass = Class.new do
       include Squishling
 
-      instructions "Parse."
+      purpose "Parse."
       output_schema { string :name }
 
       def call(record:) = recover(record)
@@ -238,7 +238,7 @@ RSpec.describe Squishling, "#squish!" do
     klass = Class.new do
       include Squishling
 
-      instructions "Explain."
+      purpose "Explain."
       output_schema { string :name }
 
       def call(error:)
@@ -259,7 +259,7 @@ RSpec.describe Squishling, "#squish!" do
     klass = Class.new do
       include Squishling
 
-      instructions "Parse the record."
+      purpose "Parse the record."
       output_schema { string :name }
 
       # Parses each ";"-separated record by calling itself.

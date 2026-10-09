@@ -54,7 +54,7 @@ Flag any change that breaks one of these; they are behavior contracts, not style
   messages and `config.logger` lines carry parse positions and schema paths, never the response itself (the
   documented exceptions are model-chosen extra key names and the developer's own `squish_validate` messages).
 - **Only named context leaves the process.** The LLM sees method arguments, `squish_context` values, a
-  `squish!` call's `context:`, and source the developer explicitly passes to `append_instructions` — never
+  `squish!` call's `context:`, and source the developer explicitly passes to `append_to_purpose` — never
   instance variables wholesale. Exceptions in context are sent as class and message only. The one model-generated
   exception: escalating to a new step forwards the previous step's rejected output (capped at
   `Invoker::MAX_FORWARDED_CHARS`) to that step's provider, which may differ; a step can opt out with
@@ -62,6 +62,8 @@ Flag any change that breaks one of these; they are behavior contracts, not style
 - **Params can't override what Squishling owns.** Provider-specific params are merged into the request last
   (RubyLLM's `with_provider_options`), so `Params::RESERVED_KEYS` (model, messages, structured-output format, tools, streaming) stay rejected. A
   provider 400 is a `ConfigurationError`, never something a fallback absorbs.
+- **No silent shadowing.** `include Squishling` raises `ConfigurationError` if the class inherits a method it would
+  override (`Collisions`), and only adds the `result` alias when the class has no `result`. Classes' own methods win.
 - **Thread/fiber safety.** Routing state is fiber-local; shared caches are mutex-guarded. Don't add
   unsynchronized class-level mutable state.
 
@@ -69,7 +71,7 @@ Flag any change that breaks one of these; they are behavior contracts, not style
 
 The public surface is `Squishling.configure`/`config`, the `include Squishling` DSL (`squishling` — including its
 `model:`/`escalation:` (steps with `model:`, `attempts:`, `order:`, `provider:`, `params:`, `forward_rejected:`)/`provider:`/`params:`/
-`append_instructions:`/`squawk:` options — `instructions`, `append_instructions`, `output_schema`, `squish_when`,
+`append_to_purpose:`/`squawk:` options — `purpose`, `append_to_purpose`, `output_schema`, `squish_when`,
 `squish_context`, `squish` (including `validate:`/`squawk:`), `squish_validate`, `squish_fallback`,
 `result`/`squishling_result`, `squish!` (including `model:`/`escalation:`)), `Squishling::Configuration` options
 (including `squawk`, whose `output:`/`metadata:`/`error:` keywords are public), result objects (`squished?`,

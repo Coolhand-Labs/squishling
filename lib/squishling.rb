@@ -20,6 +20,7 @@ require_relative "squishling/invoker"
 require_relative "squishling/router"
 require_relative "squishling/wrapper"
 require_relative "squishling/class_methods"
+require_relative "squishling/collisions"
 
 # Include Squishling in a class to make it elastic: its squished methods either run their
 # Ruby implementation or send their inputs through an LLM and return schema-validated results.
@@ -40,7 +41,11 @@ module Squishling
     def included(base)
       raise ConfigurationError, "Squishling can only be included in a class" unless base.is_a?(Class)
 
+      # A redundant include in a subclass overrides nothing new: the superclass's own methods already won.
+      Collisions.check!(base) unless base.superclass&.include?(Squishling)
       base.extend(ClassMethods)
+      # `result` is a convenience alias for squishling_result; a class that already has a `result` keeps it.
+      base.include(ResultAlias) unless base.method_defined?(:result) || base.private_method_defined?(:result)
       base.send(:squishling_install_wrapper)
     end
   end
@@ -54,16 +59,22 @@ module Squishling
     frame.definition.build_result(attrs || kwargs, squished: false)
   end
 
-  alias_method :result, :squishling_result
+  # Included separately, and only when the class has no `result` of its own, so `result` never shadows an
+  # inherited one. A module (not an alias on the class) keeps it out of the class's own source.
+  module ResultAlias
+    def result(...)
+      squishling_result(...)
+    end
+  end
 
   # Hand the squished method currently executing to the LLM, e.g. from a `rescue` when the Ruby path can't
   # handle this input. Returns the typed result (squished? true, or false when the declared fallback supplied
-  # it); return it from the method. The overrides apply to this call only: append_instructions adds to (or,
+  # it); return it from the method. The overrides apply to this call only: append_to_purpose adds to (or,
   # with false, replaces) the declared sections, context is sent alongside the declared squish_context,
-  # model/escalation (one or the other)/provider/instructions replace the declared ones, and params merge key
+  # model/escalation (one or the other)/provider/purpose replace the declared ones, and params merge key
   # by key over them.
-  def squish!(append_instructions: nil, context: nil, instructions: nil, model: nil, escalation: nil, provider: nil,
+  def squish!(append_to_purpose: nil, context: nil, purpose: nil, model: nil, escalation: nil, provider: nil,
     params: nil)
-    Router.hand_off(self, { append_instructions:, context:, instructions:, model:, escalation:, provider:, params: })
+    Router.hand_off(self, { append_to_purpose:, context:, purpose:, model:, escalation:, provider:, params: })
   end
 end

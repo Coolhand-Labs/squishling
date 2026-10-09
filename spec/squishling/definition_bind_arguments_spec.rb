@@ -5,7 +5,7 @@ RSpec.describe Squishling::Definition, "#bind_arguments" do
     Class.new do
       include Squishling
 
-      instructions "Echo."
+      purpose "Echo."
       output_schema { string :value }
       squish_when { |**| true }
       class_eval(&body) if body
@@ -72,7 +72,7 @@ RSpec.describe Squishling::Definition, "#bind_arguments" do
     klass = Class.new do
       include Squishling
 
-      instructions "Echo."
+      purpose "Echo."
       output_schema { string :value }
       def call(*) = raise(NotImplementedError)
     end

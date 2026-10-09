@@ -79,7 +79,7 @@ module Squishling
 
       # The call in progress that this one is part of, which runs its Ruby implementation without routing again:
       # a subclass override's `super` (entered through an ancestor's wrapper), or a call made while deciding or on
-      # the LLM path (squish_when, squish_fallback, an instructions proc). Only recursion from the Ruby
+      # the LLM path (squish_when, squish_fallback, a purpose proc). Only recursion from the Ruby
       # implementation itself is a new call, routed on its own.
       def enclosing_frame(receiver, name, wrapper)
         frame = frames.reverse_each.find do |candidate|

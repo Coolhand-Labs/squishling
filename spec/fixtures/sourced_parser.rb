@@ -1,18 +1,18 @@
 # frozen_string_literal: true
 
-# Fixture for append_instructions source rendering and squish! (see spec/squishling/*_spec.rb).
+# Fixture for append_to_purpose source rendering and squish! (see spec/squishling/*_spec.rb).
 class SourcedParser
   include Squishling
 
-  instructions "Parse the record."
-  append_instructions "The Ruby parser for well-formed records:", self
+  purpose "Parse the record."
+  append_to_purpose "The Ruby parser for well-formed records:", self
   output_schema { string :name }
 
   def call(record:)
     name = record.split(",").fetch(0) { raise ArgumentError, "empty record" }
     result(name:)
   rescue ArgumentError => e
-    squish!(append_instructions: "The Ruby parser failed on this record.", context: { parse_error: e })
+    squish!(append_to_purpose: "The Ruby parser failed on this record.", context: { parse_error: e })
   end
 
   def self.build = new

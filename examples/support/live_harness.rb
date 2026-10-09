@@ -71,7 +71,7 @@ module LiveHarness
   class InvoiceParser
     include Squishling
 
-    instructions "Extract the invoice number, line items and total from the vendor's raw invoice text."
+    purpose "Extract the invoice number, line items and total from the vendor's raw invoice text."
     output_schema do
       string :invoice_number
       number :total
@@ -90,12 +90,12 @@ module LiveHarness
     end
   end
 
-  # Unimplemented method with per-method instructions/schema and opt-in instance context.
+  # Unimplemented method with per-method purpose/schema and opt-in instance context.
   class TicketTriager
     include Squishling
 
     squish_context :customer_tier
-    squish :triage, instructions: "Triage the support ticket. Enterprise customers with outages are high priority." do
+    squish :triage, purpose: "Triage the support ticket. Enterprise customers with outages are high priority." do
       string :priority, enum: %w[low medium high]
       string :team, enum: %w[billing platform support]
     end
@@ -112,7 +112,7 @@ module LiveHarness
   class SentimentClassifier
     include Squishling
 
-    instructions "Classify the sentiment of the review."
+    purpose "Classify the sentiment of the review."
     output_schema(
       type: "object",
       properties: {
@@ -128,7 +128,7 @@ module LiveHarness
   class VisitSummarizer
     include Squishling
 
-    instructions <<~TEXT
+    purpose <<~TEXT
       Summarize the clinic note. Use null for anything the note doesn't mention, and an empty list when
       the note explicitly says there are none.
     TEXT
@@ -149,12 +149,12 @@ module LiveHarness
   end
 
   # Ruby parses "Name <email>"; anything else is handed to the LLM from the rescue, with the parse error as
-  # context and this class's own source appended to the instructions.
+  # context and this class's own source appended to the purpose.
   class ContactParser
     include Squishling
 
-    instructions "Extract the contact's name and email address."
-    append_instructions "The Ruby parser for well-formed contacts, for context on the expected output:", self
+    purpose "Extract the contact's name and email address."
+    append_to_purpose "The Ruby parser for well-formed contacts, for context on the expected output:", self
     output_schema do
       string :name
       string :email
@@ -167,7 +167,7 @@ module LiveHarness
       result(name: match[:name], email: match[:email])
     rescue ArgumentError => e
       squish!(
-        append_instructions: "The Ruby parser failed on this input; the error is in the context.",
+        append_to_purpose: "The Ruby parser failed on this input; the error is in the context.",
         context: { parse_error: e }
       )
     end
@@ -177,7 +177,7 @@ module LiveHarness
   class Echo
     include Squishling
 
-    instructions "Reply with one word."
+    purpose "Reply with one word."
     output_schema { string :word }
     squish_fallback { |_error, **| { word: "fallback" } }
   end
@@ -187,8 +187,8 @@ module LiveHarness
   class ReviewModerator
     include Squishling
 
-    instructions "Moderate the product review. Reject spam or abuse and give a short reason; otherwise approve " \
-                 "it with a null reason."
+    purpose "Moderate the product review. Reject spam or abuse and give a short reason; otherwise approve " \
+            "it with a null reason."
     output_schema do
       string :status, enum: %w[approved rejected]
       optional(:reason) { string }
@@ -201,7 +201,7 @@ module LiveHarness
   class CheckedEcho
     include Squishling
 
-    instructions "Reply with one lowercase word that names a color."
+    purpose "Reply with one lowercase word that names a color."
     output_schema { string :word }
     squish_validate do |result, **|
       @checks = (@checks || 0) + 1

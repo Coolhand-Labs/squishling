@@ -49,7 +49,7 @@ RSpec.describe Squishling::Schema do
       klass = Class.new do
         include Squishling
 
-        instructions "Classify."
+        purpose "Classify."
         output_schema Object.new
       end
       chats = stub_llm({ "label" => "ok" })

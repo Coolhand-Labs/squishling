@@ -9,7 +9,7 @@ RSpec.describe "Squishling model escalation" do
       include Squishling
 
       squishling escalation: [{ model: "claude-haiku-4-5", attempts: 2 }, "claude-sonnet-5-5"]
-      instructions "Classify."
+      purpose "Classify."
       output_schema { string :label }
     end
   end
@@ -142,7 +142,7 @@ RSpec.describe "Squishling model escalation" do
         include Squishling
 
         squishling
-        instructions "Classify."
+        purpose "Classify."
         output_schema { string :label }
       end
       chats = stub_llm({ "label" => 1 }, { "label" => "ok" })
@@ -269,7 +269,7 @@ RSpec.describe "Squishling model escalation" do
       Class.new do
         include Squishling
 
-        instructions "x"
+        purpose "x"
         output_schema { string :value }
       end
     end
