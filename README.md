@@ -133,9 +133,10 @@ Otherwise the Ruby runs, and whatever it returns is validated and typed like LLM
     # purpose, output_schema, ...
   end
   ```
-- **Self-consistency harnesses**: `harness: :squishsum` asks the first escalation step twice, concurrently, and
-  accepts the output only when both samples agree. `harness: :judged_squishsum` sends disagreements to a judge, which
-  can be the next escalation step or a System One decision model such as Jev, via RubyLLM judgments.
+- **[Harnesses](docs/harnesses.md)**: choose how a call uses its escalation with `harness:`
+  - [`:escalation`](docs/configuration.md#models-and-escalation) (default): try each attempt until one passes
+  - [`:squishsum`](docs/harnesses.md#samples): two concurrent samples, accepted only if they agree
+  - [`:judged_squishsum`](docs/harnesses.md#the-judge): a chat or Jev judge picks between disagreeing samples
 - **Output contracts**: beyond the strict schema, conditional rules (`given`) and Ruby checks (`squish_validate`)
   reject bad output and trigger the next attempt.
 - **Defined failure behavior**: provider errors become `Squishling::LLMError`, and `squish_fallback` lets you decide
