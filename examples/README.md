@@ -13,6 +13,7 @@ configures a default escalation (its model, with 2 attempts) and runs the same s
 | optional fields keep null (not mentioned) distinct from [] (none) | `optional` (nullable) fields, typed nullable objects |
 | conditional (given) rules pass strict mode and are enforced locally | `given` conditionals kept out of the provider's strict schema, validated locally |
 | squish_validate rejection escalates to a fresh chat on the next step | `squish_validate`, a two-step `escalation:`, the escalation message |
+| squishsum accepts two agreeing samples and squawk reports each attempt | `harness: :squishsum` with a custom `compare:`, two concurrent samples, the `squawk` hook's output, `model`, and `usage` metadata from a real provider |
 | judged_squishsum samples concurrently and a chat judge picks a candidate | `harness:` concurrent samples, `compare:`, a dedicated chat `judge:` |
 | params the model rejects raise ConfigurationError, not the fallback | 400 handling, `squish_fallback` bypass |
 
@@ -24,7 +25,7 @@ names params its model is known to reject:
 | `anthropic_example.rb` | `{ temperature: 0 }` | `{ thinking: { budget: 1024 }, temperature: 0 }` |
 | `openai_example.rb` | `{ thinking: { effort: :low } }` | `{ temperature: 0.1 }` (reasoning model) |
 
-The scripts share `support/live_harness.rb`. Together they make about 15 small requests per provider, more if a model needs a retry.
+The scripts share `support/live_harness.rb`. Together they make about 17 small requests per provider, more if a model needs a retry.
 
 The live scenarios use a chat judge only. A `type: :judgment` judge (a System One decision model such as Jev,
 through `RubyLLM.judge`) needs that provider's key and is covered by the offline specs in `spec/harness_spec.rb`.
