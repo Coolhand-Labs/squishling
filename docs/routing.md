@@ -209,7 +209,9 @@ Source is read with Ruby's own parser (Prism) the first time it's needed and cac
   later [escalation](configuration.md#models-and-escalation) step, which may be a different provider (say, local
   Ollama, then hosted Anthropic Claude), gets the same JSON plus the previous model's rejected output and the
   errors, including any messages your [`squish_validate`](failures.md#output-checks-squish_validate) check
-  returned. Don't put data in those messages that you wouldn't send as an argument.
+  returned. The rejected output is model-generated and is truncated to 4,000 characters; set
+  `forward_rejected: false` on a step to start it from the original input only, without the rejected output or
+  its errors. Don't put data in those messages that you wouldn't send as an argument.
 
 `squish_context` names are read from a method of that name if there is one, otherwise from the instance
 variable. Only context you name is sent. Instance variables are never dumped wholesale, so API clients,

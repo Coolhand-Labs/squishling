@@ -110,7 +110,7 @@ Otherwise the Ruby runs, and whatever it returns is validated and typed like LLM
   Set a universal, per-class, per-method, or per-call model, plus layered generation params (temperature,
   reasoning effort, top_p, …).
 - **Model escalation**: declare an `escalation:` instead of a `model:`, with per-step `attempts:`, `order:`, provider,
-  and params. Invalid output (with its errors fed back) or a provider failure moves on to the next attempt. Steps can
+  params, and `forward_rejected:`. Invalid output (with its errors fed back) or a provider failure moves on to the next attempt. Steps can
   cross providers, e.g. a local Qwen model on Ollama, then Anthropic Claude Haiku on AWS Bedrock, then Claude Opus:
 
   ```ruby
@@ -138,7 +138,9 @@ Otherwise the Ruby runs, and whatever it returns is validated and typed like LLM
 - **Defined failure behavior**: provider errors become `Squishling::LLMError`, and `squish_fallback` lets you decide
   what to return when every attempt fails.
 - **Opt-in context**: only method arguments, the instance state you name with `squish_context`, the `context:` you
-  pass to `squish!`, and the source you choose to append are sent to the provider.
+  pass to `squish!`, and the source you choose to append are sent to the provider. The one addition: when
+  [escalation](docs/configuration.md#models-and-escalation) moves to the next step, that step also sees the previous
+  model's rejected output, unless the step sets `forward_rejected: false`.
 
 ## Documentation
 
