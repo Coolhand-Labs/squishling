@@ -107,6 +107,39 @@ RSpec.describe "Squishling model escalation" do
       expect { klass.call(text: "x") }.to raise_error(Squishling::LLMError, /boom/) { |e| expect(e.cause).to equal(error) }
     end
 
+    it "raises LLMError, not InvalidOutputError, when the last step fails after an earlier step's invalid output" do
+      error = RubyLLM::ServerError.new("overloaded")
+      chats = stub_llm({ "label" => 1 }, { "label" => 2 }, error)
+
+      expect { klass.call(text: "x") }
+        .to raise_error(Squishling::LLMError, /overloaded/) { |e| expect(e.cause).to equal(error) }
+      expect(chats.map(&:model)).to eq(%w[claude-haiku-4-5 claude-sonnet-5-5])
+      expect(chats.last.messages.size).to eq(1)
+      expect(chats.last.messages.first).to include('{"label":2}', "not a string")
+    end
+
+    it "starts a fresh chat after a mid-path LLMError and still reports the final LLMError" do
+      klass.squishling(escalation: [{ model: "claude-haiku-4-5", attempts: 3 }])
+      first = RubyLLM::RateLimitError.new("slow down")
+      last = RubyLLM::ServerError.new("boom")
+      chats = stub_llm({ "label" => 1 }, first, last)
+
+      expect { klass.call(text: "x") }
+        .to raise_error(Squishling::LLMError, /boom/) { |e| expect(e.cause).to equal(last) }
+      expect(chats.map { |chat| chat.messages.size }).to eq([2, 1])
+      expect(chats.last.messages.first).to include('{"label":1}', "not a string")
+    end
+
+    it "hands the final LLMError to squish_fallback instead of raising" do
+      klass.squish_fallback { |error, **| { label: error.class.name } }
+      stub_llm({ "label" => 1 }, { "label" => 2 }, RubyLLM::ServerError.new("overloaded"))
+
+      result = klass.call(text: "x")
+
+      expect(result.label).to eq("Squishling::LLMError")
+      expect(result).not_to be_squished
+    end
+
     it "never escalates a configuration error" do
       chats = stub_llm(RubyLLM::UnauthorizedError.new("bad key"), { "label" => "ok" })
 
