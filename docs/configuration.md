@@ -164,8 +164,18 @@ end
 
 - Keys that Squishling or RubyLLM control (`model`, `messages`, `input`, `instructions`, `system`, `stream`,
   `response_format`, `text`, `output_config`, `tools`, `tool_choice`, `schema`, and the camelCase and plural
-  spellings other providers use, such as `systemInstruction`, `toolConfig`, `outputConfig`, `inputs`, …) raise
-  `ConfigurationError`, because they would override the model, the conversation, or the strict output format.
+  spellings other providers use, such as `systemInstruction`, `toolConfig`/`tool_config`, `outputConfig`, `inputs`, …)
+  raise `ConfigurationError`, because they would override the model, the conversation, or the strict output format.
+- **Nested containers** such as Gemini's `generationConfig` (and `generation_config` for Gemini Interactions) and
+  Mistral Conversations' `completion_args` accept ordinary settings, but reject the keys inside them that carry the
+  output format or tools (`responseMimeType`, `responseSchema`, `responseJsonSchema`, `response_format`, `tools`,
+  `tool_choice`, `toolConfig`, and their snake_case spellings). Use `output_schema` instead:
+
+  ```ruby
+  squishling params: { generationConfig: { topK: 5 } }                      # ok
+  squishling params: { generationConfig: { responseMimeType: "text/plain" } } # ConfigurationError
+  ```
+
 - If a provider rejects a param, the call raises `Squishling::ConfigurationError` naming the params. It isn't
   retried or sent to `squish_fallback`. See [Failure handling](failures.md).
 

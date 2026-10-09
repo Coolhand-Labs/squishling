@@ -108,7 +108,7 @@ RSpec.describe Squishling::Params do
     end
 
     it "rejects the camelCase and plural request keys of the Gemini, Bedrock Converse, and Mistral protocols" do
-      %i[systemInstruction cachedContent toolConfig outputConfig inputs].each do |key|
+      %i[systemInstruction cachedContent toolConfig tool_config outputConfig inputs].each do |key|
         expect { base.squishling(params: { key => {} }) }
           .to raise_error(Squishling::ConfigurationError, /#{key} can't be set through params/)
       end
@@ -118,6 +118,55 @@ RSpec.describe Squishling::Params do
       base.squishling(params: { generationConfig: { topK: 5 } })
 
       expect(generation_for(base)).to eq(provider_options: { generationConfig: { topK: 5 } })
+    end
+
+    it "rejects every reserved nested key inside each allowed container, as symbols or strings" do
+      Squishling::Params::NESTED_RESERVED_KEYS.each do |container, reserved|
+        reserved.each do |key|
+          [{ container => { key => 1, top_p: 0.5 } }, { container.to_s => { key.to_s => 1 } }].each do |params|
+            expect { base.squishling(params:) }
+              .to raise_error(Squishling::ConfigurationError, /#{container}\.#{key} can't be set through params/)
+          end
+        end
+      end
+    end
+
+    it "rejects a reserved nested key even when its value is nil" do
+      expect { base.squishling(params: { generationConfig: { responseMimeType: nil } }) }
+        .to raise_error(Squishling::ConfigurationError, /generationConfig\.responseMimeType/)
+    end
+
+    it "rejects a non-Hash container, which would replace the one that carries the strict format" do
+      ["x", [], 5].each do |value|
+        expect { base.squishling(params: { generationConfig: value }) }
+          .to raise_error(Squishling::ConfigurationError, /generationConfig must be a Hash/)
+      end
+    end
+
+    it "freezes validated containers so they can't be mutated after the check" do
+      container = { topK: 5 }
+      params = described_class.normalize({ generationConfig: container }, "params")
+
+      expect(params[:generationConfig]).to be_frozen
+      expect { params[:generationConfig][:responseMimeType] = "text/plain" }.to raise_error(FrozenError)
+      expect(container).not_to be_frozen
+    end
+
+    it "applies the nested check to default_params and method params too" do
+      expect { Squishling.configure { |c| c.default_params = { generationConfig: { responseSchema: {} } } } }
+        .to raise_error(Squishling::ConfigurationError, /generationConfig\.responseSchema/)
+      expect { base.squish(:x, params: { completion_args: { tools: [] } }) { string :value } }
+        .to raise_error(Squishling::ConfigurationError, /completion_args\.tools/)
+    end
+
+    it "still allows other settings in those containers, and nil to unset one" do
+      base.squishling(params: { generationConfig: { topK: 5, topP: 0.9 }, completion_args: { top_p: 0.5 } })
+      expect(generation_for(base)).to eq(
+        provider_options: { generationConfig: { topK: 5, topP: 0.9 }, completion_args: { top_p: 0.5 } }
+      )
+
+      base.squish(:plain, params: { generationConfig: nil, completion_args: nil }) { string :value }
+      expect(generation_for(base, :plain)).to eq({})
     end
 
     it "rejects a malformed thinking value" do

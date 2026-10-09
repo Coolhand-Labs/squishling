@@ -11,8 +11,24 @@ module Squishling
     RESERVED_KEYS = %i[
       model messages input inputs instructions contents system system_instruction systemInstruction cachedContent
       stream stream_options store include response_format text output_config outputConfig tools tool_choice
-      toolConfig schema
+      toolConfig tool_config schema
     ].freeze
+
+    # Some protocols carry the structured-output format (or tool selection) inside a container that is
+    # itself allowed, because it also holds ordinary settings (Gemini's topK, Mistral's top_p, ...). RubyLLM
+    # deep-merges provider options, so these nested keys would override the strict format just like the
+    # top-level ones. Re-check each protocol's render_payload (ruby_llm protocols/*/chat.rb) on every
+    # ruby_llm upgrade.
+    GENERATION_CONFIG_RESERVED_KEYS = %i[
+      responseMimeType response_mime_type responseSchema response_schema responseJsonSchema response_json_schema
+      response_format tools tool_choice toolConfig tool_config
+    ].freeze
+    COMPLETION_ARGS_RESERVED_KEYS = %i[response_format tools tool_choice].freeze
+    NESTED_RESERVED_KEYS = {
+      generationConfig: GENERATION_CONFIG_RESERVED_KEYS, # Gemini
+      generation_config: GENERATION_CONFIG_RESERVED_KEYS, # Gemini Interactions
+      completion_args: COMPLETION_ARGS_RESERVED_KEYS # Mistral Conversations
+    }.freeze
 
     module_function
 
@@ -26,8 +42,28 @@ module Squishling
         raise ConfigurationError, "#{label}: #{reserved.join(', ')} can't be set through params " \
                                   "(controlled by Squishling/RubyLLM; use model:/provider:/output_schema)"
       end
+      reject_nested_reserved!(params, label)
       params[:thinking] = normalize_thinking(params[:thinking], label) unless params[:thinking].nil?
       params.freeze
+    end
+
+    # Nested keys are compared as symbols so a string-keyed "responseMimeType" can't slip past the check.
+    # A non-Hash container would replace (not merge into) the one RubyLLM builds, wiping the strict format.
+    # Validated containers are copied and frozen so they can't be mutated after the check.
+    def reject_nested_reserved!(params, label)
+      nested = NESTED_RESERVED_KEYS.flat_map do |container, reserved|
+        value = params[container]
+        next [] if value.nil?
+        raise ConfigurationError, "#{label}: #{container} must be a Hash, got #{value.class}" unless value.is_a?(Hash)
+
+        params[container] = value.dup.freeze
+        (value.keys.filter_map { |key| key.to_sym if key.respond_to?(:to_sym) } & reserved)
+          .map { |key| "#{container}.#{key}" }
+      end
+      return if nested.empty?
+
+      raise ConfigurationError, "#{label}: #{nested.join(', ')} can't be set through params " \
+                                "(controls the strict output format or tools; use output_schema)"
     end
 
     # Later layers override earlier ones key by key; nil removes the key (back to the provider default).
