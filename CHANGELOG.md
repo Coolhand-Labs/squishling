@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-09
+
+### Added
+
+- Model escalation: `escalation:` (and `default_escalation` in `Squishling.configure`) declares an ordered list of
+  steps, each a model name or a Hash with `model:`, `attempts:`, an optional explicit `order:`, `provider:`, and
+  `params:`. Invalid output or an `LLMError` moves on to the next attempt. Attempts on the same step continue one
+  conversation; a new step starts a fresh chat that is told about the rejected output and its errors.
+  `ConfigurationError` never escalates. Works per method, per class, in config, and per `squish!` call; the first
+  level that declares a model or escalation wins and levels are never merged. `InvalidOutputError#models` lists the
+  model tried on each attempt. (#6)
+- `squish_validate` (and `validate:` on `squish`): Ruby checks on schema-valid LLM output. Return `nil` or `true` to
+  accept, or `false`, a String, an Array of Strings, or a dry-validation style result to reject the output and
+  trigger the next attempt. Deterministic and fallback returns are not run through it. (#6)
+- Conditional schema rules: Schematist's `given` and `dependent` (JSON Schema `if`/`then`/`else`,
+  `dependentRequired`, and `dependentSchemas`) are kept out of the schema sent to the provider, whose strict mode
+  doesn't support them, and are still enforced locally on every result. (#6)
+
+### Changed
+
+- **Breaking:** `config.max_retries` is removed; reading or setting it raises `ConfigurationError` with a migration
+  hint. The escalation now decides how many attempts run, and a plain `model:` makes a single attempt. To keep the
+  old behavior (two attempts on one model), set
+  `config.default_escalation = [{ model: "your-model", attempts: 2 }]`. (#6)
+- `squish!`'s Ruby-to-LLM handoff is now described as "handing off", so "escalation" only means the model list.
+  `squish!` also accepts `escalation:` (instead of `model:`) for one call. (#6)
+
+### Security
+
+- Params can no longer override the system prompt, tool config, or structured-output format through the camelCase
+  and plural request keys used by Google Gemini, Amazon Bedrock Converse, and Mistral Conversations
+  (`systemInstruction`, `cachedContent`, `toolConfig`, `outputConfig`, `inputs`); these now raise
+  `ConfigurationError` like the other reserved keys.
+
 ## [0.1.0] - 2026-10-08
 
 Initial release.
