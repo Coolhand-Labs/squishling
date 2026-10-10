@@ -137,6 +137,7 @@ Otherwise the Ruby runs, and whatever it returns is validated and typed like LLM
   - [`:escalation`](docs/configuration.md#models-and-escalation) (default): try each attempt until one passes
   - [`:squishsum`](docs/harnesses.md#samples): two concurrent samples, accepted only if they agree
   - [`:judged_squishsum`](docs/harnesses.md#the-judge): a chat or Jev judge picks between disagreeing samples
+  - [`:ensemble` and `:judged_ensemble`](docs/harnesses.md#ensembles): the same checks across two different models
 - **Output contracts**: beyond the strict schema, conditional rules (`given`) and Ruby checks (`squish_validate`)
   reject bad output and trigger the next attempt.
 - **Defined failure behavior**: provider errors become `Squishling::LLMError`, and `squish_fallback` lets you decide
@@ -155,7 +156,7 @@ Otherwise the Ruby runs, and whatever it returns is validated and typed like LLM
   what the LLM sees
 - [Output schemas](docs/schemas.md): schema forms, strict mode, typed results, optional vs. empty, contracts
 - [Failure handling](docs/failures.md): escalation, `squish_validate`, error classes, fallbacks
-- [Harnesses](docs/harnesses.md): escalation, squishsum, and judged squishsum (chat or Jev judges)
+- [Harnesses](docs/harnesses.md): escalation, squishsum, ensemble, and judges (chat or Jev)
 - [Naming and collisions](docs/naming.md): the methods `include Squishling` adds and what happens when a name is taken
 - [Live examples](examples/README.md): end-to-end tests against Anthropic Claude Haiku and OpenAI GPT-6 Luna
 

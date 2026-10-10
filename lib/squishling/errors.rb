@@ -23,7 +23,7 @@ module Squishling
     end
   end
 
-  # The squishsum harnesses' samples were valid but didn't agree, and either no judge was declared
+  # A sampling harness's samples (squishsum or ensemble) were valid but didn't agree, and either no judge was declared
   # (verdict nil) or the judge rejected both (verdict :neither, with its reason). candidates holds the two
   # typed results, so a squish_fallback can still return one of them, and raw both as Hashes. models names the
   # model behind each role (sample a, sample b, then the judge if one ran), not one entry per attempt; attempts
