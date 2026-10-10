@@ -303,7 +303,9 @@ module LiveHarness
       check(result.squished?, "expected an LLM result")
       check(result.sentiment == "positive", "sentiment was #{result.sentiment.inspect}")
       check(calls.size == 2, "expected 2 squawk calls (one per sample), got #{calls.size}")
-      check(calls.all? { |call| call[:error].nil? && call[:output].is_a?(Hash) }, "unexpected squawk calls")
+      # output is what RubyLLM returned: the JSON String (or a Hash, for providers that parse it themselves).
+      check(calls.all? { |call| call[:error].nil? && [String, Hash].include?(call[:output].class) },
+        "unexpected squawk calls: #{calls.map { |call| call.values_at(:error, :output).map(&:class) }.inspect}")
       metadata = calls.map { |call| call[:metadata].slice(:model, :usage) }
       check(metadata.all? { |item| item[:model].is_a?(String) && item[:usage].is_a?(Hash) },
         "squawk metadata lacked a model or usage: #{metadata.inspect}")
