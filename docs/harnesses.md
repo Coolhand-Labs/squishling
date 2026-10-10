@@ -1,4 +1,4 @@
-# Harnesses: escalation, squishsum, and judged squishsum
+# Harnesses: escalation, squishsum, and ensemble
 
 A squished call's **harness** decides how it uses its [escalation](configuration.md#models-and-escalation):
 
@@ -7,9 +7,13 @@ A squished call's **harness** decides how it uses its [escalation](configuration
 | `:escalation` (default) | Tries each attempt in order until an output passes the schema and `squish_validate`. | 1 or more |
 | `:squishsum` | Asks the escalation's **first step** twice, concurrently. Identical outputs are accepted; different ones raise `Squishling::DisagreementError`. | 2 or more |
 | `:judged_squishsum` | Like `:squishsum`, but when the two outputs differ, a **judge** picks one or rejects both. | 2 or more, plus 1 or more judge requests when they differ |
+| `:ensemble` | Asks the escalation's **first and second steps** once each, concurrently, so two different models are compared. Identical outputs are accepted; different ones raise `DisagreementError`. | 2 or more |
+| `:judged_ensemble` | Like `:ensemble`, but when the two outputs differ, a **judge** picks one or rejects both. | 2 or more, plus 1 or more judge requests when they differ |
 
 Use a squishsum harness when a confidently wrong answer costs more than a second request: one sample can make a
-mistake, but two independent samples rarely make the same one.
+mistake, but two independent samples rarely make the same one. Use an [ensemble](#ensembles) when the two samples
+should come from different models: a model rarely disagrees with itself at low temperature, but a cheap and a
+stronger model often disagree on exactly the cases the cheap one gets confidently wrong.
 
 ```ruby
 class TicketTriager
@@ -43,14 +47,15 @@ The first level that declares one wins: `squish!`, then the method, then the cla
 
 | Option | Harnesses | Description |
 |---|---|---|
-| `type:` | all | `:escalation`, `:squishsum`, or `:judged_squishsum` (required in the Hash form). |
-| `compare:` | squishsum ones | `->(a, b, **inputs) { ... }`, evaluated against the instance with the two typed results and the method's inputs. Truthy means the samples agree. Default: the two outputs are exactly equal. |
-| `judge:` | `:judged_squishsum` | The judge step (see [The judge](#the-judge)). Default: the escalation's next step. |
-| `judge_instructions:` | `:judged_squishsum` | A String, or a Proc evaluated against the instance, that replaces the [default judge prompt](#the-default-judge-prompt). |
+| `type:` | all | `:escalation`, `:squishsum`, `:judged_squishsum`, `:ensemble`, or `:judged_ensemble` (required in the Hash form). |
+| `compare:` | squishsum and ensemble ones | `->(a, b, **inputs) { ... }`, evaluated against the instance with the two typed results and the method's inputs. Truthy means the samples agree. Default: the two outputs are exactly equal. |
+| `judge:` | judged ones | The judge step (see [The judge](#the-judge)). Default: the escalation's next step after the sampled ones. |
+| `judge_instructions:` | judged ones | A String, or a Proc evaluated against the instance, that replaces the [default judge prompt](#the-default-judge-prompt). |
 
 ## Samples
 
-Both samples run on the escalation's first step, with its model, provider, and params:
+Under `:squishsum`, both samples run on the escalation's first step, with its model, provider, and params
+(an [ensemble](#ensembles) runs them on its first and second steps):
 
 - **They're independent.** Each sample has its own chat, and the two requests are sent concurrently on separate
   threads. Only the provider requests run on those threads. Parsing, schema validation, `squish_validate`,
@@ -58,9 +63,9 @@ Both samples run on the escalation's first step, with its model, provider, and p
   RubyLLM instrumentation subscribers (e.g. `ActiveSupport::Notifications` listeners for `chat.ruby_llm`) do see
   each sample's request on its worker thread, outside the Rails executor, so keep them thread-safe.
 - **Each one is retried like an escalation step.** A sample with invalid output is re-asked in its own chat, up to
-  the first step's `attempts:`, while a sample that already passed keeps its result. A failed request gets a fresh
+  their step's `attempts:`, while a sample that already passed keeps its result. A failed request gets a fresh
   chat. A sample still failing after its attempts fails the call with `InvalidOutputError` or `LLMError`, as
-  usual. Later escalation steps are never used for samples.
+  usual. Under `:squishsum`, later escalation steps are never used for samples (see [Ensembles](#ensembles)).
 - **Agreement is exact by default.** Free-text fields seldom match word for word, so pass `compare:` to decide
   which fields must match:
 
@@ -70,9 +75,35 @@ Both samples run on the escalation's first step, with its model, provider, and p
 
   When the samples agree, the first one is returned.
 
+## Ensembles
+
+`:ensemble` and `:judged_ensemble` sample two *different* steps instead of one step twice. Sample `a` is the
+escalation's first step and sample `b` its second, each with its own model, provider, and params:
+
+```ruby
+class TicketTriager
+  include Squishling
+
+  squishling escalation: [{ model: "claude-haiku-4-5", attempts: 2 }, "claude-sonnet-5-5", "claude-opus-5-5"],
+             harness: :judged_ensemble   # a = Haiku, b = Sonnet, Opus judges when they differ
+  # purpose, output_schema, ...
+end
+```
+
+- A step's `attempts:` are that sample's retries (here Haiku gets two attempts, Sonnet one), exactly as in
+  [Samples](#samples). Steps after the second are never sampled.
+- Everything else matches squishsum: independence and concurrency, `compare:`, `DisagreementError`, and the
+  judge. `DisagreementError#models` names the model behind each sample.
+- The judge defaults to the escalation's **third** step. With only two steps, a `:judged_ensemble` needs `judge:`.
+  An ensemble with fewer than two steps, or a judged one with neither a third step nor `judge:`, raises
+  `ConfigurationError` before any request.
+- A global `default_harness = :ensemble` therefore needs every class to declare at least two steps, and a
+  `squish!(model: ...)` override (one step) can't be combined with an ensemble harness.
+- Steps are told apart by value, so two adjacent steps with the same model, provider, and params count as one step.
+
 ## The judge
 
-With `:judged_squishsum`, two valid samples that disagree go to a judge. The judge picks candidate `a` or `b`,
+With a judged harness, two valid samples that disagree go to a judge. The judge picks candidate `a` or `b`,
 whose typed result is returned (`squished?` is `true`), or it picks `neither`, which raises
 `DisagreementError`.
 
@@ -80,9 +111,10 @@ The judge is:
 
 1. the `judge:` step, if declared: a model name, or a Hash with `model:`, `provider:`, `params:`, and `attempts:`
    (as in an escalation step, without `order:`), plus `type:`; or
-2. the escalation's next step after the first, with its attempts.
+2. the escalation's next step after the sampled ones (the second under `:judged_squishsum`, the third under
+   `:judged_ensemble`), with its attempts.
 
-A `judged_squishsum` harness with neither raises `ConfigurationError` before any sample is requested. A `judge:`
+A judged harness with neither raises `ConfigurationError` before any sample is requested. A `judge:`
 step uses only its own `provider:`; it doesn't inherit the class or method `provider:`, which belongs to their models
 (a chat judge's params, though, do merge over the method's).
 

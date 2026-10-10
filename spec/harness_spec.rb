@@ -50,9 +50,10 @@ RSpec.describe "Squishling harnesses" do
 
     it "rejects options that don't apply to the type" do
       expect { klass.squishling(harness: { type: :squishsum, judge: "claude-opus-5-5" }) }
-        .to raise_error(Squishling::ConfigurationError, /: judge: can only be used with the judged_squishsum harness/)
+        .to raise_error(Squishling::ConfigurationError,
+          /: judge: can only be used with the judged_squishsum and judged_ensemble/)
       expect { klass.squishling(harness: { type: :escalation, compare: ->(*) { true } }) }
-        .to raise_error(Squishling::ConfigurationError, /compare: only applies to the squishsum harnesses/)
+        .to raise_error(Squishling::ConfigurationError, /compare: only applies to the sampling harnesses/)
       expect { klass.squishling(harness: { type: :squishsum, compare: :== }) }
         .to raise_error(Squishling::ConfigurationError, /compare: must be a Proc/)
       expect { klass.squishling(harness: { type: :judged_squishsum, judge_instructions: " " }) }
@@ -644,6 +645,192 @@ RSpec.describe "Squishling harnesses" do
       it "rejects judge params that RubyLLM's judgment protocols reserve" do
         expect { klass.squishling(harness: { type: :judged_squishsum, judge: jev.merge(params: { state: "x" }) }) }
           .to raise_error(Squishling::ConfigurationError, /state can't be set through params/)
+      end
+    end
+  end
+
+  describe "ensemble harnesses" do
+    let(:ensemble_klass) do
+      Class.new do
+        include Squishling
+
+        squishling escalation: [{ model: "claude-haiku-4-5", attempts: 2 }, "claude-sonnet-5-5", "claude-opus-5-5"],
+          harness: :ensemble
+        purpose "Triage the ticket."
+        output_schema do
+          string :priority
+          string :team
+        end
+      end
+    end
+    let(:invalid) { { "priority" => "high" } }
+
+    it "declares :ensemble and :judged_ensemble, with judge options only on the judged one" do
+      expect { ensemble_klass.squishling(harness: { type: :judged_ensemble, judge: "claude-opus-5-5" }) }
+        .not_to raise_error
+      expect { ensemble_klass.squishling(harness: { type: :ensemble, compare: ->(*) { true } }) }.not_to raise_error
+      expect { ensemble_klass.squishling(harness: { type: :ensemble, judge: "claude-opus-5-5" }) }
+        .to raise_error(Squishling::ConfigurationError, /judge: can only be used with the judged_squishsum and/)
+    end
+
+    it "samples the first and second escalation steps, one chat each" do
+      chats = stub_llm_chats([high], [high])
+
+      result = ensemble_klass.call(text: "x")
+
+      expect(result.to_h).to eq(priority: "high", team: "api")
+      expect(chats.map(&:model)).to eq(%w[claude-haiku-4-5 claude-sonnet-5-5])
+    end
+
+    it "raises DisagreementError naming the model behind each sample when they differ" do
+      stub_llm_chats([high], [low])
+
+      expect { ensemble_klass.call(text: "x") }.to raise_error(Squishling::DisagreementError) do |error|
+        expect(error.models).to eq(%w[claude-haiku-4-5 claude-sonnet-5-5])
+        expect(error.candidates.map(&:priority)).to eq(%w[high low])
+      end
+    end
+
+    it "uses compare: to decide agreement and returns the first sample" do
+      ensemble_klass.squishling(harness: { type: :ensemble, compare: ->(a, b, **) { a.team == b.team } })
+      stub_llm_chats([high], [low])
+
+      expect(ensemble_klass.call(text: "x").priority).to eq("high")
+    end
+
+    it "retries each sample within its own step's attempts" do
+      chats = stub_llm_chats([invalid, high], [high])
+
+      expect(ensemble_klass.call(text: "x").priority).to eq("high")
+      expect(chats.map(&:model)).to eq(%w[claude-haiku-4-5 claude-sonnet-5-5])
+      expect(chats.first.messages.size).to eq(2)
+    end
+
+    it "fails with the second sample's models when its only attempt is invalid" do
+      stub_llm_chats([high], [invalid])
+
+      expect { ensemble_klass.call(text: "x") }.to raise_error(Squishling::InvalidOutputError) do |error|
+        expect(error.models).to eq(%w[claude-sonnet-5-5])
+        expect(error.attempts).to eq(1)
+      end
+    end
+
+    it "reports each sample's own model and attempt count through squawk" do
+      calls = []
+      ensemble_klass.squishling(squawk: ->(metadata:, **) { calls << metadata })
+      stub_llm_chats([invalid, high], [high])
+
+      ensemble_klass.call(text: "x")
+
+      expect(calls.map { |call| call.values_at(:model, :attempt, :attempts) })
+        .to contain_exactly(["claude-haiku-4-5", 1, 2], ["claude-haiku-4-5", 2, 2], ["claude-sonnet-5-5", 1, 1])
+    end
+
+    it "retries the second sample alone when it has more attempts than the first" do
+      ensemble_klass.squishling(escalation: ["claude-haiku-4-5", { model: "claude-sonnet-5-5", attempts: 2 }])
+      chats = stub_llm_chats([high], [invalid, invalid])
+
+      expect { ensemble_klass.call(text: "x") }.to raise_error(Squishling::InvalidOutputError) do |error|
+        expect(error.models).to eq(%w[claude-sonnet-5-5 claude-sonnet-5-5])
+        expect(error.attempts).to eq(2)
+      end
+      expect(chats.map(&:model)).to eq(%w[claude-haiku-4-5 claude-sonnet-5-5])
+    end
+
+    it "fails with the first sample's models when it uses up its attempts while the second already passed" do
+      stub_llm_chats([invalid, invalid], [high])
+
+      expect { ensemble_klass.call(text: "x") }.to raise_error(Squishling::InvalidOutputError) do |error|
+        expect(error.models).to eq(%w[claude-haiku-4-5 claude-haiku-4-5])
+        expect(error.attempts).to eq(2)
+      end
+    end
+
+    it "starts a fresh chat for a sample whose request failed, while the other keeps its result" do
+      chats = stub_llm_chats([high], [RubyLLM::ServerError.new("boom")], [high])
+      ensemble_klass.squishling(escalation: ["claude-haiku-4-5", { model: "claude-sonnet-5-5", attempts: 2 }])
+
+      expect(ensemble_klass.call(text: "x").priority).to eq("high")
+      expect(chats.map(&:model)).to eq(%w[claude-haiku-4-5 claude-sonnet-5-5 claude-sonnet-5-5])
+    end
+
+    it "can be set as the default harness or chosen for one call with squish!" do
+      Squishling.configure { |c| c.default_harness = :ensemble }
+      plain = Class.new do
+        include Squishling
+
+        squishling escalation: %w[claude-haiku-4-5 claude-sonnet-5-5]
+        purpose "Triage the ticket."
+        output_schema { string :priority }
+        define_method(:call) { |text:| squish!(harness: :ensemble, context: { length: text.size }) }
+      end
+      chats = stub_llm_chats([{ "priority" => "high" }], [{ "priority" => "high" }])
+
+      expect(plain.call(text: "x").priority).to eq("high")
+      expect(chats.map(&:model)).to eq(%w[claude-haiku-4-5 claude-sonnet-5-5])
+      expect(plain.squishling_definition(:call).harness.type).to eq(:ensemble)
+    end
+
+    it "needs a second escalation step, checked before any request" do
+      ensemble_klass.squishling(model: "claude-haiku-4-5")
+      chats = stub_llm_chats
+
+      expect { ensemble_klass.call(text: "x") }
+        .to raise_error(Squishling::ConfigurationError, /ensemble harness needs a second escalation step/)
+      expect(chats).to be_empty
+    end
+
+    describe "judged_ensemble" do
+      before { ensemble_klass.squishling(harness: :judged_ensemble) }
+
+      it "doesn't ask the judge when the samples agree" do
+        chats = stub_llm_chats([high], [high])
+
+        expect(ensemble_klass.call(text: "x").priority).to eq("high")
+        expect(chats.size).to eq(2)
+      end
+
+      it "judges with the third escalation step and returns the candidate it picks" do
+        chats = stub_llm_chats([high], [low], [{ "verdict" => "b", "reason" => "routine ticket" }])
+
+        expect(ensemble_klass.call(text: "x").priority).to eq("low")
+        expect(chats.map(&:model)).to eq(%w[claude-haiku-4-5 claude-sonnet-5-5 claude-opus-5-5])
+      end
+
+      it "lists every role's model when the judge picks neither" do
+        stub_llm_chats([high], [low], [{ "verdict" => "neither", "reason" => "unclear" }])
+
+        expect { ensemble_klass.call(text: "x") }.to raise_error(Squishling::DisagreementError) do |error|
+          expect(error.verdict).to eq(:neither)
+          expect(error.models).to eq(%w[claude-haiku-4-5 claude-sonnet-5-5 claude-opus-5-5])
+        end
+      end
+
+      it "retries the default judge per its step's attempts" do
+        ensemble_klass.squishling(escalation: ["claude-haiku-4-5", "claude-sonnet-5-5",
+                                               { model: "claude-opus-5-5", attempts: 2 }])
+        chats = stub_llm_chats([high], [low], [{ "verdict" => "bogus" }, { "verdict" => "a", "reason" => "urgent" }])
+
+        expect(ensemble_klass.call(text: "x").priority).to eq("high")
+        expect(chats.last.model).to eq("claude-opus-5-5")
+      end
+
+      it "takes a judge: when the escalation has only two steps" do
+        ensemble_klass.squishling(escalation: %w[claude-haiku-4-5 claude-sonnet-5-5],
+          harness: { type: :judged_ensemble, judge: "claude-opus-5-5" })
+        chats = stub_llm_chats([high], [low], [{ "verdict" => "a", "reason" => "urgent" }])
+
+        expect(ensemble_klass.call(text: "x").priority).to eq("high")
+        expect(chats.last.model).to eq("claude-opus-5-5")
+      end
+
+      it "needs a judge: or a third escalation step, checked before any request" do
+        ensemble_klass.squishling(escalation: %w[claude-haiku-4-5 claude-sonnet-5-5])
+        chats = stub_llm_chats
+
+        expect { ensemble_klass.call(text: "x") }
+          .to raise_error(Squishling::ConfigurationError, /needs a judge: or a third escalation step/)
+        expect(chats).to be_empty
       end
     end
   end
