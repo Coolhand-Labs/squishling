@@ -54,6 +54,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   own class passes through, another schema's result is re-validated, and values JSON can't represent (`NaN`,
   `Infinity`, cycles) raise `InvalidOutputError` instead of a raw JSON error. Inner calls (`super`, or the method
   called from `squish_when` or a fallback) still only type Hashes, so overrides can reshape values. (#13)
+- **Behavior change:** a provider now travels with the model declared at the same level on a class too. A subclass
+  that declares its own `model:` or `escalation:` no longer inherits its parent's `provider:`, which could send the
+  whole payload to the parent's provider under another provider's model name. If you relied on that, set `provider:`
+  next to the subclass's model.
+- **Behavior change:** a `provider:` with no model beside it now raises `ConfigurationError` instead of being
+  silently ignored (the default provider was used). `squish ..., provider: ...` needs a `model:` or `escalation:` in
+  the same call, as `squish!` already did; `squishling provider: ...` needs one in the call or already declared on that
+  class. Move the `provider:` next to a model, or use `config.default_provider` with the default model.
 - The `result` alias for `squishling_result` is no longer added when the class already has a `result` (its own or
   inherited); use `squishling_result` there. (#17)
 - `InvalidOutputError#message` and `config.logger` warnings no longer quote the model's response. For unparseable JSON

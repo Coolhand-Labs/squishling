@@ -11,6 +11,8 @@ module Squishling
     #   squishling escalation: [{ model: "claude-haiku-4-5", attempts: 2 }, "claude-sonnet-5-5", "claude-opus-5-5"]
     # Pass provider: alongside model: for models missing from RubyLLM's registry, e.g.
     #   squishling model: "gpt-7-preview", provider: :openai
+    # provider: needs a model: or escalation: (declared on the class), and a subclass's model never inherits its
+    # parent's provider.
     # params: are generation params merged over the configured defaults (see Configuration#default_params):
     #   squishling params: { temperature: 0.1, top_p: 0.9 }
     # append_to_purpose: adds sections after the purpose (see #append_to_purpose):
@@ -23,8 +25,17 @@ module Squishling
     def squishling(model: nil, escalation: nil, provider: nil, params: nil, harness: nil, purpose: nil,
       append_to_purpose: nil, output_schema: nil, squawk: nil)
       path = ModelPath.declare(model, escalation, to_s)
+      # A provider belongs to the model declared at the same level. Without a model here it would apply to
+      # nothing (the model comes from the config or a parent class), so it is an error unless this class already
+      # declared its own.
+      if provider && !path && !instance_variable_defined?(:@squishling_model_path)
+        raise ConfigurationError, "#{self}: provider: needs a model: or escalation: declared on this class"
+      end
+
+      # Stored (even as nil) whenever a model is, so a subclass that declares its own model never inherits a
+      # provider meant for its parent's.
       @squishling_model_path = path if path
-      @squishling_provider = provider if provider
+      @squishling_provider = provider if provider || path
       @squishling_params = Params.normalize(params, "#{self} params") if params
       @squishling_harness = Harness.normalize(harness, to_s) unless harness.nil?
       self.purpose(purpose) if purpose
@@ -143,6 +154,8 @@ module Squishling
       provider: nil, params: nil, harness: nil, when: nil, fallback: nil, validate: nil, squawk: nil, &schema_block)
       schema = schema_block ? Schematist::Schema.create(&schema_block) : output_schema
       model = ModelPath.declare(model, escalation, "#{self} squish")
+      raise ConfigurationError, "#{self} squish: provider: needs a model: or escalation:" if provider && !model
+
       params &&= Params.normalize(params, "#{self} squish params")
       harness = Harness.normalize(harness, "#{self} squish") unless harness.nil?
       unless append_to_purpose.nil?

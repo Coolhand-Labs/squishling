@@ -129,8 +129,15 @@ Squishling.configure { |c| c.default_model = "gpt-7-preview"; c.default_provider
 ```
 
 A provider is paired with the model or escalation declared at the same level, and applies to that escalation's steps
-that don't name their own. A per-method model never inherits a class-level provider meant for a different model. For models that are in the registry, a provider is optional
-and the normal registry lookup is kept.
+that don't name their own. A model never inherits a provider meant for a different model: a per-method model doesn't
+take the class's provider, and a subclass that declares its own `model:` or `escalation:` doesn't take its parent's
+(a subclass that only changes params or the purpose keeps the parent's model and provider together). For models that
+are in the registry, a provider is optional and the normal registry lookup is kept.
+
+A `provider:` with no model beside it would apply to nothing, so it raises `ConfigurationError`:
+`squish ..., provider: ...` needs a `model:` or `escalation:` in the same call (as `squish!` always has), and
+`squishling provider: ...` needs one in the call or already declared on that same class (not inherited). Set the
+provider next to the model, or, for the configured default model, use `config.default_provider`.
 
 ## Generation params
 
@@ -188,7 +195,7 @@ end
 
 ## Inheritance
 
-Subclasses inherit the model or escalation, provider, harness, generation params (merged key by key), purpose, output schema,
+Subclasses inherit the model or escalation and its provider (as a pair), harness, generation params (merged key by key), purpose, output schema,
 `squish_when` predicate, `squish_context` names, `squish_validate`, `squish_fallback`, and every `squish` declaration. Overrides in a subclass, including
 overridden methods, are routed the same way.
 
