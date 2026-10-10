@@ -58,6 +58,53 @@ RSpec.describe "Squishling failure handling" do
       expect(feedback).to include("and 480 more errors")
     end
 
+    describe "unrepresentable output followed by a new escalation step" do
+      let(:two_steps) do
+        Class.new do
+          include Squishling
+
+          squishling escalation: %w[model-a model-b]
+          purpose "Classify."
+          output_schema do
+            string :label
+            number :score
+          end
+        end
+      end
+
+      it "forwards a placeholder, not a crash, when a Hash response held Infinity" do
+        chats = stub_llm({ "label" => "x", "score" => Float::INFINITY }, { "label" => "ok", "score" => 1 })
+
+        expect(two_steps.call(text: "x").label).to eq("ok")
+        expect(chats.last.messages.first)
+          .to include("A previous attempt at this request returned:\n(a response JSON can't represent)")
+      end
+
+      it "forwards a scrubbed string when a response had invalid UTF-8" do
+        chats = stub_llm(%({"label": "x\xFFy", "score": 1}), { "label" => "ok", "score" => 1 })
+
+        expect(two_steps.call(text: "x").label).to eq("ok")
+        expect(chats.last.messages.first).to include("A previous attempt at this request returned")
+        expect(chats.last.messages.first).to be_valid_encoding
+      end
+
+      it "forwards a binary-tagged response as valid text, even beside non-ASCII input" do
+        chats = stub_llm(%({"label": "x\xFFy", "score": 1}).b, { "label" => "ok", "score" => 1 })
+
+        expect(two_steps.call(text: "café").label).to eq("ok")
+        expect(chats.last.messages.first).to be_valid_encoding
+        expect(chats.last.messages.first).to include("café")
+      end
+
+      it "raises InvalidOutputError, not a serialization error, when the last step also fails" do
+        stub_llm({ "label" => "x", "score" => Float::INFINITY }, { "label" => "y", "score" => Float::NAN })
+
+        expect { two_steps.call(text: "x") }.to raise_error(Squishling::InvalidOutputError) do |e|
+          expect(e.models).to eq(%w[model-a model-b])
+        end
+      end
+    end
+
     describe "model output in messages and logs" do
       let(:log) { StringIO.new }
 

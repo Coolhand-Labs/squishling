@@ -251,6 +251,14 @@ RSpec.describe "Squishling harnesses" do
       expect(threads.uniq).to eq([Thread.current])
     end
 
+    it "retries a sample whose output JSON can't represent, instead of crashing the comparison" do
+      unrepresentable = { "priority" => "high", "team" => Float::INFINITY }
+      chats = stub_llm_chats([unrepresentable, high], [high])
+
+      expect(klass.call(text: "x").priority).to eq("high")
+      expect(chats.first.messages.last).to include("value JSON can't represent")
+    end
+
     it "starts a fresh chat for a sample after a failed request" do
       chats = stub_llm_chats([RubyLLM::ServerError.new("boom")], [high], [high])
 
