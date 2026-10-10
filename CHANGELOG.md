@@ -34,6 +34,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `include Squishling` raises `ConfigurationError` when the class inherits a method Squishling would override (for
   example `Sinatra::Base.call`) instead of silently shadowing it. See [Naming and collisions](docs/naming.md). (#17)
 
+### Documentation
+
+- A new guide, [Measuring token spend](docs/measuring-tokens.md), covers working out what each squished path costs
+  (with Coolhand Labs, the `squawk` hook, OpenTelemetry, LangSmith, or RubyLLM's instrumenter), and the README is
+  reworked around using Squishling to harden code paths as the economics justify it. (#21)
+
 ### Changed
 
 - **Breaking:** the DSL method `instructions` is now `purpose`, and `append_instructions` is now `append_to_purpose`,
