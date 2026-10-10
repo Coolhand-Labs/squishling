@@ -55,9 +55,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- A number a model writes outside the range JSON can represent (such as `1e400`, which parses to `Infinity`) was
-  accepted as a valid `number`, while the same value from a Ruby method was rejected. It is now invalid output on the
-  LLM path too, and no longer raises a bare `JSON::GeneratorError` when `:squishsum` compares samples.
+- A number a model writes outside the range JSON can represent (such as `1e400`, which parses to `Infinity`), or a
+  string with invalid UTF-8, was accepted as valid, while the same value from a Ruby method was rejected. It is now
+  invalid output on the LLM path too, and no longer raises a bare `JSON::GeneratorError` when `:squishsum` compares samples.
 
 ### Security
 
@@ -72,9 +72,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `DisagreementError#message` and the logs no longer include it; read it from `DisagreementError#reason`. A
   `:judgment` judge's message still carries the choice and probability, and a choice other than `a`, `b`, or `neither`
   is no longer repeated.
-- At most 20 validation errors are fed back to the model, logged, and put in `InvalidOutputError#message` for one
-  invalid output, so a very large malformed response can no longer produce a megabyte-sized retry message or log
-  line.
+- Only the first 20 validation errors (plus a count of the rest) are fed back to the model, logged, and put in
+  `InvalidOutputError#message` for one invalid output, so a very large malformed response can no longer produce a
+  megabyte-sized retry message or log line.
 
 ## [0.2.0] - 2026-10-09
 

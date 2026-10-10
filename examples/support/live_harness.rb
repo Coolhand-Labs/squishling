@@ -311,18 +311,18 @@ module LiveHarness
     }),
     Scenario.new("ensemble samples the first two escalation steps and accepts them when they agree", lambda {
       model = Squishling.config.default_model_path.first[:model]
-      samples = []
+      calls = []
       # Adjacent identical steps count as one step's attempts, so the two steps differ in forward_rejected:.
       klass = Class.new(SentimentClassifier) do
         squishling provider: Squishling.config.default_provider,
           escalation: [{ model:, forward_rejected: true }, { model:, forward_rejected: false }],
           harness: { type: :ensemble, compare: ->(first, second, **) { first.sentiment == second.sentiment } },
-          squawk: ->(metadata:, **) { samples << metadata[:attempts] }
+          squawk: ->(metadata:, **) { calls << metadata[:model] }
       end
       result = klass.call(review: "Absolutely love it — best purchase I've made all year!")
       check(result.squished?, "expected an LLM result")
       check(result.sentiment == "positive", "sentiment was #{result.sentiment.inspect}")
-      check(samples.size >= 2, "expected a request per sample, got #{samples.size}")
+      check(calls.size == 2, "expected one squawk call per sample, got #{calls.size}")
       "both steps agreed on #{result.sentiment}"
     }),
     Scenario.new("judged_squishsum samples concurrently and a chat judge picks a candidate", lambda {

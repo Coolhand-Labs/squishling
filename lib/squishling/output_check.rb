@@ -5,7 +5,7 @@ module Squishling
   # method's squish_validate check.
   class OutputCheck
     MAX_ERRORS = 20
-    NON_FINITE = "response contained a number JSON can't represent (NaN or Infinity)"
+    UNREPRESENTABLE = "response contained a value JSON can't represent (such as Infinity or invalid UTF-8)"
 
     def initialize(definition, receiver, inputs)
       @definition = definition
@@ -30,17 +30,19 @@ module Squishling
     # content is a Hash on success, or a String/nil when the model refused, was cut off, or
     # ignored the schema.
     def parse(content)
+      return [nil, [UNREPRESENTABLE]] if content.is_a?(String) && !content.valid_encoding?
       return [nil, ["response was empty"]] if content.nil? || (content.is_a?(String) && content.strip.empty?)
 
       data = content.is_a?(String) ? JSON.parse(strip_code_fence(content)) : content
-      finite?(data) ? [data, []] : [nil, [NON_FINITE]]
+      representable?(data) ? [data, []] : [nil, [UNREPRESENTABLE]]
     rescue JSON::ParserError => e
       [nil, ["response was not valid JSON#{parse_position(e)}"]]
     end
 
-    # JSON.parse turns an out-of-range number such as 1e400 into Infinity, which satisfies a number schema but
-    # can't be serialized again (and the deterministic path rejects it), so it is invalid output.
-    def finite?(data)
+    # JSON.parse turns an out-of-range number such as 1e400 into Infinity, and accepts invalid UTF-8 in a string.
+    # Both can satisfy the schema but can't be serialized again (and the deterministic path rejects them), so
+    # they are invalid output.
+    def representable?(data)
       JSON.generate(data)
       true
     rescue JSON::GeneratorError

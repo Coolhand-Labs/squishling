@@ -38,7 +38,14 @@ RSpec.describe "Squishling failure handling" do
       chats = stub_llm('{"score": 1e400}', { "score" => 2 })
 
       expect(klass.call(text: "x").score).to eq(2)
-      expect(chats.first.messages.last).to include("number JSON can't represent")
+      expect(chats.first.messages.last).to include("value JSON can't represent")
+    end
+
+    it "rejects a string that isn't valid UTF-8, which can't be serialized again" do
+      chats = stub_llm(%({"label": "x\xFFy"}), { "label" => "ok" })
+
+      expect(klass.call(text: "x").label).to eq("ok")
+      expect(chats.first.messages.last).to include("value JSON can't represent")
     end
 
     it "caps the errors fed back to the model and logged for a badly invalid output" do
