@@ -19,6 +19,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `RubyLLM.judge`, with a default prompt you can override through `judge_instructions:`. Samples that still disagree
   raise the new `Squishling::DisagreementError < InvalidOutputError`, which carries both typed results, and
   `squish_fallback` remains the only fallback. See [Harnesses](docs/harnesses.md). (#16)
+- `:ensemble` and `:judged_ensemble` harnesses: like the squishsum ones, but the two concurrent samples come from the
+  escalation's first and second steps (a cross-model check) instead of the first step twice, each retrying within its
+  own step's `attempts:`. A judged ensemble's judge defaults to the third step, or `judge:`, and
+  `DisagreementError#models` names the model behind each sample. An ensemble needs at least two distinct steps (adjacent
+  identical steps count as one step's attempts) or it raises `ConfigurationError` before any request. (#20)
 - `squawk`, an opt-in hook for sending what the model returned to an error tracker or tracing tool. It is called after
   every LLM attempt (every sample and judge attempt under a harness) with `output:`, `metadata:`, and `error:`, and
   can be set on `Squishling.configure`, `squishling`, and `squish`. It does nothing by default, and exceptions it
