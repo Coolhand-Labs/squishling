@@ -15,8 +15,8 @@ module Squishling
     # role (:judge) skips squish_validate and names the judge in errors and logs.
     Prompt = Data.define(:instructions, :schema, :input, :role)
 
-    # One of the squishsum harnesses' two samples, between rounds.
-    Sample = Struct.new(:name, :chat, :rejected, :result)
+    # One of a sampling harness's two samples, between rounds: the steps it may attempt, in order.
+    Sample = Struct.new(:name, :steps, :chat, :rejected, :result)
 
     def initialize(definition, receiver, inputs)
       @definition = definition
@@ -40,14 +40,31 @@ module Squishling
         input: JSON.generate(body), role: nil)
       return escalate(path, prompt) unless harness.squishsum?
 
-      # The judge is resolved before any sample is requested, so a missing one fails before costing anything.
+      # The sample steps and the judge are resolved before any sample is requested, so a missing one fails
+      # before costing anything.
+      sample_steps, rest = sampling_plan(path, harness)
       judge = harness.judged? && Judge.new(definition: @definition, receiver: @receiver, client: @client, harness:,
-        path:, purpose:, payload: body, escalate: method(:escalate),
+        rest:, purpose:, payload: body, escalate: method(:escalate),
         log_failure: method(:log_failure))
-      squishsum(path, prompt, harness, judge)
+      sample(sample_steps, prompt, harness, judge)
     end
 
     private
+
+    # Splits the escalation into runs of consecutive identical steps (a step's attempts). A squishsum samples
+    # the first run twice; an ensemble samples the first run, then the second. Returns each sample's steps and
+    # the rest of the escalation, which is where a judge looks for its default step.
+    def sampling_plan(path, harness)
+      runs = path.chunk_while { |step, following| step == following }.to_a
+      if harness.ensemble? && runs.size < 2
+        raise ConfigurationError, "#{@definition.label}: the #{harness.type} harness needs a second escalation " \
+                                  "step to sample (adjacent identical steps count as one step's attempts)"
+      end
+
+      return [runs.first(2), runs.drop(2).flatten(1)] if harness.ensemble?
+
+      [[runs.first, runs.first], runs.drop(1).flatten(1)]
+    end
 
     # Makes each attempt of the path until an output passes the schema and the squish_validate check.
     # Consecutive attempts on the same step continue the same conversation, so the model sees what it got wrong;
@@ -96,17 +113,17 @@ module Squishling
       end
     end
 
-    # Two samples on the first escalation step, each retried per its attempts: the same way escalate retries.
+    # Two samples, each on its own steps and retried per their attempts the same way escalate retries.
     # Each round sends the pending samples' requests concurrently; everything else runs on this thread.
-    def squishsum(path, prompt, harness, judge)
-      steps = path.take_while { |step| step == path.first }
-      samples = %w[a b].map { |name| Sample.new(name) }
+    def sample(sample_steps, prompt, harness, judge)
+      samples = %w[a b].zip(sample_steps).map { |name, steps| Sample.new(name, steps) }
 
-      steps.each.with_index(1) do |step, attempt|
+      1.upto(sample_steps.map(&:size).max) do |attempt|
         pending = samples.reject(&:result)
         break if pending.empty?
 
         jobs = pending.map do |sample|
+          step = sample.steps[attempt - 1]
           message = sample_message(sample, step, prompt)
           -> { @client.ask(sample.chat, message, step) }
         end
@@ -115,10 +132,10 @@ module Squishling
         fatal = outcomes.map(&:last).find { |error| error && !error.is_a?(LLMError) }
         raise fatal if fatal
 
-        pending.zip(outcomes).each { |sample, outcome| record(sample, outcome, prompt, steps, attempt) }
+        pending.zip(outcomes).each { |sample, outcome| record(sample, outcome, prompt, attempt) }
       end
 
-      settle(*samples.map(&:result), harness, judge, steps)
+      settle(samples, harness, judge)
     end
 
     # The next message for a sample: a retry in its chat after invalid output, otherwise a fresh chat.
@@ -129,7 +146,8 @@ module Squishling
       sample.rejected && step.forward_rejected ? escalation_message(prompt.input, *sample.rejected) : prompt.input
     end
 
-    def record(sample, (response, error), prompt, steps, attempt)
+    def record(sample, (response, error), prompt, attempt)
+      steps = sample.steps
       last = attempt == steps.size
       role = "sample #{sample.name}"
       if error
@@ -156,10 +174,11 @@ module Squishling
     end
 
     # Agreeing samples are accepted; otherwise the judge, if any, picks one or the call fails.
-    def settle(first, second, harness, judge, steps)
+    def settle(samples, harness, judge)
+      first, second = samples.map(&:result)
       return first if agree?(first, second, harness.compare)
 
-      models = [steps.first.model] * 2
+      models = samples.map { |sample| sample.steps.first.model }
       unless judge
         log_warning("samples disagreed")
         raise DisagreementError.new(candidates: [first, second], models:)
