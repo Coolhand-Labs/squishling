@@ -46,7 +46,8 @@ module Squishling
       @steps.first
     end
 
-    # [:a | :b, reason] for the chosen candidate, or [:neither, reason].
+    # [:a | :b, reason, detail] for the chosen candidate, or [:neither, reason, detail]. The detail is text
+    # Squishling wrote (nil for a chat judge, whose reason is model-written) and is safe for error messages.
     def verdict(first, second)
       candidates = { a: Schema.jsonify(first.to_h), b: Schema.jsonify(second.to_h) }
       judgment? ? judgment(candidates) : chat(candidates)
@@ -82,7 +83,7 @@ module Squishling
         schema: Schema.for(VERDICT_SCHEMA), input: JSON.generate(state(candidates)), role: :judge
       )
       result = @escalate.call(@steps, prompt)
-      [result[:verdict].to_sym, result[:reason]]
+      [result[:verdict].to_sym, result[:reason], nil]
     end
 
     def judgment(candidates)
@@ -101,10 +102,18 @@ module Squishling
       probability = probabilities.to_h.find { |key, _| key.to_s == choice.to_s }&.last.to_f
       minimum = @harness.judge[:min_confidence]
       shown = probability.round(3)
-      return [choice, "chosen with probability #{shown}"] if %i[a b].include?(choice) && probability >= minimum
-      return [:neither, "the judge chose neither (probability #{shown})"] if choice == :neither
+      picked = %i[a b].include?(choice)
+      if picked && probability >= minimum
+        text = "chosen with probability #{shown}"
+        return [choice, text, text]
+      end
 
-      [:neither, "the judge chose #{choice} with probability #{shown}, below min_confidence #{minimum}"]
+      text =
+        if choice == :neither then "the judge chose neither (probability #{shown})"
+        elsif picked then "the judge chose #{choice} with probability #{shown}, below min_confidence #{minimum}"
+        else "the judge returned an unrecognized choice (probability #{shown})"
+        end
+      [:neither, text, text]
     end
 
     # A judgment always matches its questions, so only a failed request (LLMError) moves on to the next attempt.

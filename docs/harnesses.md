@@ -188,7 +188,7 @@ end
 |---|---|
 | `candidates` | The two typed results, `[a, b]` |
 | `verdict` | `nil` when there was no judge; `:neither` when the judge rejected both |
-| `reason` | The judge's reason (or, for a judgment model, the choice and its probability) |
+| `reason` | The judge's reason (or, for a judgment model, the choice and its probability). A chat judge's reason is model-written, so it is not part of `message` or the logs; a judgment model's choice and probability are |
 | `raw` | Both candidates as Hashes, `[a.to_h, b.to_h]` |
 | `attempts` | `nil` |
 | `models` | The model behind each role: sample `a`, sample `b`, then the judge if one ran (one entry each, not one per attempt) |

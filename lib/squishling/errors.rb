@@ -31,12 +31,15 @@ module Squishling
   class DisagreementError < InvalidOutputError
     attr_reader :candidates, :verdict, :reason
 
-    def initialize(candidates:, verdict: nil, reason: nil, models: nil)
+    # detail: is text Squishling wrote itself (a judgment model's choice and probability) and is added to the
+    # message. A chat judge's reason is model-written and can quote the input, so it stays out of the message
+    # (and the logs); read it from #reason.
+    def initialize(candidates:, verdict: nil, reason: nil, detail: nil, models: nil)
       @candidates = candidates
       @verdict = verdict
       @reason = reason
       error = verdict ? "the judge rejected both samples" : "the two samples disagreed"
-      error += " (#{reason})" if reason && !reason.strip.empty?
+      error += " (#{detail})" if detail
       super(errors: [error], raw: candidates.map(&:to_h), models:)
     end
   end

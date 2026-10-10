@@ -40,6 +40,13 @@ Model output can echo sensitive input, so the raw response is kept in one place:
   that key name is chosen by the model.
 - Your own `squish_validate` messages, verbatim. If you interpolate result values into them, those values reach
   the message, the logger, and the next attempt's prompt.
+- A fixed message when a response contains a value JSON can't represent (`1e400` parses to `Infinity`, or a string
+  with invalid UTF-8).
+- At most the first 20 of these errors, plus a count of the rest, so a very large malformed response can't flood
+  the retry message or the log.
+- For a [`DisagreementError`](harnesses.md#when-the-harness-fails), only what Squishling wrote: a `:judgment` judge's
+  choice and probability. A chat judge's `reason` is model-written, so it is available as `#reason` but never in the
+  message or logs.
 
 The same applies to anything you log yourself, such as `error.message` in a [fallback](#fallbacks). Use `error.raw`
 only where you are willing to store model output. To send the output of every attempt somewhere on purpose, use

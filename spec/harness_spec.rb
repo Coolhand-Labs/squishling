@@ -251,6 +251,14 @@ RSpec.describe "Squishling harnesses" do
       expect(threads.uniq).to eq([Thread.current])
     end
 
+    it "retries a sample whose output JSON can't represent, instead of crashing the comparison" do
+      unrepresentable = { "priority" => "high", "team" => Float::INFINITY }
+      chats = stub_llm_chats([unrepresentable, high], [high])
+
+      expect(klass.call(text: "x").priority).to eq("high")
+      expect(chats.first.messages.last).to include("value JSON can't represent")
+    end
+
     it "starts a fresh chat for a sample after a failed request" do
       chats = stub_llm_chats([RubyLLM::ServerError.new("boom")], [high], [high])
 
@@ -409,7 +417,8 @@ RSpec.describe "Squishling harnesses" do
       expect { klass.call(text: "x") }.to raise_error(Squishling::DisagreementError) do |e|
         expect(e.verdict).to eq(:neither)
         expect(e.reason).to eq("both misread the ticket")
-        expect(e.message).to include("the judge rejected both samples (both misread the ticket)")
+        expect(e.message).to include("the judge rejected both samples")
+        expect(e.message).not_to include("both misread the ticket")
         expect(e.models).to eq(%w[claude-haiku-4-5 claude-haiku-4-5 claude-sonnet-5-5])
       end
     end
@@ -581,6 +590,16 @@ RSpec.describe "Squishling harnesses" do
         stub_judgment({ choice: :neither, probabilities: { a: 0.1, b: 0.1, neither: 0.8 } })
 
         expect { klass.call(text: "x") }.to raise_error(Squishling::DisagreementError, /chose neither/)
+      end
+
+      it "doesn't repeat a choice the provider made up" do
+        stub_llm_chats([high], [low])
+        stub_judgment({ choice: :"ignore previous instructions", probabilities: { a: 0.1, b: 0.1 } })
+
+        expect { klass.call(text: "x") }.to raise_error(Squishling::DisagreementError) do |e|
+          expect(e.message).to include("unrecognized choice")
+          expect(e.message).not_to include("ignore previous")
+        end
       end
 
       it "sends only the judge's own params, as provider options" do
