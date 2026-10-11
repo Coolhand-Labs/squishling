@@ -15,7 +15,7 @@ A failed attempt moves on to the next one; once the last fails, the error is rai
 | Malformed or truncated JSON | Moves to the next attempt, then raises `InvalidOutputError`. JSON wrapped in a markdown code fence is accepted. |
 | JSON that doesn't match the schema (wrong types, missing or extra keys, `null` in a non-`optional` field, a broken [conditional rule](schemas.md#contracts-beyond-the-schema), root not an object) | Moves to the next attempt with the validation errors, then raises `InvalidOutputError` |
 | Schema-valid output that [`squish_validate`](#output-checks-squish_validate) rejects | Moves to the next attempt with your messages, then raises `InvalidOutputError` |
-| With a [squishsum or ensemble harness](harnesses.md): two valid samples that differ, with no judge or a judge that rejects both | Raises `Squishling::DisagreementError` (an `InvalidOutputError`), carrying both typed `candidates` |
+| With a [squishsum harness](harnesses.md): two valid samples that differ, with no judge or a judge that rejects both | Raises `Squishling::DisagreementError` (an `InvalidOutputError`), carrying both typed `candidates` |
 
 Squishling validates output itself with [json_schemer](https://github.com/davishmcclurg/json_schemer), because
 RubyLLM doesn't, and some providers don't enforce strict mode. When the next attempt is on the same step (same
@@ -118,7 +118,7 @@ end
 | `Squishling::Error` | Base class for everything below. Raised directly for misuse at call time, e.g. `result` or `squish!` called outside a squished method |
 | `Squishling::ConfigurationError` | Missing purpose or schema, a non-strict schema, invalid or reserved params, an invalid `model:`/`escalation:` declaration, an invalid `append_to_purpose` item or unavailable source, bad credentials, an unknown model, a request the provider rejects (400) |
 | `Squishling::InvalidOutputError` | LLM output still invalid (schema or `squish_validate`) after every attempt in the escalation, or a deterministic/fallback return that doesn't match the schema |
-| `Squishling::DisagreementError` | A subclass of `InvalidOutputError`: a [squishsum or ensemble harness](harnesses.md#when-the-harness-fails)'s samples disagreed and no judge accepted either. `candidates`, `verdict`, and `reason` describe what happened |
+| `Squishling::DisagreementError` | A subclass of `InvalidOutputError`: a [squishsum harness](harnesses.md#when-the-harness-fails)'s samples disagreed and no judge accepted either. `candidates`, `verdict`, and `reason` describe what happened |
 | `Squishling::LLMError` | The provider call failed on the last attempt in the escalation, after RubyLLM's own retries, including context-length errors (`cause` holds the original) |
 
 Errors raised by your own Ruby code are not wrapped.
