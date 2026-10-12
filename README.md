@@ -14,7 +14,8 @@ Either way it returns the same strict-schema-validated, typed result, so callers
 Think of code as a cache for AI judgment. Every line you write is something to maintain, so the LLM is the
 default and code has to earn its place: you build it for the inputs that carry the volume, and the LLM keeps
 handling the rest. New to the idea? Read
-[Elastic Software](https://everythingengineer.substack.com/p/beginners-write-software-with-ai).
+[Elastic Software](https://everythingengineer.substack.com/p/beginners-write-software-with-ai) or browse the
+[talk slides](https://michael.carroll.io/talks/2026/elastic-software/).
 
 ## Use cases
 
@@ -80,6 +81,12 @@ InvoiceParser.call(vendor: "acme", document: scanned_text).squished? # => true  
 Both calls return the same result class. If the LLM can't deliver either, `squish_fallback` decides what to
 return, or the error is raised with the original `ParseError` as its cause. See
 [Handing off to the LLM](docs/routing.md#handing-off-to-the-llm-with-squish).
+
+### Retire code you no longer need
+
+Go the other way too. Find the parsers and handlers that serve a thin tail of your traffic and squish them. When a
+path's monthly token cost is lower than what its code costs to maintain, delete the code and relish the feeling of a
+slimmer code base (or let your AI coding agent relish it).
 
 ### Measure your tech debt in tokens
 
@@ -201,10 +208,12 @@ bundle exec rake        # RSpec (offline; RubyLLM is stubbed) + RuboCop
 ```
 
 See [AGENTS.md](AGENTS.md) for repo conventions, and [SECURITY.md](SECURITY.md) for reporting vulnerabilities.
+Have a suggestion to improve Squishling? [Open an issue](https://github.com/Coolhand-Labs/squishling/issues).
 
 ## Credits
 
-Inspired by [Elastic Software](https://everythingengineer.substack.com/p/beginners-write-software-with-ai).
+Inspired by [Elastic Software](https://everythingengineer.substack.com/p/beginners-write-software-with-ai); see also
+the [talk slides](https://michael.carroll.io/talks/2026/elastic-software/) from XO Ruby NYC 2026.
 
 ## License
 
