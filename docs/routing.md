@@ -210,7 +210,7 @@ Source is read with Ruby's own parser (Prism) the first time it's needed and cac
   "context":   { "customer_tier": "enterprise", "product": "API" } }
 ```
 
-- **Squishsum harnesses:** both samples get exactly this input, and a [judge](harnesses.md#the-judge) gets
+- **Squishsum and ensemble harnesses:** both samples get exactly this input, and a [judge](harnesses.md#the-judge) gets
   the same purpose and input plus both samples' outputs.
 - **Retries and escalation:** another attempt of the same step gets the validation errors in the same conversation. A
   later [escalation](configuration.md#models-and-escalation) step, which may be a different provider (say, local

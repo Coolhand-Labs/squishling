@@ -523,6 +523,77 @@ RSpec.describe Squishling do
 
       expect(chat_for(Class.new(base)).options).to include(provider: :openai)
     end
+
+    it "inherits the model and provider together when a subclass only changes something else" do
+      base.squishling(model: "gpt-unknown", provider: :openai)
+      child = Class.new(base) { squishling params: { temperature: 0.2 } }
+      chat = chat_for(child)
+
+      expect(chat.model).to eq("gpt-unknown")
+      expect(chat.options).to eq(provider: :openai, assume_model_exists: true)
+    end
+
+    it "doesn't give a subclass's own model its parent's provider" do
+      base.squishling(model: "gpt-unknown", provider: :openai)
+      child = Class.new(base) { squishling model: "claude-haiku-4-5" }
+      chat = chat_for(child)
+
+      expect(chat.model).to eq("claude-haiku-4-5")
+      expect(chat.options).to eq({})
+    end
+
+    it "doesn't give a subclass's own escalation its parent's provider" do
+      base.squishling(model: "gpt-unknown", provider: :openai)
+      child = Class.new(base) { squishling escalation: ["claude-haiku-4-5", "claude-sonnet-5-5"] }
+
+      expect(chat_for(child).options).to eq({})
+    end
+
+    it "drops the provider when the same class later declares a model without one" do
+      base.squishling(model: "gpt-unknown", provider: :openai)
+      base.squishling(model: "claude-haiku-4-5")
+
+      expect(chat_for(base).options).to eq({})
+    end
+
+    it "accepts a provider after the class's own model, in a later call" do
+      base.squishling(model: "gpt-unknown")
+      base.squishling(provider: :openai)
+
+      expect(chat_for(base).options).to eq(provider: :openai, assume_model_exists: true)
+    end
+
+    it "raises instead of ignoring a class provider with no model declared on that class" do
+      expect { base.squishling(provider: :azure) }
+        .to raise_error(Squishling::ConfigurationError, /provider: needs a model: or escalation:/)
+      expect { Class.new(base) { squishling provider: :azure } }
+        .to raise_error(Squishling::ConfigurationError, /provider: needs a model: or escalation:/)
+    end
+
+    it "raises for a subclass's provider alone even when its parent declared a model" do
+      base.squishling(model: "gpt-unknown", provider: :openai)
+
+      expect { Class.new(base) { squishling provider: :azure } }
+        .to raise_error(Squishling::ConfigurationError, /provider: needs a model: or escalation:/)
+    end
+
+    it "raises instead of ignoring a per-method provider with no model, even in a class that has one" do
+      expect { base.squish(:luna, provider: :openai) { string :value } }
+        .to raise_error(Squishling::ConfigurationError, /squish: provider: needs a model: or escalation:/)
+
+      base.squishling(model: "gpt-unknown")
+
+      expect { base.squish(:luna, provider: :openai) { string :value } }
+        .to raise_error(Squishling::ConfigurationError, /squish: provider: needs a model: or escalation:/)
+    end
+
+    it "accepts a provider beside an escalation, on the class and on a method" do
+      base.squishling(escalation: ["gpt-unknown", "gpt-unknown-2"], provider: :openai)
+      base.squish(:luna, escalation: ["gpt-unknown"], provider: :openai) { string :value }
+
+      expect(chat_for(base).options).to eq(provider: :openai, assume_model_exists: true)
+      expect(chat_for(base, :luna).options).to eq(provider: :openai, assume_model_exists: true)
+    end
   end
 
   describe "inheritance" do

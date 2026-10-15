@@ -1,10 +1,11 @@
 # frozen_string_literal: true
 
 module Squishling
-  # Picks between the judged_squishsum harness's two disagreeing samples, or rejects both. The judge is the
-  # harness's judge: step, or else the escalation's next step after the one the samples ran on. A chat judge
-  # answers with a strict verdict schema; a :judgment judge (a System One decision model such as Jev) answers
-  # one choice question through RubyLLM.judge, and its pick counts only at or above min_confidence.
+  # Picks between a judged harness's two disagreeing samples (judged_squishsum or judged_ensemble), or rejects
+  # both. The judge is the harness's judge: step, or else the escalation's next step after the ones the samples
+  # ran on. A chat judge answers with a strict verdict schema; a :judgment judge (a System One decision model such
+  # as Jev) answers one choice question through RubyLLM.judge, and its pick counts only at or above
+  # min_confidence.
   class Judge
     VERDICT_SCHEMA = {
       "type" => "object",
@@ -28,7 +29,7 @@ module Squishling
       neither: "Neither candidate is clearly correct"
     }.freeze
 
-    def initialize(definition:, receiver:, client:, harness:, path:, purpose:, payload:, escalate:, log_failure:)
+    def initialize(definition:, receiver:, client:, harness:, rest:, purpose:, payload:, escalate:, log_failure:)
       @definition = definition
       @receiver = receiver
       @client = client
@@ -37,7 +38,7 @@ module Squishling
       @payload = payload
       @escalate = escalate
       @log_failure = log_failure
-      @steps = resolve_steps(path)
+      @steps = resolve_steps(rest)
     end
 
     # The judge's first attempt, for logs and DisagreementError#models.
@@ -45,7 +46,8 @@ module Squishling
       @steps.first
     end
 
-    # [:a | :b, reason] for the chosen candidate, or [:neither, reason].
+    # [:a | :b, reason, detail] for the chosen candidate, or [:neither, reason, detail]. The detail is text
+    # Squishling wrote (nil for a chat judge, whose reason is model-written) and is safe for error messages.
     def verdict(first, second)
       candidates = { a: Schema.jsonify(first.to_h), b: Schema.jsonify(second.to_h) }
       judgment? ? judgment(candidates) : chat(candidates)
@@ -59,16 +61,16 @@ module Squishling
 
     # A declared judge brings its own model and provider. A chat judge gets the method's generation params
     # under its own, like any escalation step; a judgment judge sends only its own params, as provider options.
-    def resolve_steps(path)
+    def resolve_steps(rest)
       if (judge = @harness.judge)
         params = judge[:type] == :judgment ? {} : @definition.params
         return ModelPath.steps([judge], provider: nil, params:)
       end
 
-      rest = path.drop_while { |step| step == path.first }
       if rest.empty?
-        raise ConfigurationError, "#{@definition.label}: the judged_squishsum harness needs a judge: or a second " \
-                                  "escalation step to judge with"
+        ordinal = @harness.ensemble? ? "third" : "second"
+        raise ConfigurationError, "#{@definition.label}: the #{@harness.type} harness needs a judge: or a " \
+                                  "#{ordinal} escalation step to judge with"
       end
 
       rest.take_while { |step| step == rest.first }
@@ -81,7 +83,7 @@ module Squishling
         schema: Schema.for(VERDICT_SCHEMA), input: JSON.generate(state(candidates)), role: :judge
       )
       result = @escalate.call(@steps, prompt)
-      [result[:verdict].to_sym, result[:reason]]
+      [result[:verdict].to_sym, result[:reason], nil]
     end
 
     def judgment(candidates)
@@ -100,10 +102,18 @@ module Squishling
       probability = probabilities.to_h.find { |key, _| key.to_s == choice.to_s }&.last.to_f
       minimum = @harness.judge[:min_confidence]
       shown = probability.round(3)
-      return [choice, "chosen with probability #{shown}"] if %i[a b].include?(choice) && probability >= minimum
-      return [:neither, "the judge chose neither (probability #{shown})"] if choice == :neither
+      picked = %i[a b].include?(choice)
+      if picked && probability >= minimum
+        text = "chosen with probability #{shown}"
+        return [choice, text, text]
+      end
 
-      [:neither, "the judge chose #{choice} with probability #{shown}, below min_confidence #{minimum}"]
+      text =
+        if choice == :neither then "the judge chose neither (probability #{shown})"
+        elsif picked then "the judge chose #{choice} with probability #{shown}, below min_confidence #{minimum}"
+        else "the judge returned an unrecognized choice (probability #{shown})"
+        end
+      [:neither, text, text]
     end
 
     # A judgment always matches its questions, so only a failed request (LLMError) moves on to the next attempt.

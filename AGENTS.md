@@ -68,8 +68,8 @@ Flag any change that breaks one of these; they are behavior contracts, not style
 - **No silent shadowing.** `include Squishling` raises `ConfigurationError` if the class inherits a method it would
   override (`Collisions`), and only adds the `result` alias when the class has no `result`. Classes' own methods win.
 - **Thread/fiber safety.** Routing state is fiber-local; shared caches are mutex-guarded. Don't add
-  unsynchronized class-level mutable state. The squishsum harnesses send their two sample requests on worker
-  threads (`LLMClient.concurrently`), and only the requests: parsing, validation, and every Squishling callback
+  unsynchronized class-level mutable state. The squishsum and ensemble harnesses send their two sample requests on
+  worker threads (`LLMClient.concurrently`), and only the requests: parsing, validation, and every Squishling callback
   (`squish_validate`, `compare:`, procs) run on the caller's thread. (RubyLLM instrumentation subscribers fire on
   the worker threads.) Workers must not enter the Rails executor: the caller already holds it, and a second
   interlock share can deadlock against a pending code reload.

@@ -24,7 +24,8 @@ module Squishling
     attr_reader :default_params
 
     # How every squishling class that doesn't declare its own harness uses its escalation (see Harness):
-    # :escalation (the default), :squishsum, :judged_squishsum, or a Hash with type: and its options.
+    # :escalation (the default), :squishsum, :judged_squishsum, :ensemble, :judged_ensemble, or a Hash with
+    # type: and its options.
     attr_reader :default_harness
 
     # Optional Logger for routing and escalation decisions.

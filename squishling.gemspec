@@ -31,7 +31,8 @@ Gem::Specification.new do |spec|
 
   # Ship only what's tracked in git, minus development-only files.
   dev_files = %w[AGENTS.md CLAUDE.md]
-  dev_prefixes = %w[bin/ test/ spec/ features/ examples/ .git .claude .idea .rubocop .simplecov .rspec Gemfile]
+  dev_prefixes = %w[bin/ test/ spec/ features/ examples/ assets/
+                    .git .claude .idea .rubocop .simplecov .rspec Gemfile]
   spec.files = Dir.chdir(__dir__) do
     `git ls-files -z`.split("\x0").reject do |f|
       File.expand_path(f) == __FILE__ || dev_files.include?(f) || f.start_with?(*dev_prefixes)

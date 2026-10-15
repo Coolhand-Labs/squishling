@@ -4,6 +4,9 @@ module Squishling
   # Turns a model response into a typed result: parses it, validates it against the schema, and runs the
   # method's squish_validate check.
   class OutputCheck
+    MAX_ERRORS = 20
+    UNREPRESENTABLE = "response contained a value JSON can't represent (such as Infinity or invalid UTF-8)"
+
     def initialize(definition, receiver, inputs)
       @definition = definition
       @receiver = receiver
@@ -15,7 +18,7 @@ module Squishling
     def call(content, prompt)
       data, errors = parse(content)
       errors = prompt.schema.validate(data) if errors.empty?
-      return [nil, errors] if errors.any?
+      return [nil, cap(errors)] if errors.any?
 
       result = prompt.schema.build(data, squished: true)
       [result, prompt.role == :judge ? [] : validator_errors(result)]
@@ -27,12 +30,31 @@ module Squishling
     # content is a Hash on success, or a String/nil when the model refused, was cut off, or
     # ignored the schema.
     def parse(content)
+      return [nil, [UNREPRESENTABLE]] if content.is_a?(String) && !content.valid_encoding?
       return [nil, ["response was empty"]] if content.nil? || (content.is_a?(String) && content.strip.empty?)
-      return [content, []] unless content.is_a?(String)
 
-      [JSON.parse(strip_code_fence(content)), []]
+      data = content.is_a?(String) ? JSON.parse(strip_code_fence(content)) : content
+      representable?(data) ? [data, []] : [nil, [UNREPRESENTABLE]]
     rescue JSON::ParserError => e
       [nil, ["response was not valid JSON#{parse_position(e)}"]]
+    end
+
+    # JSON.parse turns an out-of-range number such as 1e400 into Infinity, and accepts invalid UTF-8 in a string.
+    # Both can satisfy the schema but can't be serialized again (and the deterministic path rejects them), so
+    # they are invalid output.
+    def representable?(data)
+      JSON.generate(data)
+      true
+    rescue JSON::GeneratorError
+      false
+    end
+
+    # A long output can fail the schema thousands of times over; every error goes into the retry message and
+    # the log, so only the first few are kept.
+    def cap(errors)
+      return errors if errors.size <= MAX_ERRORS
+
+      errors.first(MAX_ERRORS) + ["... and #{errors.size - MAX_ERRORS} more errors"]
     end
 
     # The parser's message quotes a snippet of the response, which must not reach error messages or logs

@@ -5,10 +5,13 @@ module Squishling
   #   harness: :squishsum
   #   harness: { type: :judged_squishsum, judge: "claude-opus-5-5", compare: ->(a, b, **) { a.team == b.team } }
   # :escalation (the default) tries each attempt in order until an output passes. :squishsum asks the first
-  # escalation step twice, concurrently, and accepts the output only when both samples agree. :judged_squishsum
-  # hands disagreeing samples to a judge that picks one or rejects both.
+  # escalation step twice, concurrently, and accepts the output only when both samples agree. :ensemble asks
+  # the first and second escalation steps once each instead (a cross-model check). :judged_squishsum and
+  # :judged_ensemble hand disagreeing samples to a judge that picks one or rejects both.
   class Harness
-    TYPES = %i[escalation squishsum judged_squishsum].freeze
+    TYPES = %i[escalation squishsum judged_squishsum ensemble judged_ensemble].freeze
+    ENSEMBLE_TYPES = %i[ensemble judged_ensemble].freeze
+    JUDGED_TYPES = %i[judged_squishsum judged_ensemble].freeze
     KEYS = %i[type judge judge_instructions compare].freeze
 
     # A judge is one step: a model name or a Hash with the escalation step keys (except order:), plus
@@ -65,12 +68,13 @@ module Squishling
 
       def check_options!(type, hash, label)
         judge_options = %i[judge judge_instructions].select { |key| hash.key?(key) }
-        if judge_options.any? && type != :judged_squishsum
+        if judge_options.any? && !JUDGED_TYPES.include?(type)
           options = judge_options.map { |key| "#{key}:" }.join(", ")
-          raise ConfigurationError, "#{label}: #{options} can only be used with the judged_squishsum harness"
+          raise ConfigurationError,
+            "#{label}: #{options} can only be used with the #{JUDGED_TYPES.join(' and ')} harnesses"
         end
         if hash.key?(:compare) && type == :escalation
-          raise ConfigurationError, "#{label}: compare: only applies to the squishsum harnesses"
+          raise ConfigurationError, "#{label}: compare: only applies to the sampling harnesses (squishsum and ensemble)"
         end
         unless hash[:compare].nil? || hash[:compare].is_a?(Proc)
           raise ConfigurationError, "#{label}: compare: must be a Proc, got #{hash[:compare].class}"
@@ -132,12 +136,18 @@ module Squishling
 
     DEFAULT = new(type: :escalation)
 
+    # Whether the call asks two samples (squishsum and ensemble harnesses) rather than walking the escalation.
     def squishsum?
       type != :escalation
     end
 
+    # Whether the two samples come from the first two escalation steps instead of both from the first.
+    def ensemble?
+      ENSEMBLE_TYPES.include?(type)
+    end
+
     def judged?
-      type == :judged_squishsum
+      JUDGED_TYPES.include?(type)
     end
   end
 end

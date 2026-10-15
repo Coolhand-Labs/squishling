@@ -303,11 +303,29 @@ module LiveHarness
       check(result.squished?, "expected an LLM result")
       check(result.sentiment == "positive", "sentiment was #{result.sentiment.inspect}")
       check(calls.size == 2, "expected 2 squawk calls (one per sample), got #{calls.size}")
-      check(calls.all? { |call| call[:error].nil? && call[:output].is_a?(Hash) }, "unexpected squawk calls")
+      # output is what RubyLLM returned: the JSON String (or a Hash, for providers that parse it themselves).
+      check(calls.all? { |call| call[:error].nil? && [String, Hash].include?(call[:output].class) },
+        "unexpected squawk calls: #{calls.map { |call| call.values_at(:error, :output).map(&:class) }.inspect}")
       metadata = calls.map { |call| call[:metadata].slice(:model, :usage) }
       check(metadata.all? { |item| item[:model].is_a?(String) && item[:usage].is_a?(Hash) },
         "squawk metadata lacked a model or usage: #{metadata.inspect}")
       "agreed on #{result.sentiment}, squawk usage #{calls.first[:metadata][:usage].inspect}"
+    }),
+    Scenario.new("ensemble samples the first two escalation steps and accepts them when they agree", lambda {
+      model = Squishling.config.default_model_path.first[:model]
+      calls = []
+      # Adjacent identical steps count as one step's attempts, so the two steps differ in forward_rejected:.
+      klass = Class.new(SentimentClassifier) do
+        squishling provider: Squishling.config.default_provider,
+          escalation: [{ model:, forward_rejected: true }, { model:, forward_rejected: false }],
+          harness: { type: :ensemble, compare: ->(first, second, **) { first.sentiment == second.sentiment } },
+          squawk: ->(metadata:, **) { calls << metadata[:model] }
+      end
+      result = klass.call(review: "Absolutely love it — best purchase I've made all year!")
+      check(result.squished?, "expected an LLM result")
+      check(result.sentiment == "positive", "sentiment was #{result.sentiment.inspect}")
+      check(calls.size == 2, "expected one squawk call per sample, got #{calls.size}")
+      "both steps agreed on #{result.sentiment}"
     }),
     Scenario.new("judged_squishsum samples concurrently and a chat judge picks a candidate", lambda {
       model = Squishling.config.default_model_path.first[:model]

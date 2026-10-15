@@ -1,46 +1,55 @@
-# Squishling
+<h1 align="center">
+  <img src="assets/squishling-logo.png" alt="Squishling" width="420">
+</h1>
 
 [![CI](https://github.com/Coolhand-Labs/squishling/actions/workflows/ci.yml/badge.svg)](https://github.com/Coolhand-Labs/squishling/actions/workflows/ci.yml)
+[![Gem Version](https://badge.fury.io/rb/squishling.svg)](https://badge.fury.io/rb/squishling)
 
-Elastic Ruby classes. A squished method either runs its Ruby implementation or sends its inputs through an LLM
-(via [RubyLLM](https://rubyllm.com)), and either way returns the same strict-schema-validated, typed result.
-Callers can't tell the difference.
+**Don't just use AI to write code. Use AI to not need code.** Write code only where it's worth maintaining.
 
-Inspired by [Elastic Software](https://everythingengineer.substack.com/p/beginners-write-software-with-ai):
-start flexible with AI, then harden high-volume paths into code as the economics justify it.
+A squished method either runs its Ruby implementation, with the LLM as a failover, or routes some callers
+through an LLM as a way of eliminating (or discovering) the cost of maintaining them as deterministic code.
+Either way it returns the same strict-schema-validated, typed result, so callers can't tell the difference.
+
+Think of code as a cache for AI judgment. Every line you write is something to maintain, so the LLM is the
+default and code has to earn its place: you build it for the inputs that carry the volume, and the LLM keeps
+handling the rest. New to the idea? Read
+[Elastic Software](https://everythingengineer.substack.com/p/beginners-write-software-with-ai) or browse the
+[talk slides](https://michael.carroll.io/talks/2026/elastic-software/).
 
 ## Use cases
 
-### Instant integration
+### Zero-code integrations
 
 Accept a new data source today, before anyone writes a parser. Declare what you want back and leave the
 method unimplemented: every call goes to the LLM, and its output is validated against your schema.
 
 ```ruby
-class PaymentWebhook
+class ShipmentUpdate
   include Squishling
 
-  purpose "Normalize this payment provider's webhook into our payment event."
+  purpose "Normalize this carrier's tracking webhook into our shipment update."
   output_schema do
-    string  :event, enum: %w[succeeded failed refunded disputed]
-    integer :amount_cents
-    string  :currency
-    string  :external_id
+    string :status, enum: %w[label_created in_transit out_for_delivery delivered exception]
+    string :tracking_number
+    string :location
   end
   # No `def call` yet, so every webhook goes to the LLM.
 end
 
-event = PaymentWebhook.call(provider: "adyen", payload: request.raw_post)
-event.event          # => "refunded"
-event.amount_cents   # => 4200
-event.squished?      # => true
+update = ShipmentUpdate.call(carrier: "acme-freight", payload: request.raw_post)
+update.status        # => "out_for_delivery"
+update.squished?     # => true
 ```
 
-When one provider carries the volume, write `def call` for it and add
-`squish_when { |provider:, **| provider != "stripe" }`. Stripe then runs in Ruby, everything else stays on the
+When one carrier carries the volume, write `def call` for it and add
+`squish_when { |carrier:, **| carrier != "ups" }`. UPS then runs in Ruby, everything else stays on the
 LLM, and callers don't change. See [Hardening a path](docs/routing.md#hardening-a-path).
 
-### Error recovery
+Validation guarantees the *shape* of the result, not that it's true. Where a wrong value is costly (money,
+identity), cross-check it against another source or keep that path in Ruby.
+
+### Rescue errors your code can't handle yet
 
 Keep the Ruby you have for the inputs it understands, and hand the rest to the LLM instead of failing. When the
 parser raises, `squish!` sends this call to the LLM with the error and the parser's own source as context.
@@ -72,6 +81,35 @@ InvoiceParser.call(vendor: "acme", document: scanned_text).squished? # => true  
 Both calls return the same result class. If the LLM can't deliver either, `squish_fallback` decides what to
 return, or the error is raised with the original `ParseError` as its cause. See
 [Handing off to the LLM](docs/routing.md#handing-off-to-the-llm-with-squish).
+
+### Retire code you no longer need
+
+Go the other way too. Find the parsers and handlers that serve a thin tail of your traffic and squish them. When a
+path's monthly token cost is lower than what its code costs to maintain, delete the code and relish the feeling of a
+slimmer code base (or let your AI coding agent relish it).
+
+### Measure your tech debt in tokens
+
+Code you haven't written is debt you haven't taken on. A squished path has a running cost you can read off a
+meter, so "should we write a parser for this?" becomes arithmetic: what the path costs in tokens each month,
+against what it costs to write and maintain the code. Write it when the first number is bigger.
+
+Add and initialize the [`coolhand`](https://github.com/Coolhand-Labs/coolhand-ruby) gem, and it picks up your
+squishling calls automatically and measures their accuracy and cost:
+
+```ruby
+# Gemfile
+gem "coolhand"
+
+# config/initializers/coolhand.rb
+Coolhand.configure do |config|
+  config.api_key = ENV.fetch("COOLHAND_API_KEY")
+end
+```
+
+`squished?` tells you which path served a call. Coolhand records your LLM requests and responses; see
+[what each tool sees](docs/measuring-tokens.md#privacy). Want to roll your own metrics? Check out
+[our guide](docs/measuring-tokens.md) for doing it with other tools.
 
 ## Installation
 
@@ -137,10 +175,13 @@ Otherwise the Ruby runs, and whatever it returns is validated and typed like LLM
   - [`:escalation`](docs/configuration.md#models-and-escalation) (default): try each attempt until one passes
   - [`:squishsum`](docs/harnesses.md#samples): two concurrent samples, accepted only if they agree
   - [`:judged_squishsum`](docs/harnesses.md#the-judge): a chat or Jev judge picks between disagreeing samples
+  - [`:ensemble` and `:judged_ensemble`](docs/harnesses.md#ensembles): the same checks across two different models
 - **Output contracts**: beyond the strict schema, conditional rules (`given`) and Ruby checks (`squish_validate`)
   reject bad output and trigger the next attempt.
 - **Defined failure behavior**: provider errors become `Squishling::LLMError`, and `squish_fallback` lets you decide
   what to return when every attempt fails.
+- **Observability**: the opt-in [`squawk`](docs/failures.md#observing-every-attempt-squawk) hook sends every attempt's
+  raw output to your error tracker. Model output stays out of error messages and logs otherwise.
 - **Opt-in context**: only method arguments, the instance state you name with `squish_context`, the `context:` you
   pass to `squish!`, and the source you choose to append are sent to the provider. The one addition: when
   [escalation](docs/configuration.md#models-and-escalation) moves to the next step, that step also sees the previous
@@ -153,8 +194,10 @@ Otherwise the Ruby runs, and whatever it returns is validated and typed like LLM
   what the LLM sees
 - [Output schemas](docs/schemas.md): schema forms, strict mode, typed results, optional vs. empty, contracts
 - [Failure handling](docs/failures.md): escalation, `squish_validate`, error classes, fallbacks
+- [Harnesses](docs/harnesses.md): escalation, squishsum, ensemble, and judges (chat or Jev)
 - [Naming and collisions](docs/naming.md): the methods `include Squishling` adds and what happens when a name is taken
-- [Harnesses](docs/harnesses.md): escalation, squishsum, and judged squishsum (chat or Jev judges)
+- [Measuring token spend](docs/measuring-tokens.md): see what each squished path costs, with Coolhand Labs,
+  the `squawk` hook, OpenTelemetry, LangSmith, or RubyLLM's instrumenter
 - [Live examples](examples/README.md): end-to-end tests against Anthropic Claude Haiku and OpenAI GPT-6 Luna
 
 ## Development
@@ -165,7 +208,20 @@ bundle exec rake        # RSpec (offline; RubyLLM is stubbed) + RuboCop
 ```
 
 See [AGENTS.md](AGENTS.md) for repo conventions, and [SECURITY.md](SECURITY.md) for reporting vulnerabilities.
+Have a suggestion to improve Squishling? [Open an issue](https://github.com/Coolhand-Labs/squishling/issues).
+
+## Credits
+
+Inspired by [Elastic Software](https://everythingengineer.substack.com/p/beginners-write-software-with-ai); see also
+the [talk slides](https://michael.carroll.io/talks/2026/elastic-software/) from XO Ruby NYC 2026.
 
 ## License
 
 Apache-2.0
+
+---
+
+<p align="center">
+  This open source project is supported by <a href="https://coolhandlabs.com/">Coolhand Labs</a>.<br><br>
+  <a href="https://coolhandlabs.com/"><img src="assets/coolhand-labs.png" alt="Coolhand Labs" width="220"></a>
+</p>

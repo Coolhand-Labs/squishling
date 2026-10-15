@@ -33,6 +33,78 @@ RSpec.describe "Squishling failure handling" do
       expect(chats.first.messages.last).to include("not valid JSON")
     end
 
+    it "rejects a number JSON can't represent, as the deterministic path does" do
+      klass.output_schema { number :score }
+      chats = stub_llm('{"score": 1e400}', { "score" => 2 })
+
+      expect(klass.call(text: "x").score).to eq(2)
+      expect(chats.first.messages.last).to include("value JSON can't represent")
+    end
+
+    it "rejects a string that isn't valid UTF-8, which can't be serialized again" do
+      chats = stub_llm(%({"label": "x\xFFy"}), { "label" => "ok" })
+
+      expect(klass.call(text: "x").label).to eq("ok")
+      expect(chats.first.messages.last).to include("value JSON can't represent")
+    end
+
+    it "caps the errors fed back to the model and logged for a badly invalid output" do
+      klass.output_schema { array :scores, of: :integer }
+      chats = stub_llm({ "scores" => Array.new(500, "x") }, { "scores" => [1] })
+
+      expect(klass.call(text: "x").scores).to eq([1])
+      feedback = chats.first.messages.last
+      expect(feedback.lines.count { |line| line.start_with?("- ") }).to eq(21)
+      expect(feedback).to include("and 480 more errors")
+    end
+
+    describe "unrepresentable output followed by a new escalation step" do
+      let(:two_steps) do
+        Class.new do
+          include Squishling
+
+          squishling escalation: %w[model-a model-b]
+          purpose "Classify."
+          output_schema do
+            string :label
+            number :score
+          end
+        end
+      end
+
+      it "forwards a placeholder, not a crash, when a Hash response held Infinity" do
+        chats = stub_llm({ "label" => "x", "score" => Float::INFINITY }, { "label" => "ok", "score" => 1 })
+
+        expect(two_steps.call(text: "x").label).to eq("ok")
+        expect(chats.last.messages.first)
+          .to include("A previous attempt at this request returned:\n(a response JSON can't represent)")
+      end
+
+      it "forwards a scrubbed string when a response had invalid UTF-8" do
+        chats = stub_llm(%({"label": "x\xFFy", "score": 1}), { "label" => "ok", "score" => 1 })
+
+        expect(two_steps.call(text: "x").label).to eq("ok")
+        expect(chats.last.messages.first).to include("A previous attempt at this request returned")
+        expect(chats.last.messages.first).to be_valid_encoding
+      end
+
+      it "forwards a binary-tagged response as valid text, even beside non-ASCII input" do
+        chats = stub_llm(%({"label": "x\xFFy", "score": 1}).b, { "label" => "ok", "score" => 1 })
+
+        expect(two_steps.call(text: "café").label).to eq("ok")
+        expect(chats.last.messages.first).to be_valid_encoding
+        expect(chats.last.messages.first).to include("café")
+      end
+
+      it "raises InvalidOutputError, not a serialization error, when the last step also fails" do
+        stub_llm({ "label" => "x", "score" => Float::INFINITY }, { "label" => "y", "score" => Float::NAN })
+
+        expect { two_steps.call(text: "x") }.to raise_error(Squishling::InvalidOutputError) do |e|
+          expect(e.models).to eq(%w[model-a model-b])
+        end
+      end
+    end
+
     describe "model output in messages and logs" do
       let(:log) { StringIO.new }
 
