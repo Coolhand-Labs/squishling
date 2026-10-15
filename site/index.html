@@ -1,0 +1,1034 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Squishling: write Ruby only where it's cheaper than the tokens</title>
+<meta name="description" content="Don't just use AI to write code. Use AI to not need code. Squishling is a Ruby gem for elastic software: start with an LLM (OpenAI, Anthropic Claude, Google Gemini via RubyLLM), harden the busy paths into Ruby, rescue errors, and measure tech debt in tokens.">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Squishling: write Ruby only where it's cheaper than the tokens">
+<meta property="og:description" content="Start with an LLM, harden the busy paths into Ruby, and put a number on your tech debt.">
+<meta property="og:url" content="https://coolhand-labs.github.io/squishling/">
+<meta property="og:image" content="https://coolhand-labs.github.io/squishling/img/og-cover.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Squishling: Don't just use AI to write code. Use AI to not need code.">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="canonical" href="https://coolhand-labs.github.io/squishling/">
+<link rel="icon" type="image/png" href="img/favicon.png">
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #fbfaf7; --fg: #1d1c1a; --muted: #6a675f; --line: #e3dfd5;
+    --card: #ffffff; --accent: #c2410c; --accent-fg: #ffffff; --code-bg: #f3f0e8;
+    --good: #166534; --good-bg: #e7f4ea; --warn: #92400e; --warn-bg: #fdf1dc;
+    --bar: #c2410c; --bar-bg: #ece7da;
+    --ruby: #c4122f; --llm: #0891b2; --go: #15803d; --ctl: #8d887c;
+    --tk-kw: #cf222e; --tk-str: #0a3069; --tk-sym: #0550ae; --tk-const: #953800; --tk-com: #5f6670; --tk-fn: #7640d6; --tk-num: #0550ae;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #151412; --fg: #efece4; --muted: #a09b8f; --line: #2e2b26;
+      --card: #1d1b18; --accent: #fb923c; --accent-fg: #151412; --code-bg: #232019;
+      --good: #86efac; --good-bg: #16261b; --warn: #fcd34d; --warn-bg: #2a2314;
+      --bar: #fb923c; --bar-bg: #2a2722;
+      --ruby: #f43f5e; --llm: #22d3ee; --go: #4ade80; --ctl: #6f6a5f;
+      --tk-kw: #ff7b72; --tk-str: #a5d6ff; --tk-sym: #79c0ff; --tk-const: #ffa657; --tk-com: #8b949e; --tk-fn: #d2a8ff; --tk-num: #79c0ff;
+    }
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font: 18px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  main { max-width: 46rem; margin: 0 auto; padding: 0 1.25rem 4rem; }
+  section { padding: 3.5rem 0 0; }
+  h1 { font-size: clamp(1.55rem, 5.6vw, 2.9rem); line-height: 1.15; margin: 0 0 1rem; letter-spacing: -0.02em; }
+  h1 .accent { color: var(--accent); }
+  h2 { font-size: 1.65rem; line-height: 1.25; margin: 0 0 0.75rem; letter-spacing: -0.01em; }
+  h3 { font-size: 1.1rem; margin: 1.5rem 0 0.4rem; }
+  p { margin: 0 0 1rem; }
+  a { color: var(--accent); }
+  .lede { font-size: 1.25rem; color: var(--muted); }
+  .eyebrow { font-size: 0.8rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--accent); font-weight: 600; margin: 0 0 1rem; }
+  .kicker { font-size: 0.8rem; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); font-weight: 600; margin: 0 0 0.35rem; }
+  .small { font-size: 0.9rem; color: var(--muted); }
+  header { padding: 3rem 0 0; text-align: center; }
+  header .lede { max-width: 36rem; margin-left: auto; margin-right: auto; }
+  .hero-img { width: min(260px, 60%); height: auto; margin: 0 auto 0.5rem; display: block; }
+  code, pre { font: 0.85rem/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  pre { background: var(--code-bg); border: 1px solid var(--line); border-radius: 8px; padding: 1rem; overflow-x: auto; margin: 0 0 1rem; }
+  :not(pre) > code { background: var(--code-bg); padding: 0.1em 0.35em; border-radius: 4px; }
+  .tk-kw { color: var(--tk-kw); } .tk-str { color: var(--tk-str); } .tk-sym { color: var(--tk-sym); }
+  .tk-const { color: var(--tk-const); } .tk-fn { color: var(--tk-fn); } .tk-num { color: var(--tk-num); }
+  .tk-com { color: var(--tk-com); font-style: italic; }
+  pre.fade { max-height: 15rem; overflow: hidden; position: relative; -webkit-mask-image: linear-gradient(#000 55%, transparent); mask-image: linear-gradient(#000 55%, transparent); }
+  .cta { display: inline-block; background: var(--accent); color: var(--accent-fg); padding: 0.6rem 1.1rem; border-radius: 8px; text-decoration: none; font-weight: 600; margin: 0 0.25rem 0.5rem; }
+  .cta.secondary { background: transparent; color: var(--fg); border: 1px solid var(--line); }
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin: 1.25rem 0; }
+  .cols.three { grid-template-columns: repeat(3, 1fr); }
+  @media (max-width: 38rem) { .cols, .cols.three { grid-template-columns: 1fr; } }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 1rem 1.1rem; }
+  .card h3 { margin: 0 0 0.35rem; font-size: 1rem; }
+  .card p { margin: 0; font-size: 0.95rem; color: var(--muted); }
+  .preset-note { border-left: 3px solid var(--accent); background: var(--card); border-radius: 0 8px 8px 0; padding: 0.6rem 1rem; color: var(--fg); font-weight: 600; font-size: 0.92rem; margin: 0.8rem 0; min-height: 1.4em; }
+  .note { border-left: 3px solid var(--accent); padding: 0.1rem 0 0.1rem 1rem; color: var(--muted); font-size: 0.95rem; margin: 0 0 1rem; }
+  .pull { font-size: 1.35rem; line-height: 1.35; font-weight: 600; letter-spacing: -0.01em; margin: 1.5rem 0; }
+  .pull em { color: var(--accent); font-style: normal; }
+  figure { margin: 1.25rem 0; }
+  figure img { max-width: 100%; height: auto; display: block; margin: 0 auto; }
+  .pic img { max-height: 15rem; width: auto; max-width: 100%; margin: 0 auto; display: block; }
+  .beside { display: grid; grid-template-columns: 1fr 11rem; gap: 1.25rem; align-items: center; margin: 1rem 0; }
+  .beside > * { min-width: 0; }
+  .beside img { width: 100%; height: auto; }
+  @media (max-width: 38rem) { .beside { grid-template-columns: 1fr; } .beside img { max-width: 9rem; margin: 0 auto; } }
+  ul.plain { padding-left: 1.2rem; margin: 0 0 1rem; }
+  ul.plain li { margin-bottom: 0.5rem; }
+
+  /* A measured run: pass rate and cost */
+  .run { display: grid; grid-template-columns: 1fr auto; gap: 0.75rem 1.25rem; align-items: center; background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 0.85rem 1.1rem; margin: 0 0 1.25rem; }
+  .run .pass b, .run .cost b { font-size: 1.5rem; line-height: 1.1; font-variant-numeric: tabular-nums; }
+  .run small { color: var(--muted); font-size: 0.8rem; display: block; }
+  .run .cost { text-align: right; }
+  .bar { grid-column: 1 / -1; height: 8px; border-radius: 4px; background: var(--bar-bg); overflow: hidden; }
+  .bar i { display: block; height: 100%; background: var(--bar); border-radius: 4px; }
+  table.runs { width: 100%; border-collapse: collapse; margin: 1rem 0 1.25rem; font-size: 0.95rem; }
+  table.runs th, table.runs td { text-align: left; padding: 0.6rem 0.5rem; border-bottom: 1px solid var(--line); vertical-align: middle; }
+  table.runs th { font-size: 0.78rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+  table.runs td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+  table.runs .meter { display: block; height: 6px; margin-top: 0.3rem; border-radius: 3px; background: var(--bar); }
+  table.runs tr.hl td { background: var(--good-bg); }
+
+  /* Elastic axis */
+  .axis { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 1.1rem; margin: 1.25rem 0; }
+  .axis .ends { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; font-size: 0.92rem; }
+  .axis .ends b { display: block; font-size: 1rem; }
+  .axis .ends span { color: var(--muted); }
+  .axis .ends > div:last-child { text-align: right; }
+  .spectrum .ends { margin-bottom: 0.9rem; }
+  .mix { -webkit-appearance: none; appearance: none; width: 100%; height: 28px; margin: 0.2rem 0 0; background: transparent; cursor: pointer; --pct: 100%; }
+  .mix:focus-visible { outline: 3px solid var(--accent); outline-offset: 4px; border-radius: 6px; }
+  .mix::-webkit-slider-runnable-track { height: 6px; border-radius: 3px; background: linear-gradient(to right, var(--ruby) var(--pct), var(--llm) var(--pct)); }
+  .mix::-moz-range-track { height: 6px; border-radius: 3px; background: var(--llm); }
+  .mix::-moz-range-progress { height: 6px; border-radius: 3px; background: var(--ruby); }
+  .mix::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; box-sizing: border-box; width: 22px; height: 22px; margin-top: -8px;
+    border-radius: 50%; background: var(--ruby); border: 3px solid var(--card); box-shadow: 0 0 0 1px var(--ruby); }
+  .mix::-moz-range-thumb { box-sizing: border-box; width: 22px; height: 22px; border-radius: 50%; background: var(--ruby);
+    border: 3px solid var(--card); box-shadow: 0 0 0 1px var(--ruby); }
+  .ticks { display: flex; justify-content: space-between; padding: 0 10px; margin: -2px 0 0.2rem; }
+  .ticks span { width: 2px; height: 8px; background: var(--muted); opacity: 0.45; border-radius: 1px; }
+  .slot-labels { text-align: right; margin: 0 0 0.9rem; }
+  .slot-labels p { margin: 0; }
+  .slot-note { font-size: 0.74rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
+  /* The rightmost notch and the thumb are centered 11px from the right edge; a 12px triangle with a 5px margin sits under it. */
+  .slot-note::before { content: ""; display: block; width: 0; height: 0; margin: 0 5px 5px auto;
+    border-left: 6px solid transparent; border-right: 6px solid transparent; border-bottom: 7px solid var(--ruby); }
+  .hint { font-size: 0.9rem; font-weight: 600; color: var(--go); margin-top: 0.2rem !important; }
+  .hint .arrow { display: inline-block; }
+  .hint.gone { display: none; }
+  @keyframes thumb-pulse {
+    0%   { box-shadow: 0 0 0 1px var(--ruby), 0 0 0 0 color-mix(in srgb, var(--ruby) 60%, transparent); }
+    70%  { box-shadow: 0 0 0 1px var(--ruby), 0 0 0 14px color-mix(in srgb, var(--ruby) 0%, transparent); }
+    100% { box-shadow: 0 0 0 1px var(--ruby), 0 0 0 0 color-mix(in srgb, var(--ruby) 0%, transparent); }
+  }
+  @keyframes nudge-left { 0%, 100% { transform: translateX(0); } 50% { transform: translateX(-6px); } }
+  @keyframes hint-flash { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+  @media (prefers-reduced-motion: no-preference) {
+    .mix.nudge::-webkit-slider-thumb { animation: thumb-pulse 1.6s ease-out 3; }
+    .mix.nudge::-moz-range-thumb { animation: thumb-pulse 1.6s ease-out 3; }
+    .hint { animation: hint-flash 1.6s ease-in-out 3; }
+    .hint .arrow { animation: nudge-left 1.2s ease-in-out 4; }
+  }
+  .mix-out { border-top: 1px solid var(--line); padding-top: 0.9rem; }
+  .mix-out h3 { margin: 0 0 0.3rem; font-size: 1.05rem; }
+  .mix-out p { margin: 0 0 0.75rem; }
+  .split { height: 8px; border-radius: 4px; background: var(--llm); overflow: hidden; margin: 0.25rem 0 0.4rem; }
+  .split i { display: block; height: 100%; background: var(--ruby); }
+  .sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin: 0 0.35rem 0 0; vertical-align: -1px; }
+  .sw-ruby { background: var(--ruby); }
+  .sw-model { background: var(--llm); margin-left: 1rem; }
+  .split-label { font-size: 0.82rem; color: var(--muted); font-variant-numeric: tabular-nums; margin-bottom: 0.4rem !important; }
+  @media (prefers-reduced-motion: no-preference) { .split i { transition: width 0.25s ease; } }
+
+  /* Calculator */
+  .calc { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 1.25rem; margin: 1.5rem 0; }
+  .presets { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 1rem; }
+  .presets button {
+    font: inherit; font-size: 0.85rem; padding: 0.35rem 0.75rem; border-radius: 999px; cursor: pointer;
+    background: transparent; color: var(--fg); border: 1px solid var(--ctl);
+  }
+  .presets button[aria-pressed="true"] { background: var(--fg); color: var(--bg); border-color: var(--fg); }
+  .fields { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem 1rem; margin-bottom: 1.1rem; }
+  @media (max-width: 38rem) { .fields { grid-template-columns: 1fr; } }
+  .fields label { display: block; font-size: 0.82rem; font-weight: 600; margin-bottom: 0.2rem; }
+  .fields input, .fields select {
+    width: 100%; font: inherit; font-size: 0.95rem; padding: 0.4rem 0.55rem; color: var(--fg);
+    background: var(--bg); border: 1px solid var(--ctl); border-radius: 6px;
+  }
+  .fields .check { grid-column: 1 / -1; }
+  .fields .check label { display: flex; align-items: center; gap: 0.5rem; font-size: 0.95rem; cursor: pointer; }
+  .fields .check input { width: auto; margin: 0; }
+  .fields [hidden] { display: none; }
+  .fields .wide { grid-column: 1 / -1; }
+  .group { grid-column: 1 / -1; text-align: center; font-size: 1.05rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--fg); font-weight: 700; margin: 1.1rem 0 0.1rem; padding-bottom: 0.45rem; border-bottom: 2px solid var(--accent); }
+  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.75rem; margin-bottom: 0.9rem; }
+  @media (max-width: 38rem) { .stats { grid-template-columns: 1fr; } }
+  .stat { border: 1px solid var(--line); border-radius: 8px; padding: 0.6rem 0.75rem; }
+  .stat b { display: block; font-size: 1.35rem; line-height: 1.2; font-variant-numeric: tabular-nums; }
+  .stat small { color: var(--muted); font-size: 0.78rem; }
+  .verdict { border-radius: 8px; padding: 0.8rem 1rem; font-weight: 600; }
+  .verdict small { display: block; font-weight: 600; margin-top: 0.15rem; }
+  .verdict.keep { background: var(--good-bg); color: var(--good); }
+  .verdict.write { background: var(--warn-bg); color: var(--warn); }
+  .tools { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.75rem; margin: 1rem 0; }
+  @media (max-width: 38rem) { .tools { grid-template-columns: 1fr; } }
+  .tools .card h3 a { text-decoration: none; }
+  .tools .card p.more { margin-top: 0.6rem; font-size: 0.85rem; }
+
+  /* Page index: a sticky list in the left gutter on wide screens, a collapsible list otherwise */
+  section { scroll-margin-top: 1.5rem; }
+  .toc { display: none; }
+  .toc ol, .toc-inline ol { list-style: none; margin: 0; padding: 0; }
+  .toc-title { font-size: 0.72rem; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); font-weight: 600; margin: 0 0 0.6rem; }
+  .toc a { display: block; padding: 0.22rem 0 0.22rem 0.8rem; border-left: 2px solid var(--line); color: var(--muted); font-size: 0.86rem; line-height: 1.35; text-decoration: none; }
+  .toc a:hover { color: var(--fg); }
+  .toc a[aria-current="location"] { color: var(--accent); border-left-color: var(--accent); font-weight: 600; }
+  .toc-inline { margin: 1.5rem 0 0; border: 1px solid var(--line); border-radius: 10px; padding: 0.6rem 1rem; background: var(--card); font-size: 0.95rem; }
+  .toc-inline summary { cursor: pointer; font-weight: 600; }
+  .toc-inline ol { margin-top: 0.5rem; }
+  .toc-inline a { display: block; padding: 0.25rem 0; text-decoration: none; }
+  @media (min-width: 1240px) {
+    .toc { display: block; position: fixed; top: 2.5rem; width: 12.5rem; max-height: calc(100vh - 5rem); overflow-y: auto;
+           left: calc(50vw - 23rem - 12.5rem - 1.5rem); }
+    .toc-inline { display: none; }
+  }
+  footer { border-top: 1px solid var(--line); margin-top: 4rem; padding-top: 1.5rem; font-size: 0.9rem; color: var(--muted); text-align: center; }
+  :focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+  @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+</style>
+</head>
+<body>
+<nav class="toc" aria-label="On this page"><p class="toc-title">On this page</p><ol id="tocList"></ol></nav>
+<main>
+
+<header>
+  <img class="hero-img" src="img/squishling-mascot.webp" width="720" height="576" alt="Squishling, a smiling ruby gem popping out of a bamboo steamer basket">
+  <p class="eyebrow">Squishling · a Ruby gem for elastic software</p>
+  <h1>Don't just use AI to write code.<br><span class="accent">Use AI to not need code.</span></h1>
+  <p class="lede">Squishling lets a class run as ordinary Ruby or hand the work to an LLM, and return the same checked,
+  typed answer either way.<br>Write Ruby only where it's cheaper than the tokens.</p>
+  <p>
+    <a class="cta" href="#install">Install</a>
+    <a class="cta secondary" href="https://github.com/Coolhand-Labs/squishling">View on GitHub</a>
+  </p>
+</header>
+
+<details class="toc-inline"><summary>On this page</summary><ol id="tocInline"></ol></details>
+
+<section id="spectrum" data-toc="The spectrum">
+  <p class="kicker">The idea</p>
+  <h2>Where does your software sit?</h2>
+  <p>With Squishling, every Ruby class can land somewhere between "an LLM handles it" and "code handles it."</p>
+  <p>Now you have an easy way to define, and adjust, that balance based off of the needs of a class, your velocity, or
+  how much tech debt your team is able to carry.</p>
+  <p><strong>Drag the slider to see which tradeoff makes the most sense for the class you are building.</strong></p>
+  <div class="axis spectrum">
+    <div class="ends">
+      <div><b>Flexible</b><span>The model handles it. Higher cost per request.</span></div>
+      <div><b>Efficient</b><span>Deterministic code. Cost per request near zero.</span></div>
+    </div>
+    <input id="mix" class="mix nudge" type="range" min="0" max="4" step="1" value="4"
+           aria-label="How much of the work is handled by code instead of the model" aria-describedby="mixText">
+    <div class="ticks" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span></div>
+    <div class="slot-labels">
+      <p class="slot-note">Most codebases today</p>
+      <p id="mixHint" class="hint"><span class="arrow" aria-hidden="true">&larr;</span> Slide left to find the optimal spot</p>
+    </div>
+    <div class="mix-out" aria-live="polite">
+      <h3 id="mixTitle">Traditional software</h3>
+      <p id="mixText">Fully deterministic, cheap to scale. Logical complexity and failure states often balloon with features.</p>
+      <div class="split" aria-hidden="true"><i id="mixRuby" style="width:100%"></i></div>
+      <p class="split-label"><span class="sw sw-ruby" aria-hidden="true"></span><span id="mixRubyLabel">Ruby 100%</span><span class="sw sw-model" aria-hidden="true"></span><span id="mixModelLabel">LLM 0%</span></p>
+    </div>
+  </div>
+</section>
+
+<section id="why" data-toc="Why">
+  <p class="kicker">Why</p>
+  <h2>Tech debt is leverage, if you can price it</h2>
+  <p>Debt isn't always bad. Used well, it gives you leverage, and tech debt works the same way: it can be an asset or a
+  liability, depending on what you do with it.</p>
+  <p>The catch is that nobody can price it. It's hard to quantify the advantage tech debt gives you if you can't
+  <a href="#number">quantify what it costs</a>. Here's a common place where it quietly gets expensive.</p>
+</section>
+
+<section id="story" data-toc="The problem">
+  <p class="kicker">The problem</p>
+  <h2>Some requirements are too expensive to maintain in code</h2>
+  <p>Say you're in health tech. You sign a clinical client and need their patient data in your system. There's a
+  standard for that, FHIR, so it looks easy.</p>
+  <h3>Day one</h3>
+<pre><code>def call_parser(data)
+  fhir_parser.call(data)
+end</code></pre>
+    <h3>A hundred clients later</h3>
+<pre class="fade"><code>def call_parser(client_name, data)
+  case client_name
+  when client_a then client_a_parser.call(data)
+  when client_b then client_b_parser.call(data)
+  when client_c then client_c_parser.call(data)
+  when client_d then client_d_parser.call(data)
+  when client_e then client_e_parser.call(data)
+  when client_f then client_f_parser.call(data)
+  when client_g then client_g_parser.call(data)
+  when client_h then client_h_parser.call(data)
+  # ... ad nauseam</code></pre>
+  <p>No matter whether people or AI wrote it, this is terrible architecture:</p>
+  <ul class="plain">
+    <li>It's hard to DRY.</li>
+    <li>Any change to a data format can break it, and every breakage is a scramble.</li>
+    <li>It adds cost to every new contract. The more clients you sell, the worse it gets.</li>
+  </ul>
+  <p class="pull">The worst kind of debt: <em>uncontrollable, unavoidable and unmanageable</em>... and "better" code can't fix it.</p>
+</section>
+
+<section id="again" data-toc="The alternative">
+  <p class="kicker">The alternative</p>
+  <h2>Same job. Different implementation.</h2>
+<pre><code>class Parser
+  include Squishling
+
+  purpose "Please parse this data into a patient record."
+  output_schema PatientRecord
+
+  # def call(data)
+  #   fhir_parser.call(data)
+  # end
+end</code></pre>
+  <div class="beside">
+    <p>Let the model take the first version, and look at what you get. Flexible by default, and it bends instead of
+    breaking.</p>
+    <img loading="lazy" decoding="async" src="img/squishling-squished.webp" width="420" height="237" alt="A smiling ruby gem, squished flat and flexible">
+  </div>
+  <div class="cols three">
+    <div class="card"><h3>Zero brittle code</h3><p>Nothing to break when a format shifts.</p></div>
+    <div class="card"><h3>Instant integration</h3><p>A new client works on day one.</p></div>
+    <div class="card"><h3>Flexibility</h3><p>It copes with external factors you can't change.</p></div>
+  </div>
+  <p>The objection is cost: every request spends tokens. The answer:</p>
+  <ul class="plain">
+    <li>Refactor the high-volume bits to be deterministic.</li>
+    <li>Keep AI for everything else.</li>
+  </ul>
+  <p class="pull">Now your tech debt has a quantity you can <em>measure</em>.</p>
+</section>
+
+<section id="squishling" data-toc="1. Describe it">
+  <p class="kicker">How &middot; 1. Describe it</p>
+  <h2>Define the goal and the shape of the answer</h2>
+  <div class="beside">
+    <p>Make a class squish. Give it a purpose and an output schema, and Squishling does the rest. This class has no
+    implementation at all, so every call is squished.</p>
+    <img loading="lazy" decoding="async" src="img/squishling-steamer-closed.webp" width="560" height="362" alt="A closed bamboo steamer basket with something inside">
+  </div>
+<pre><code>Squishling.configure do |config|
+  config.default_model = "claude-haiku-4-5-20251001"
+  # falls back to RubyLLM's default when nil
+end
+
+class Parser
+  include Squishling
+
+  purpose "Map the inbound record onto the schema..."
+  output_schema do
+    string :patient_name
+    string :patient_gender, enum: %w[male female trans unknown]
+    array  :diagnosis_codes, of: :string
+    array  :symptoms, of: :string
+  end
+
+  # no call method: every invocation is squished.
+end</code></pre>
+  <p>Run against 100 synthetic patient records (generated with Synthea):</p>
+  <div class="run" role="group" aria-label="First run: 73 of 100 passed, $0.48 per 100 calls">
+    <div class="pass"><b>73 / 100</b><small>pass</small></div>
+    <div class="cost"><b>$0.48</b><small>per 100 calls</small></div>
+    <div class="bar" aria-hidden="true"><i style="width:73%"></i></div>
+  </div>
+  <p>Every diagnosis code was right. The misses clustered in three places: names written HL7-style, gender codes, and
+  symptoms the model invented.</p>
+</section>
+
+<section id="improve" data-toc="2. Tune it">
+  <p class="kicker">How &middot; 2. Tune it</p>
+  <h2>Only the purpose changed</h2>
+<pre><code>class Parser
+  include Squishling
+
+  purpose &lt;&lt;~PURPOSE
+    Map the record onto the schema below.
+
+    Name: output "First Last" order, even if the source writes
+    it as HL7's LAST^FIRST, often in all caps.
+
+    Gender: translate to "male", "female", "trans", or "unknown".
+    "unknown" for any code you don't recognize, including HL7's
+    bare O / U / A / N letter codes. Never guess.
+
+    Symptoms: only from an explicit symptom field. A diagnosis is
+    not a symptom. Never infer one from a diagnosis name.
+  PURPOSE
+
+  ...
+end</code></pre>
+  <div class="run" role="group" aria-label="Tuned purpose: 95 of 100 passed, $0.51 per 100 calls">
+    <div class="pass"><b>95 / 100</b><small>pass</small></div>
+    <div class="cost"><b>$0.51</b><small>per 100 calls</small></div>
+    <div class="bar" aria-hidden="true"><i style="width:95%"></i></div>
+  </div>
+  <p>The two systematic failures that remain are HL7 letter codes and unlabeled SNOMED gender codes that need a
+  translation table, plus one dictation transcript with spoken digits.</p>
+</section>
+
+<section id="twice" data-toc="3. Pay for accuracy">
+  <p class="kicker">How &middot; 3. Pay for accuracy</p>
+  <h2>Use a harness to pay for higher accuracy</h2>
+  <div class="beside">
+    <p><strong>Squishsum compares two Squishling results.</strong> It asks the model twice, at the same time, and accepts
+    the answer only when both agree. That costs about twice the requests, so reach for it when a confidently wrong
+    answer costs more than a second one.</p>
+    <img loading="lazy" decoding="async" src="img/squishling-cuddling.webp" width="640" height="472" alt="Two smiling ruby gems cuddling together">
+  </div>
+<pre><code>class Parser
+  include Squishling
+
+  ...
+
+  squishling harness: :squishsum
+end</code></pre>
+  <p>When the two results match, you get the first one. When they differ, Squishling raises
+  <code>Squishling::DisagreementError</code>, and <code>squish_fallback</code> decides what happens next. By default the
+  results must match exactly; pass <code>compare:</code> to say which fields have to agree.</p>
+
+  <div class="beside">
+    <div>
+      <h3>Add a judge with <code>judged_squishsum</code></h3>
+      <p>When the two results differ, a judge looks at both and picks one, or rejects both. The judge can be a bigger chat
+      model, as here, or a fast decision model such as Jev.</p>
+    </div>
+    <img loading="lazy" decoding="async" src="img/squishling-sceptical.webp" width="640" height="640" alt="A skeptical ruby gem with a question mark floating above it">
+  </div>
+<pre><code>class Parser
+  include Squishling
+
+  ...
+
+  squishling model: "claude-haiku-4-5",
+    harness: { type: :judged_squishsum, judge: "claude-opus-5-5" }
+  # two Haiku samples; Opus judges when they differ
+end</code></pre>
+  <p>Run against the same 100 records:</p>
+  <div class="run" role="group" aria-label="Two samples plus a judge: 95 of 100 passed, $1.02 per 100 calls">
+    <div class="pass"><b>95 / 100</b><small>pass</small></div>
+    <div class="cost"><b>$1.02</b><small>per 100 calls</small></div>
+    <div class="bar" aria-hidden="true"><i style="width:95%"></i></div>
+  </div>
+  <p>Same five failures, double the cost, and the judge was never called. At temperature 0.1 the model agreed with
+  itself on every record, including the five it got wrong. Those were systematic misreadings, not noise.</p>
+  <p class="note">Asking twice protects you from random mistakes, not from misunderstanding. And validation checks the
+  <em>shape</em> of an answer, not that it's true.</p>
+
+  <h3>Or create your own harness</h3>
+  <p>Squishling doesn't have a plugin point for custom harnesses yet; it's on the roadmap. Today you can build one in
+  plain Ruby, because <code>squish!</code> takes a model for each call. This one asks two models, and calls in a third
+  to break a tie:</p>
+<pre><code>class TicketTriager
+  include Squishling
+
+  purpose "Assign a priority and a team."
+  output_schema do
+    string :priority, enum: %w[low medium high]
+    string :team
+  end
+
+  def call(ticket_text:)
+    haiku  = squish!(model: "claude-haiku-4-5")
+    sonnet = squish!(model: "claude-sonnet-5-5")
+
+    # You decide what "agree" means.
+    return haiku if haiku.priority == sonnet.priority
+
+    # They disagree: ask the strongest model.
+    squish!(model: "claude-opus-5-5")
+  end
+end</code></pre>
+  <ul class="plain">
+    <li>Every <code>squish!</code> returns the same validated, typed result, so you can compare fields directly.</li>
+    <li>Use <code>squish_validate</code> for rules the schema can't express. A failed check rejects that call's output.</li>
+    <li>Each <code>squish!</code> fails or falls back on its own, using the method's <code>squish_fallback</code> if you
+    declared one. Wrap the calls in a <code>rescue</code> to handle the whole harness.</li>
+  </ul>
+  <p>The built-in options are covered in the
+  <a href="https://github.com/Coolhand-Labs/squishling/blob/main/docs/harnesses.md">harness docs</a>.</p>
+</section>
+
+<section id="elastic" data-toc="4. Harden the common shapes">
+  <p class="kicker">How &middot; 4. Harden the common shapes</p>
+  <h2>Code the standard shapes. Squish the rest.</h2>
+  <p>A quick look at the data shows <strong>63% of the requests fit a standard format</strong>. So route those to the
+  parser you already trust, and squish the rest:</p>
+  <figure class="pic">
+    <img loading="lazy" decoding="async" src="img/squishling-router-gem.webp" width="800" height="375" alt="A smiling ruby gem with celebratory splashes">
+  </figure>
+<pre><code>class Parser
+  include Squishling
+
+  ...
+  squishling model: "claude-haiku-4-5",
+    harness: { type: :judged_squishsum, judge: "claude-opus-5-5" }
+
+  def call(data)
+    return fhir_parser.call(data) if fhir_message?(data)
+
+    squish!
+  end
+end</code></pre>
+  <div class="run" role="group" aria-label="With the router: 95 of 100 passed, $0.12 per 100 calls">
+    <div class="pass"><b>95 / 100</b><small>pass</small></div>
+    <div class="cost"><b>$0.12</b><small>per 100 calls</small></div>
+    <div class="bar" aria-hidden="true"><i style="width:95%"></i></div>
+  </div>
+  <p>Same 95 out of 100, the same five misses, and 76% cheaper than the tuned-purpose run that squishes every request. The router moved this integration from fully
+  flexible to mostly efficient without a rewrite, and without betting up front.</p>
+
+  <h3>The four runs, side by side</h3>
+  <table class="runs">
+    <thead><tr><th>Run</th><th>Pass</th><th>Cost per 100 calls</th></tr></thead>
+    <tbody>
+      <tr><td>Bare purpose</td><td class="num">73 / 100</td><td class="num">$0.48<span class="meter" style="width:47%"></span></td></tr>
+      <tr><td>Tuned purpose</td><td class="num">95 / 100</td><td class="num">$0.51<span class="meter" style="width:50%"></span></td></tr>
+      <tr><td>Two samples and a judge</td><td class="num">95 / 100</td><td class="num">$1.02<span class="meter" style="width:100%"></span></td></tr>
+      <tr class="hl"><td>Code the 63%, squish the rest</td><td class="num">95 / 100</td><td class="num">$0.12<span class="meter" style="width:12%"></span></td></tr>
+    </tbody>
+  </table>
+  <p class="small">Results from the talk's demo, using 100 synthetic records and Anthropic Claude models. They show the
+  shape of the trade, not a benchmark of your data.</p>
+</section>
+
+<section id="balance" data-toc="The result">
+  <p class="kicker">The result</p>
+  <h2>Day-one integrations at a fraction of the cost</h2>
+  <ul class="plain">
+    <li><strong>Integrations work on day one.</strong></li>
+    <li><strong>Low cost per request.</strong></li>
+    <li><strong>Total LLM cost well below maintenance cost.</strong></li>
+  </ul>
+  <p class="pull">And you can keep revisiting this balance as the business evolves.</p>
+  <h3>It runs backwards, too</h3>
+  <p>Drowning under a thousand legacy parsers? Find the ones at the tail of your usage curve. Squish them instead.
+  Then delete the code. Stop living in fear that a tiny client finds the breaking change you shipped two quarters ago.</p>
+</section>
+
+<section id="services" data-toc="Service failures">
+  <p class="kicker">Beyond parsing</p>
+  <h2>When a service call fails, squish it</h2>
+  <p>Not parsing health data? Anything that talks to another service has the same shape. Keep your Ruby parser for well-formed payloads, and hand the rest to the
+  model. Save yourself, and the engineers who come after you, uncountable headaches.</p>
+  <div class="beside">
+    <div>
+<pre><code>class WebhookHandler
+  include Squishling
+
+  ...
+
+  def call(service:, body:)
+    VendorWebhooks.fetch(service).parse(body)
+  rescue VendorWebhooks::ParseError => e
+    squish!(context: { parse_error: e })
+  end
+end</code></pre>
+    </div>
+    <img loading="lazy" decoding="async" src="img/squish-it-good-gem.webp" width="560" height="362" alt="A smiling ruby gem wearing a stacked red cap">
+  </div>
+  <p>With <code>squish!</code>, the model gets the call's inputs plus whatever context you pass, such as the error, and
+  still has to return the same validated result. If it can't, <code>squish_fallback</code> decides what happens next.</p>
+</section>
+
+<section id="bugs" data-toc="Your own bugs">
+  <p class="kicker">Beyond integrations</p>
+  <h2>Even a bug in your own code can squish</h2>
+  <p>Any rescued exception can be the trigger, including a plain old bug:</p>
+<pre><code>class SomeHelperMethod
+  def call(payload)
+    payload.dig("user", "email")
+  end
+end
+
+payload = { "user" =&gt; "alice@example.com" }
+# oops: the caller sent a string, not a hash
+
+SomeHelperMethod.new.call(payload)
+# =&gt; TypeError: String does not have #dig method</code></pre>
+  <p>And after:</p>
+<pre><code>class SomeHelperMethod
+  include Squishling
+
+  purpose "Return the user's email address from this payload."
+  output_schema { string :email }
+
+  def call(payload)
+    payload.dig("user", "email")
+  rescue =&gt; e
+    squish!(context: { error: e })
+  end
+end
+
+SomeHelperMethod.new.call(payload).email
+# =&gt; "alice@example.com"</code></pre>
+  <div class="beside">
+    <div>
+      <p class="pull">If the answer is in the input or the error message, squish can find and fix it.</p>
+      <p class="note">It's a net, not the repair. Still fix the bug, and check the cases where a plausible wrong value
+      would be costly.</p>
+    </div>
+    <img loading="lazy" decoding="async" src="img/squishling-gem-stack.webp" width="520" height="527" alt="A stack of three ruby gems with an anvil labeled critical on top">
+  </div>
+</section>
+
+<section id="number" data-toc="Measure in tokens">
+  <p class="kicker">Put a number on it</p>
+  <h2>Measure your tech debt in tokens</h2>
+  <p>Code you haven't written is debt you haven't taken on. A squished path has a running cost you can read off a
+  meter, so "should we write a parser for this?" turns into arithmetic: what the path costs in tokens each month,
+  against what the code costs to write and keep.</p>
+  <p>Pick a template, then change the numbers. The first one is deliberately a case where writing code is <em>not</em>
+  worth it, and the last two show what changes when squishing earns its keep.</p>
+
+  <div class="calc">
+    <noscript><p class="preset-note">The calculator needs JavaScript. Without it, the numbers below stay empty.</p></noscript>
+    <div class="presets" role="group" aria-label="Example templates">
+      <button type="button" data-preset="quiet">A quiet integration</button>
+      <button type="button" data-preset="busy">A busy path</button>
+      <button type="button" data-preset="exceptions">Only squish the exceptions</button>
+      <button type="button" data-preset="mostly">80% Ruby, 20% squished</button>
+    </div>
+    <p id="presetNote" class="preset-note"></p>
+
+    <div class="fields">
+      <p class="group">The model path</p>
+      <div><label for="calls">Requests per month</label><input id="calls" type="number" min="0" step="1000" inputmode="numeric"></div>
+      <div><label for="share">Share of requests the model handles (%)</label><input id="share" type="number" min="0" max="100" step="0.1" inputmode="decimal"></div>
+      <div><label for="tin">Input tokens per request</label><input id="tin" type="number" min="0" step="50" inputmode="numeric"></div>
+      <div><label for="tout">Output tokens per request</label><input id="tout" type="number" min="0" step="10" inputmode="numeric"></div>
+      <div class="wide"><label for="mdl">Model (list price per million input / output tokens)</label><select id="mdl"></select></div>
+      <p class="group">The code path</p>
+      <div class="check"><label><input id="aiw" type="checkbox"> An AI writes the code (an engineer reviews it)</label></div>
+      <div><label for="hw" id="hwLabel">Hours to write it</label><input id="hw" type="number" min="0" step="1" inputmode="numeric"></div>
+      <div><label for="hm">Hours of upkeep per month</label><input id="hm" type="number" min="0" step="0.5" inputmode="decimal"></div>
+      <div><label for="rate">Cost per engineering hour ($)</label><input id="rate" type="number" min="0" step="5" inputmode="numeric"></div>
+      <div class="ai-only wide" hidden><label for="wtin">Tokens for the AI to write it (using Opus 5.5 as a benchmark)</label><select id="wtin"></select></div>
+      <p class="group">What squishing gets you</p>
+      <div><label for="lost">Lost business per production error ($)</label><input id="lost" type="number" min="0" step="5" inputmode="numeric"></div>
+      <div><label for="recov">Share of those errors the model recovers (%)</label><input id="recov" type="number" min="0" max="100" step="5" inputmode="numeric"></div>
+      <div><label for="ni">New integrations per month</label><input id="ni" type="number" min="0" step="1" inputmode="numeric"></div>
+      <div><label for="wk">Weeks sooner each one goes live</label><input id="wk" type="number" min="0" step="0.5" inputmode="decimal"></div>
+      <div><label for="rpw">Revenue per integration per week ($)</label><input id="rpw" type="number" min="0" step="10" inputmode="numeric"></div>
+    </div>
+
+    <div class="stats">
+      <div class="stat"><b id="tokenCost">$0</b><small>token cost per month</small></div>
+      <div class="stat"><b id="valueGain">$0</b><small>value squishing returns per month</small></div>
+      <div class="stat"><b id="codeCost">$0</b><small>code upkeep per month</small></div>
+      <div class="stat"><b id="writeCost">$0</b><small id="writeCostNote">one-time cost to write it</small></div>
+    </div>
+    <div id="verdict" class="verdict" role="status"></div>
+
+  </div>
+
+  <p>To get your real numbers, you can read token usage a few ways:</p>
+  <div class="tools">
+    <div class="card"><h3><a href="https://github.com/Coolhand-Labs/squishling/blob/main/docs/measuring-tokens.md#coolhand-labs">Coolhand Labs</a></h3>
+      <p>Add and initialize the gem, and it picks up your calls automatically, measuring cost and accuracy.</p>
+      <p class="more"><a href="https://coolhandlabs.com/">coolhandlabs.com &#8599;</a></p></div>
+    <div class="card"><h3><a href="https://github.com/Coolhand-Labs/squishling/blob/main/docs/measuring-tokens.md#custom-the-squawk-hook">Custom, with squawk</a></h3>
+      <p>A hook that logs tokens per method after every LLM attempt. No new dependency.</p></div>
+    <div class="card"><h3><a href="https://github.com/Coolhand-Labs/squishling/blob/main/docs/measuring-tokens.md#opentelemetry">OpenTelemetry</a></h3>
+      <p>Send traces to Datadog, Langfuse, Arize, Braintrust or any compatible backend.</p>
+      <p class="more"><a href="https://opentelemetry.io/">opentelemetry.io &#8599;</a></p></div>
+  </div>
+</section>
+
+<section id="install" data-toc="Install">
+  <p class="kicker">What's next</p>
+  <h2>Try it, and tell us what breaks</h2>
+  <div class="beside">
+    <div>
+      <p>Add the gem, configure your provider keys in RubyLLM (OpenAI, Anthropic Claude, Google Gemini and others work),
+      and describe your first class.</p>
+<pre><code># Gemfile
+gem "squishling"</code></pre>
+    </div>
+    <img loading="lazy" decoding="async" src="img/squishling-mascot.webp" width="720" height="576" alt="Squishling, a smiling ruby gem popping out of a bamboo steamer basket">
+  </div>
+  <p>Requires Ruby 3.3 or newer. The
+  <a href="https://github.com/Coolhand-Labs/squishling#readme">README</a> covers each use case, and the
+  <a href="https://github.com/Coolhand-Labs/squishling/tree/main/docs">docs</a> cover routing, schemas, configuration,
+  failure handling, harnesses and measuring token spend.</p>
+  <h3>On the roadmap</h3>
+  <ul class="plain">
+    <li>Bring your own harness.</li>
+    <li>Framework-specific defaults.</li>
+    <li>Support for non-RubyLLM implementations.</li>
+    <li>Output format annotations.</li>
+  </ul>
+  <p>Squish the star button and leave issues on GitHub.</p>
+  <p><a class="cta" href="https://github.com/Coolhand-Labs/squishling">Star Squishling on GitHub</a></p>
+</section>
+
+<footer>
+  <p>Squishling is open source under the Apache-2.0 license. Inspired by the
+  <a href="https://everythingengineer.substack.com/p/beginners-write-software-with-ai">Elastic Software essay</a>, and
+  built around the <a href="https://michael.carroll.io/talks/2026/elastic-software/">talk of the same name</a> given at
+  XO Ruby NYC.</p>
+  <p>This open source project is supported by <a href="https://coolhandlabs.com/">Coolhand Labs</a>.</p>
+</footer>
+
+</main>
+
+<script>
+(function () {
+  var PRESETS = {
+    quiet: {
+      note: 'A low-volume path. The model costs less each month than the code would cost to maintain.',
+      calls: 50000, share: 100, tin: 800, tout: 150, hw: 16, hm: 2, rate: 100,
+      lost: 0, recov: 0, ni: 0, wk: 0, rpw: 0 },
+    busy: {
+      note: 'A high-volume path. The tokens add up fast, so the common cases should become code.',
+      calls: 100000000, share: 100, tin: 800, tout: 150, hw: 16, hm: 2, rate: 100,
+      lost: 0, recov: 0, ni: 0, wk: 0, rpw: 0 },
+    exceptions: {
+      note: 'Ruby handles every request. The model only sees the roughly 0.2% that raise an error, so the tokens are ' +
+            'tiny, and each rescued error is business you keep.',
+      calls: 500000, share: 0.2, tin: 3000, tout: 200, hw: 24, hm: 4, rate: 100,
+      lost: 20, recov: 60, ni: 0, wk: 0, rpw: 0 },
+    mostly: {
+      note: 'Ruby parsers handle 80% of the traffic that is standard and follows an expected format. The other 20% of ' +
+            '"legacy" or "untested" traffic is squished, so new clients go live before their parser is built and tested.',
+      calls: 2000000, share: 20, tin: 800, tout: 150, hw: 60, hm: 5, rate: 100,
+      lost: 0, recov: 0, ni: 4, wk: 6, rpw: 150 }
+  };
+  // An AI writing the code: a coding agent re-reads its context every turn, so a small parser takes roughly a million
+  // input tokens, and output is about 5% of that. Priced at Opus 5.5's list rates (dollars per million tokens).
+  var AI_DEFAULTS = { wtin: 1000000 };
+  // List prices in dollars per million tokens (input, output), October 2026. Providers change these, so check yours.
+  var MODELS = [
+    ['Mini', 'gemma-4-e4b', 'Gemma 4 E4B (Google)', 0.02, 0.04],
+    ['Mini', 'gpt-5-nano', 'GPT-5 nano (OpenAI)', 0.05, 0.40],
+    ['Small', 'mistral-small-4', 'Mistral Small 4 (Mistral)', 0.15, 0.60],
+    ['Small', 'gpt-5-mini', 'GPT-5 mini (OpenAI)', 0.25, 2],
+    ['Small', 'gemini-3-1-flash-lite', 'Gemini 3.1 Flash-Lite (Google)', 0.25, 1.50],
+    ['Small', 'claude-haiku-4-5', 'Claude Haiku 4.5 (Anthropic)', 1, 5],
+    ['Medium', 'gemini-3-5-flash', 'Gemini 3.5 Flash (Google)', 1.50, 9],
+    ['Medium', 'claude-sonnet-5-5', 'Claude Sonnet 5.5 (Anthropic)', 2, 10],
+    ['Medium', 'grok-4-7', 'Grok 4.7 (xAI)', 2, 6],
+    ['Large', 'gemini-3-1-pro', 'Gemini 3.1 Pro (Google)', 2.50, 15],
+    ['Large', 'claude-opus-5-5', 'Claude Opus 5.5 (Anthropic)', 4, 20],
+    ['Large', 'gpt-5-5', 'GPT-5.5 (OpenAI)', 5, 30]
+  ];
+  var DEFAULT_MODEL = 'gemma-4-e4b';
+  var MODEL_BY_ID = {};
+  MODELS.forEach(function (m) { MODEL_BY_ID[m[1]] = { input: m[3], output: m[4] }; });
+  var AI_PRICE = MODEL_BY_ID['claude-opus-5-5'];
+  var AI_OUTPUT_SHARE = 0.05;
+  var AI_SIZES = [
+    [100000, 'A tiny script'], [250000, 'A small helper'], [500000, 'A simple parser'], [1000000, 'A typical parser'],
+    [2000000, 'A parser with many edge cases'], [5000000, 'A multi-format integration'],
+    [10000000, 'A large integration, many iterations']
+  ];
+  Object.keys(PRESETS).forEach(function (name) {
+    Object.keys(AI_DEFAULTS).forEach(function (k) { PRESETS[name][k] = AI_DEFAULTS[k]; });
+    PRESETS[name].aiw = 1;
+    PRESETS[name].mdl = DEFAULT_MODEL;
+  });
+  PRESETS.quiet.hw = 5;
+  var ids = ['calls', 'share', 'tin', 'tout', 'mdl', 'hw', 'hm', 'rate', 'lost', 'recov', 'ni', 'wk', 'rpw',
+             'wtin'];
+  var el = {};
+  ids.concat('aiw').forEach(function (id) { el[id] = document.getElementById(id); });
+  var hwLabelEl = document.getElementById('hwLabel');
+  var writeNoteEl = document.getElementById('writeCostNote');
+  var aiOnly = document.querySelectorAll('.ai-only');
+  var tokenCostEl = document.getElementById('tokenCost');
+  var valueGainEl = document.getElementById('valueGain');
+  var codeCostEl = document.getElementById('codeCost');
+  var writeCostEl = document.getElementById('writeCost');
+  var verdictEl = document.getElementById('verdict');
+  var noteEl = document.getElementById('presetNote');
+  var presetBtns = document.querySelectorAll('.presets button');
+
+  function num(id) {
+    var v = parseFloat(el[id].value);
+    return isFinite(v) && v >= 0 ? v : 0;
+  }
+  function money(n) {
+    var digits = n < 10 && n % 1 !== 0 ? 2 : 0;
+    return '$' + n.toLocaleString('en-US', { minimumFractionDigits: digits, maximumFractionDigits: digits });
+  }
+  function months(n) {
+    if (n < 1) return 'less than a month';
+    var m = Math.ceil(n);
+    return m + (m === 1 ? ' month' : ' months');
+  }
+
+  function aiTokenCost(inputTokens) {
+    return inputTokens * (AI_PRICE.input + AI_OUTPUT_SHARE * AI_PRICE.output) / 1e6;
+  }
+  function tokenCount(n) {
+    return n >= 1e6 ? parseFloat((n / 1e6).toFixed(2)) + 'M' : parseFloat((n / 1e3).toFixed(1)) + 'K';
+  }
+  AI_SIZES.forEach(function (size) {
+    var opt = document.createElement('option');
+    opt.value = String(size[0]);
+    opt.textContent = size[1] + ' \u00b7 about ' + tokenCount(size[0] * (1 + AI_OUTPUT_SHARE)) + ' tokens \u00b7 ' +
+      money(aiTokenCost(size[0]));
+    el.wtin.appendChild(opt);
+  });
+
+  var tierGroups = {};
+  MODELS.forEach(function (m) {
+    if (!tierGroups[m[0]]) {
+      tierGroups[m[0]] = document.createElement('optgroup');
+      tierGroups[m[0]].label = m[0];
+      el.mdl.appendChild(tierGroups[m[0]]);
+    }
+    var opt = document.createElement('option');
+    opt.value = m[1];
+    opt.textContent = m[2] + ' \u00b7 ' + money(m[3]) + ' / ' + money(m[4]);
+    tierGroups[m[0]].appendChild(opt);
+  });
+
+  function render() {
+    var modelRequests = num('calls') * Math.min(num('share'), 100) / 100;
+    var price = MODEL_BY_ID[el.mdl.value] || MODEL_BY_ID[DEFAULT_MODEL];
+    var tokenMonthly = modelRequests * (num('tin') * price.input + num('tout') * price.output) / 1e6;
+    var rescued = modelRequests * Math.min(num('recov'), 100) / 100 * num('lost');
+    var early = num('ni') * num('wk') * num('rpw');
+    var benefit = rescued + early;
+    var upkeepMonthly = num('hm') * num('rate');
+    var aiWrites = el.aiw.checked;
+    var aiTokens = aiWrites ? aiTokenCost(num('wtin')) : 0;
+    var writeOnce = num('hw') * num('rate') + aiTokens;
+
+    tokenCostEl.textContent = money(tokenMonthly);
+    valueGainEl.textContent = money(benefit);
+    codeCostEl.textContent = money(upkeepMonthly);
+    writeCostEl.textContent = money(writeOnce);
+    writeNoteEl.textContent = aiWrites
+      ? 'one-time cost to write it, including ' + money(aiTokens) + ' of AI tokens'
+      : 'one-time cost to write it';
+    hwLabelEl.textContent = aiWrites ? 'Hours to prompt, review and finish it' : 'Hours to write it';
+    aiOnly.forEach(function (node) { node.hidden = !aiWrites; });
+
+    // Squishing nets its value minus its tokens. Writing the code costs upkeep and forgoes that value.
+    var squishNet = benefit - tokenMonthly;
+    var codeNet = -upkeepMonthly;
+
+    var html;
+    if (squishNet >= codeNet) {
+      verdictEl.className = 'verdict keep';
+      if (benefit > 0) {
+        html = 'Use observability to make sure you don\'t squish too much.';
+      } else {
+        html = 'Keep it squished.<small>The model costs no more each month than the code would cost to maintain, so writing it never pays back.</small>';
+      }
+    } else {
+      var saving = codeNet - squishNet;
+      var payback = writeOnce / saving;
+      var gives = benefit > 0 ? ' (after counting the ' + money(benefit) + ' of value squishing gives up)' : '';
+      if (payback > 24) {
+        verdictEl.className = 'verdict keep';
+        html = 'Probably keep it squished.<small>Writing the code would save about ' + money(saving) + ' a month' + gives +
+          ', but it would take ' + months(payback) + ' to pay back its ' + money(writeOnce) + ' build cost.</small>';
+      } else {
+        verdictEl.className = 'verdict write';
+        html = 'Worth writing the code.<small>It saves about ' + money(saving) + ' a month' + gives + ' and pays back its ' +
+          money(writeOnce) + ' build cost in ' + months(payback) + '.</small>';
+      }
+    }
+    verdictEl.innerHTML = html;
+  }
+
+  function apply(name) {
+    var p = PRESETS[name];
+    ids.forEach(function (id) { el[id].value = p[id]; });
+    el.aiw.checked = !!p.aiw;
+    noteEl.textContent = p.note;
+    presetBtns.forEach(function (b) { b.setAttribute('aria-pressed', String(b.dataset.preset === name)); });
+    render();
+  }
+
+  ids.forEach(function (id) {
+    el[id].addEventListener('input', function () {
+      presetBtns.forEach(function (b) { b.setAttribute('aria-pressed', 'false'); });
+      render();
+    });
+  });
+  // Hours to write it, by who writes it: an AI does most of the work, so an engineer only prompts and reviews.
+  var HOURS_BY_WRITER = { human: 10, ai: 4 };
+  el.aiw.addEventListener('change', function () {
+    el.hw.value = el.aiw.checked ? HOURS_BY_WRITER.ai : HOURS_BY_WRITER.human;
+    presetBtns.forEach(function (b) { b.setAttribute('aria-pressed', 'false'); });
+    render();
+  });
+  presetBtns.forEach(function (b) {
+    b.addEventListener('click', function () { apply(b.dataset.preset); });
+  });
+  apply('quiet');
+})();
+
+(function () {
+  var STATES = [
+    { title: 'LLM processing pathways only',
+      text: 'Probabilistic, expensive to scale, very low code, and flexible to unexpected cases.', ruby: 0, note: '' },
+    { title: 'Mostly squished, a few hardened paths',
+      text: 'Write Ruby only for the one or two shapes that carry the volume, and send everything else to the model. ' +
+            'The code stays small, unexpected inputs still work, and your busiest traffic gets cheap.', ruby: 20, note: '~' },
+    { title: 'Code the standard shapes, squish the rest',
+      text: '<a href="#elastic">In the demo below</a>, 63% of requests fit a standard format and run as plain Ruby. The rest go to the ' +
+            'model. Same 95 out of 100 pass rate, and 76% cheaper than squishing every request.', ruby: 63, note: '' },
+    { title: 'Mostly code, squish the exceptions',
+      text: 'Ruby handles nearly everything, and the model only sees what the code can\u2019t: ' +
+            '<a href="#services">a parse error rescued with squish!</a>, or the long tail. Cost approaches zero, and a surprise becomes a recovered result instead of an incident.',
+      ruby: 90, note: '~' },
+    { title: 'Traditional software',
+      text: 'Fully deterministic, cheap to scale. Logical complexity and failure states often balloon with features.',
+      ruby: 100, note: '' }
+  ];
+  var slider = document.getElementById('mix');
+  if (!slider) return;
+  var titleEl = document.getElementById('mixTitle');
+  var textEl = document.getElementById('mixText');
+  var rubyEl = document.getElementById('mixRuby');
+  var rubyLabel = document.getElementById('mixRubyLabel');
+  var modelLabel = document.getElementById('mixModelLabel');
+
+  function render() {
+    var st = STATES[Number(slider.value)];
+    titleEl.textContent = st.title;
+    textEl.innerHTML = st.text;
+    rubyEl.style.width = st.ruby + '%';
+    rubyLabel.textContent = 'Ruby ' + st.note + st.ruby + '%';
+    modelLabel.textContent = 'LLM ' + st.note + (100 - st.ruby) + '%';
+    slider.setAttribute('aria-valuetext', st.title);
+    slider.style.setProperty('--pct', (Number(slider.value) / 4 * 100) + '%');
+  }
+  var hint = document.getElementById('mixHint');
+  function settle() {
+    slider.classList.remove('nudge');
+    if (hint) hint.classList.add('gone');
+  }
+  ['input', 'pointerdown', 'keydown'].forEach(function (evt) { slider.addEventListener(evt, settle, { once: true }); });
+  slider.addEventListener('input', render);
+  render();
+})();
+
+(function () {
+  var sections = Array.prototype.slice.call(document.querySelectorAll('section[data-toc]'));
+  var lists = [document.getElementById('tocList'), document.getElementById('tocInline')];
+  sections.forEach(function (sec) {
+    lists.forEach(function (list) {
+      if (!list) return;
+      var li = document.createElement('li');
+      var a = document.createElement('a');
+      a.href = '#' + sec.id;
+      a.textContent = sec.getAttribute('data-toc');
+      a.setAttribute('data-for', sec.id);
+      li.appendChild(a);
+      list.appendChild(li);
+    });
+  });
+
+  var links = Array.prototype.slice.call(document.querySelectorAll('.toc a'));
+  function mark(id) {
+    links.forEach(function (a) {
+      if (a.getAttribute('data-for') === id) a.setAttribute('aria-current', 'location');
+      else a.removeAttribute('aria-current');
+    });
+  }
+  // The current section is the last one whose top has passed a line a quarter of the way down the screen.
+  function update() {
+    var line = window.innerHeight * 0.25, cur = null;
+    sections.forEach(function (sec) { if (sec.getBoundingClientRect().top <= line) cur = sec; });
+    mark(cur ? cur.id : null);
+  }
+  window.addEventListener('scroll', update, { passive: true });
+  window.addEventListener('resize', update);
+  update();
+  // Collapse the inline list after a jump on small screens.
+  var inline = document.querySelector('.toc-inline');
+  if (inline) inline.addEventListener('click', function (e) {
+    if (e.target.tagName === 'A') inline.removeAttribute('open');
+  });
+})();
+
+(function () {
+  // A small Ruby highlighter, so the page needs no external script. It handles what these examples use:
+  // comments, strings, heredocs, %w[] lists, symbols, hash-style labels, keywords, constants, numbers and def names.
+  var KEYWORDS = /^(?:class|module|def|end|do|if|elsif|else|unless|return|rescue|ensure|begin|when|case|then|while|until|self|nil|true|false|include|yield|raise)$/;
+  var TOKEN = /(<<[~-]?[A-Z_]+)|("(?:\\.|[^"\\])*")|('(?:\\.|[^'\\])*')|(#.*)|(%w\[[^\]]*\])|(::)|(:[A-Za-z_]\w*[?!]?)|(\b[a-z_]\w*[?!]?:(?=\s))|(\b[A-Z][A-Za-z0-9_]*\b)|(\b\d[\d_]*(?:\.\d+)?\b)|(\b[a-z_]\w*[?!]?)/g;
+
+  function esc(t) { return t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+  function span(cls, t) { return '<span class="tk-' + cls + '">' + esc(t) + '</span>'; }
+
+  function highlightLine(line) {
+    var html = '', last = 0, afterDef = false;
+    line.replace(TOKEN, function (m, heredoc, dq, sq, com, pw, colons, sym, label, cons, num, ident, offset) {
+      html += esc(line.slice(last, offset));
+      last = offset + m.length;
+      if (heredoc || dq || sq || pw) html += span('str', m);
+      else if (com) html += span('com', m);
+      else if (sym || label) html += span('sym', m);
+      else if (cons) html += span('const', m);
+      else if (num) html += span('num', m);
+      else if (ident) {
+        if (KEYWORDS.test(ident)) { html += span('kw', ident); afterDef = ident === 'def'; return ''; }
+        html += afterDef ? span('fn', ident) : esc(ident);
+      } else html += esc(m);
+      afterDef = false;
+      return '';
+    });
+    return html + esc(line.slice(last));
+  }
+
+  function highlight(code) {
+    var heredoc = null;
+    return code.split('\n').map(function (line) {
+      if (heredoc) {
+        if (line.trim() === heredoc) heredoc = null;
+        return span('str', line);
+      }
+      var start = line.match(/<<[~-]?([A-Z_]+)\s*$/);
+      if (start) heredoc = start[1];
+      return highlightLine(line);
+    }).join('\n');
+  }
+
+  var blocks = Array.prototype.slice.call(document.querySelectorAll('pre > code'));
+  blocks.forEach(function (code) { code.innerHTML = highlight(code.textContent); });
+  // Code that scrolls sideways needs to be reachable by keyboard.
+  function markScrollable() {
+    blocks.forEach(function (code) {
+      var pre = code.parentNode;
+      if (pre.classList.contains('fade')) return;
+      if (pre.scrollWidth > pre.clientWidth) pre.setAttribute('tabindex', '0');
+      else pre.removeAttribute('tabindex');
+    });
+  }
+  markScrollable();
+  window.addEventListener('resize', markScrollable);
+})();
+</script>
+</body>
+</html>
