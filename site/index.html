@@ -208,6 +208,14 @@
   :focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
   @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
 </style>
+<!-- Google tag (gtag.js) -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-XK78441CMN"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+  gtag('config', 'G-XK78441CMN');
+</script>
 </head>
 <body>
 <nav class="toc" aria-label="On this page"><p class="toc-title">On this page</p><ol id="tocList"></ol></nav>
@@ -223,6 +231,7 @@
     <a class="cta" href="#install">Install</a>
     <a class="cta secondary" href="https://github.com/Coolhand-Labs/squishling">View on GitHub</a>
   </p>
+  <p class="small">Join the discussion on <a href="https://news.ycombinator.com/item?id=50105742">Hacker News</a>.</p>
 </header>
 
 <details class="toc-inline"><summary>On this page</summary><ol id="tocInline"></ol></details>
@@ -529,6 +538,22 @@ end</code></pre>
   <h3>It runs backwards, too</h3>
   <p>Drowning under a thousand legacy parsers? Find the ones at the tail of your usage curve. Squish them instead.
   Then delete the code. Stop living in fear that a tiny client finds the breaking change you shipped two quarters ago.</p>
+</section>
+
+<section id="philosophy" data-toc="The philosophy">
+  <p class="kicker">The philosophy</p>
+  <h2>Small parts, composed</h2>
+  <p>The steps above show what a squishling does. These three principles decide where one belongs in your system.</p>
+  <div class="cols three">
+    <div class="card"><h3>Squishlings are atomic</h3><p>One small job, one clear goal, one output shape, like the
+    <a href="#squishling"><code>Parser</code></a>.</p></div>
+    <div class="card"><h3>Small, fast, explainable</h3><p>Start with the cheapest model that reliably does the job, and tune before reaching for more.
+    <a href="#improve">A tuned purpose</a> on Haiku matched <a href="#twice">a second sample and a judge</a> at half the cost.</p></div>
+    <div class="card"><h3>Architecture over determinism</h3><p>Code where code is cheap, squishlings where it isn't, as in
+    <a href="#elastic">code the 63%, squish the rest</a>.</p></div>
+  </div>
+  <p class="pull">A reliable system isn't one with no squish in it. It's one where every squish is <em>small, atomic and
+  easy to replace</em>.</p>
 </section>
 
 <section id="services" data-toc="Service failures">
