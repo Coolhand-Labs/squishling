@@ -2,6 +2,10 @@
   <img src="assets/squishling-logo.png" alt="Squishling" width="420">
 </h1>
 
+<p align="center">
+  <strong><a href="https://coolhand-labs.github.io/squishling/">📖 Read the Squishling explainer →</a></strong>
+</p>
+
 [![CI](https://github.com/Coolhand-Labs/squishling/actions/workflows/ci.yml/badge.svg)](https://github.com/Coolhand-Labs/squishling/actions/workflows/ci.yml)
 [![Gem Version](https://badge.fury.io/rb/squishling.svg)](https://badge.fury.io/rb/squishling)
 
@@ -16,6 +20,15 @@ default and code has to earn its place: you build it for the inputs that carry t
 handling the rest. New to the idea? Read
 [Elastic Software](https://everythingengineer.substack.com/p/beginners-write-software-with-ai) or browse the
 [talk slides](https://michael.carroll.io/talks/2026/elastic-software/).
+
+Or try it on the [explainer site](https://coolhand-labs.github.io/squishling/):
+
+- [Spectrum slider](https://coolhand-labs.github.io/squishling/#spectrum): drag from traditional software to fully
+  LLM and see the tradeoff at each point
+- [Token-cost calculator](https://coolhand-labs.github.io/squishling/#number): price your tech debt in tokens
+  against code upkeep
+- [Walkthrough](https://coolhand-labs.github.io/squishling/#squishling): describe it, tune it, pay for accuracy,
+  harden the common shapes
 
 ## Use cases
 
@@ -188,6 +201,8 @@ Otherwise the Ruby runs, and whatever it returns is validated and typed like LLM
 
 ## Documentation
 
+- [Explainer site](https://coolhand-labs.github.io/squishling/): interactive walkthrough, spectrum slider, and
+  token-cost calculator
 - [Configuration](docs/configuration.md): options, models and escalation, providers, generation params, inheritance
 - [Routing](docs/routing.md): when a call goes to the LLM, `squish!`, `append_to_purpose`, hardening a path,
   what the LLM sees
