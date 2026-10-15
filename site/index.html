@@ -531,6 +531,22 @@ end</code></pre>
   Then delete the code. Stop living in fear that a tiny client finds the breaking change you shipped two quarters ago.</p>
 </section>
 
+<section id="philosophy" data-toc="The philosophy">
+  <p class="kicker">The philosophy</p>
+  <h2>Small parts, composed</h2>
+  <p>The steps above show what a squishling does. These three principles decide where one belongs in your system.</p>
+  <div class="cols three">
+    <div class="card"><h3>Squishlings are atomic</h3><p>One small job, one clear goal, one output shape, like the
+    <a href="#squishling"><code>Parser</code></a>.</p></div>
+    <div class="card"><h3>Small, fast, explainable</h3><p>Start with the cheapest model that reliably does the job, and tune before reaching for more.
+    <a href="#improve">A tuned purpose</a> on Haiku matched <a href="#twice">a second sample and a judge</a> at half the cost.</p></div>
+    <div class="card"><h3>Architecture over determinism</h3><p>Code where code is cheap, squishlings where it isn't, as in
+    <a href="#elastic">code the 63%, squish the rest</a>.</p></div>
+  </div>
+  <p class="pull">A reliable system isn't one with no squish in it. It's one where every squish is <em>small, atomic and
+  easy to replace</em>.</p>
+</section>
+
 <section id="services" data-toc="Service failures">
   <p class="kicker">Beyond parsing</p>
   <h2>When a service call fails, squish it</h2>
