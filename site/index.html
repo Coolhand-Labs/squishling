@@ -399,6 +399,23 @@ end</code></pre>
   </div>
   <p>The two systematic failures that remain are HL7 letter codes and unlabeled SNOMED gender codes that need a
   translation table, plus one dictation transcript with spoken digits.</p>
+  <h3>Best practice: describe each field in the schema</h3>
+  <p>This run kept the per-field rules in the purpose. A better home for them is a <code>description:</code> on
+  the field itself, as in this equivalent shape of the same class. The description travels with the field in the
+  schema the model fills in, so the guidance sits right where the value goes, and the purpose stays short and about
+  the goal. It also lives next to the type and <code>enum</code> it explains, so the two don't drift apart.</p>
+<pre><code>purpose "Map the record onto the schema."
+
+output_schema do
+  string :patient_name,
+         description: "First Last order, even if the source writes it as HL7's LAST^FIRST, often in all caps."
+  string :patient_gender, enum: %w[male female trans unknown],
+         description: "\"unknown\" for any code you don't recognize, including HL7's bare O / U / A / N. Never guess."
+  array  :symptoms, of: :string,
+         description: "Only from an explicit symptom field. A diagnosis is not a symptom."
+end</code></pre>
+  <p class="note">The 95 / 100 above was measured with the rules in the purpose; this description version wasn't benchmarked.
+  Descriptions are guidance to the model, not enforcement: for rules that must hold, use an <code>enum</code> or <code>squish_validate</code>.</p>
 </section>
 
 <section id="twice" data-toc="3. Pay for accuracy">

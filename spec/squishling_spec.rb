@@ -231,6 +231,26 @@ RSpec.describe Squishling do
       expect(payload).to have_key("name")
     end
 
+    it "keeps per-field descriptions, including on optional fields, without changing validation or typing" do
+      schema = Squishling::Schema.new(Schematist::Schema.create do
+        string :label, enum: %w[a b], description: "A short label."
+        array :tags, of: :string, description: "Lowercase tags."
+        optional(:regex, description: "The proposed regex source, without delimiters or flags.") { string }
+      end)
+      properties = schema.llm_schema["schema"]["properties"]
+
+      expect(properties["label"]).to include("description" => "A short label.", "enum" => %w[a b])
+      expect(properties["tags"]).to include("description" => "Lowercase tags.", "type" => "array")
+      expect(properties["regex"]).to include(
+        "description" => "The proposed regex source, without delimiters or flags.",
+        "anyOf" => [{ "type" => "string" }, { "type" => "null" }]
+      )
+      expect(schema.llm_schema).to include("strict" => true)
+      expect(schema.llm_schema["schema"]["required"]).to include("label", "tags", "regex")
+      expect(schema.validate({ "label" => "a", "tags" => [], "regex" => nil })).to be_empty
+      expect(schema.build({ "label" => "a", "tags" => [], "regex" => nil }, squished: true).regex).to be_nil
+    end
+
     it "omits name and description for a bare hash so RubyLLM supplies its defaults" do
       payload = Squishling::Schema.new({ type: "object", properties: {} }).llm_schema
 

@@ -30,6 +30,23 @@ output_schema(
 )
 ```
 
+## Describing fields
+
+Every DSL type, and `optional`, takes a `description:`. It is sent to the provider as guidance for that field
+and isn't enforced; validation is by type and shape only.
+
+**Best practice:** put per-field guidance here rather than in the `purpose`. The description travels with the
+field in the schema the model fills in, so the instruction sits right where the value goes and next to the type
+or `enum` it explains. The purpose can then stay short and about the goal. For rules that must hold, use an
+`enum` or `squish_validate`; a description is a request, not a guarantee.
+
+```ruby
+output_schema do
+  string :language, description: "Lowercase language name, e.g. 'ruby'."
+  optional(:regex, description: "The proposed regex source, without delimiters or flags.") { string }
+end
+```
+
 ## Strict schemas only
 
 Squishling only supports **strict** output schemas: it always asks RubyLLM for strict structured output, and a
@@ -70,7 +87,7 @@ field nullable with the DSL's `optional`. The key stays required, but its value 
 ```ruby
 output_schema do
   array :symptoms, of: :string      # always a list; [] means "none"
-  optional :allergies do            # [] means "none", nil means "not mentioned"
+  optional :allergies, description: "[] if the record says none; null if it doesn't mention allergies" do
     array of: :string
   end
   optional :vitals do               # a typed Data object, or nil
@@ -84,8 +101,8 @@ end
 `optional` produces `anyOf: [<schema>, {type: "null"}]`, which is strict-compatible. Squishling types the non-null
 branch as usual: `vitals` is a `Data` object or `nil`, and a list of objects is a list of `Data` objects. In a raw
 JSON Schema, `type: ["array", "null"]` works too. A union with more than one non-null branch is ambiguous, so its
-values come back as plain hashes. If you need the model to tell "none" apart from "not mentioned", say so in your
-purpose.
+values come back as plain hashes. If you need the model to tell "none" apart from "not mentioned", say so in the field's
+`description:`, as `allergies` does above.
 
 ## Contracts beyond the schema
 
@@ -111,7 +128,8 @@ Providers' strict modes don't support conditional keywords (`if`/`then`/`else` f
 `dependentSchemas` from `dependent`), so Squishling keeps them out of the schema it sends and enforces them itself.
 Output that breaks a rule is rejected like any other invalid output: the call moves on to the next attempt in its
 [escalation](configuration.md#models-and-escalation) with the errors. The model doesn't see these rules
-up front, so state them in your purpose too.
+up front, so state them in the `description:` of the field they govern (here `status`) or in your purpose. A
+description declared inside a `given` block is local-only too, so it is never sent.
 
 For anything a schema can't express (sums, lookups against your data), use
 [`squish_validate`](failures.md#output-checks-squish_validate).

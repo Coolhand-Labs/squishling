@@ -151,6 +151,11 @@ validated on both paths). A squished call goes to the LLM when:
 
 Otherwise the Ruby runs, and whatever it returns is validated and typed like LLM output.
 
+**Best practice: describe fields in the schema, not the purpose.** Put per-field guidance in a `description:` on
+the field (`string :status, description: "..."`, or `optional(:eta, description: "...") { string }`). The model
+sees it right where the value goes, and the purpose stays short and about the goal. See
+[Describing fields](docs/schemas.md#describing-fields).
+
 ## Features
 
 - **One contract, two paths**: Ruby returns and LLM output are validated against the same strict schema and
