@@ -109,5 +109,8 @@ RSpec.configure do |config|
   config.include LLMHelpers
   config.disable_monkey_patching!
   config.order = :random
-  config.after { Squishling.reset_config! }
+  config.after do
+    Squishling.reset_config!
+    Squishling.reset_harnesses!
+  end
 end

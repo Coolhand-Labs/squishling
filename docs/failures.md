@@ -69,7 +69,7 @@ end
 |---|---|
 | `output` | The raw response: a Hash or String, or `nil` when the provider call itself failed |
 | `error` | `nil` for an accepted attempt. Otherwise the `InvalidOutputError` (with `errors` and `raw`) or `LLMError` that ended the attempt |
-| `metadata` | `label` (`"Class#method"`), `attempt`, `attempts` (the escalation's length; under a harness, the sample's or judge's own attempts), `final` (the last attempt), `model`, `provider`, `params`, `input` (the JSON sent: arguments and named context only), `usage` (token counts, when RubyLLM reports them) |
+| `metadata` | `label` (`"Class#method"`), `attempt`, `attempts` (the escalation's length; under a harness, the sample's or judge's own attempts), `final` (the last attempt), `model`, `provider`, `params`, `input` (the JSON sent: arguments and named context only), `usage` (token counts, when RubyLLM reports them), `role` (`nil` for an escalation attempt, `:sample`, or `:judge`), `sample` (`"a"`, `"b"`, ... for a sample's attempt, else `nil`) |
 
 - Set it globally with `config.squawk`, per class with `squishling squawk: ...`, or per method with
   `squish :triage, squawk: ...`. The method's hook wins over the class's, which wins over the configured one;
@@ -79,7 +79,8 @@ end
 - It runs inline, so keep it quick. Exceptions it raises propagate unchanged and fail the call, like any of your own
   code, so rescue inside the hook if an outage in your tracing tool shouldn't.
 - `output` is the same object the result is built from, so treat it as read-only.
-- Under a [harness](harnesses.md), it runs for every sample and judge attempt too, each with its own `input`.
+- Under a [harness](harnesses.md), it runs for every sample and judge attempt too, each with its own `input`, and
+  `role`/`sample` say which one it was. A [custom harness](harnesses.md#reporting-to-squawk) reports the same way.
 - It isn't called for a `ConfigurationError`, for deterministic and fallback returns, or for an attempt where your own
   `squish_validate` raises (that exception propagates first).
 

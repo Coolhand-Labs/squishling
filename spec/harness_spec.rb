@@ -54,8 +54,7 @@ RSpec.describe "Squishling harnesses" do
 
     it "rejects options that don't apply to the type" do
       expect { klass.squishling(harness: { type: :squishsum, judge: "claude-opus-5-5" }) }
-        .to raise_error(Squishling::ConfigurationError,
-          /: judge: can only be used with the judged_squishsum harness/)
+        .to raise_error(Squishling::ConfigurationError, /: unknown harness option\(s\) judge/)
       expect { klass.squishling(harness: { type: :escalation, compare: ->(*) { true } }) }
         .to raise_error(Squishling::ConfigurationError, /compare: only applies to the squishsum harnesses/)
       expect { klass.squishling(harness: { type: :squishsum, compare: :== }) }
