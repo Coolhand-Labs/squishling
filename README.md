@@ -193,6 +193,8 @@ sees it right where the value goes, and the purpose stays short and about the go
   - [`:escalation`](docs/configuration.md#models-and-escalation) (default): try each attempt until one passes
   - [`:squishsum`](docs/harnesses.md#samples): two concurrent samples, accepted only if they agree
   - [`:judged_squishsum`](docs/harnesses.md#the-judge): a chat or Jev judge picks between disagreeing samples
+  - [Your own](docs/harnesses.md#custom-harnesses): `Squishling.register_harness` plugs a custom harness into the same
+    machinery (samples, judges, `squawk`, `squish_fallback`)
 - **Output contracts**: beyond the strict schema, conditional rules (`given`) and Ruby checks (`squish_validate`)
   reject bad output and trigger the next attempt.
 - **Defined failure behavior**: provider errors become `Squishling::LLMError`, and `squish_fallback` lets you decide
@@ -213,7 +215,7 @@ sees it right where the value goes, and the purpose stays short and about the go
   what the LLM sees
 - [Output schemas](docs/schemas.md): schema forms, strict mode, typed results, optional vs. empty, contracts
 - [Failure handling](docs/failures.md): escalation, `squish_validate`, error classes, fallbacks
-- [Harnesses](docs/harnesses.md): escalation, squishsum, and judges (chat or Jev)
+- [Harnesses](docs/harnesses.md): escalation, squishsum, judges (chat or Jev), and custom harnesses
 - [Naming and collisions](docs/naming.md): the methods `include Squishling` adds and what happens when a name is taken
 - [Measuring token spend](docs/measuring-tokens.md): see what each squished path costs, with Coolhand Labs,
   the `squawk` hook, OpenTelemetry, LangSmith, or RubyLLM's instrumenter

@@ -73,6 +73,9 @@ Each line carries the `"Class#method"` that made the call, so grouping by label 
 that stays in Ruby makes no LLM request and never reaches the hook, so a label that stops appearing is a path that has
 been hardened. You can also set the hook per class (`squishling squawk: ...`) or per method. See
 [Observing every attempt](failures.md#observing-every-attempt-squawk) for every keyword and the rules for exceptions.
+Under a [harness](harnesses.md), including a [custom one](harnesses.md#custom-harnesses), every sample and judge
+request reaches the hook too. `metadata[:role]` (`nil`, `:sample`, or `:judge`) and `metadata[:sample]` (`"a"`, `"b"`, ...)
+split the spend by what each request was for.
 
 ### Lower level: RubyLLM's instrumenter
 

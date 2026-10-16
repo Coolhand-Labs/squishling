@@ -81,19 +81,21 @@ module Squishling
       steps.sort_by { |step| step[:order] }.map { |step| step.except(:order) }
     end
 
-    def normalize_step(step, label)
+    # extras: names more keys a step Hash may carry for its caller (a judge's type:, say). They are kept as given,
+    # for the caller to check.
+    def normalize_step(step, label, extras: [])
       case step
       when String, Symbol
         { model: model_name(step, label), provider: nil, params: nil, attempts: 1, forward_rejected: true }
-      when Hash then normalize_hash(step, label)
+      when Hash then normalize_hash(step, label, extras)
       else
         raise ConfigurationError, "#{label}: each step must be a model name or a Hash with model:, got #{step.inspect}"
       end
     end
 
-    def normalize_hash(step, label)
+    def normalize_hash(step, label, extras)
       step = step.transform_keys(&:to_sym)
-      unknown = step.keys - STEP_KEYS
+      unknown = step.keys - STEP_KEYS - extras
       raise ConfigurationError, "#{label}: unknown step option(s) #{unknown.join(', ')}" if unknown.any?
       unless step[:model].is_a?(String) || step[:model].is_a?(Symbol)
         raise ConfigurationError, "#{label}: a step needs a model: name, got #{step.inspect}"
@@ -116,7 +118,8 @@ module Squishling
 
       params = step[:params] && Params.normalize(step[:params], "#{label} (#{model}) params")
       normalized = { model:, provider: step[:provider], params:, attempts:, forward_rejected: }
-      step.key?(:order) ? normalized.merge(order: step[:order]) : normalized
+      normalized = normalized.merge(order: step[:order]) if step.key?(:order)
+      normalized.merge(step.slice(*extras))
     end
 
     def model_name(model, label)

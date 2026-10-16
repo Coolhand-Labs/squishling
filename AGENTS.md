@@ -68,13 +68,19 @@ Flag any change that breaks one of these; they are behavior contracts, not style
 - **No silent shadowing.** `include Squishling` raises `ConfigurationError` if the class inherits a method it would
   override (`Collisions`), and only adds the `result` alias when the class has no `result`. Classes' own methods win.
 - **Thread/fiber safety.** Routing state is fiber-local; shared caches are mutex-guarded. Don't add
-  unsynchronized class-level mutable state. The squishsum harnesses send their two sample requests on
-  worker threads (`LLMClient.concurrently`), and only the requests: parsing, validation, and every Squishling callback
-  (`squish_validate`, `compare:`, procs) run on the caller's thread. (RubyLLM instrumentation subscribers fire on
-  the worker threads.) Workers must not enter the Rails executor: the caller already holds it, and a second
-  interlock share can deadlock against a pending code reload.
+  unsynchronized class-level mutable state. `Run#samples` (every harness's samples, the squishsum ones included)
+  sends the sample requests on worker threads (`LLMClient.concurrently`), and only the requests: parsing, validation,
+  the harness's own code, and every Squishling callback (`squish_validate`, `compare:`, procs) run on the caller's
+  thread, and a `Run`'s primitives raise `ConfigurationError` when called from any other. (RubyLLM instrumentation
+  subscribers fire on the worker threads.) Workers must not enter the Rails executor: the caller already holds it,
+  and a second interlock share can deadlock against a pending code reload.
 - **Harnesses don't add a second rescue path.** Every harness failure surfaces as `InvalidOutputError`
   (disagreements as its `DisagreementError` subclass) or `LLMError`, so `squish_fallback` stays the only fallback.
+- **Built-ins and custom harnesses share one interface.** `:escalation`, `:squishsum`, and `:judged_squishsum` are
+  `Harness::Base` subclasses written against `Run`, and custom harnesses are registered in the same mutex-guarded
+  `Harness::Registry`. A harness's return value must be a typed result its `Run` produced (`Invoker#accepted`), so
+  validation can't be skipped. Options are validated when the harness is declared, before any request. Don't give the
+  built-ins a private path that custom harnesses can't use.
 
 ## Public API
 
@@ -87,7 +93,12 @@ The public surface is `Squishling.configure`/`config`, the `include Squishling` 
 `Squishling::Configuration` options (including `default_harness`, and `squawk`, whose `output:`/`metadata:`/`error:`
 keywords are public), `Squishling::Harness::DEFAULT_JUDGE_INSTRUCTIONS`, result objects (`squished?`,
 `to_h`, `[]`), and the error classes (including `InvalidOutputError#models` and
-`DisagreementError#candidates`/`verdict`/`reason`). Don't break it without a clear migration path in the changelog.
+`DisagreementError#candidates`/`verdict`/`reason`). The custom-harness plugin point is public too:
+`Squishling.register_harness`/`harnesses`/`reset_harnesses!`, `Squishling::Harness::Base` (`option` and its types,
+`call(run, **options)`, `validate_options!`), the `Squishling::Run` primitives a harness gets (`receiver`, `inputs`,
+`label`, `steps`, `stages`, `stage`, `escalate`, `samples`, `judge`, `agree?`, `log`) with
+`Squishling::Judge::Verdict`, and the squawk `metadata` keys `role:`/`sample:`. Don't break it without a clear
+migration path in the changelog.
 
 ## Changelog and versioning
 

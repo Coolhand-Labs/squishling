@@ -11,6 +11,12 @@ require_relative "squishling/configuration"
 require_relative "squishling/params"
 require_relative "squishling/squawk"
 require_relative "squishling/model_path"
+require_relative "squishling/harness/option_types"
+require_relative "squishling/harness/registry"
+require_relative "squishling/harness/base"
+require_relative "squishling/harness/escalation"
+require_relative "squishling/harness/squishsum"
+require_relative "squishling/harness/judged_squishsum"
 require_relative "squishling/harness"
 require_relative "squishling/result"
 require_relative "squishling/schema"
@@ -19,6 +25,8 @@ require_relative "squishling/appendices"
 require_relative "squishling/definition"
 require_relative "squishling/llm_client"
 require_relative "squishling/output_check"
+require_relative "squishling/run/messages"
+require_relative "squishling/run"
 require_relative "squishling/invoker"
 require_relative "squishling/judge"
 require_relative "squishling/router"
@@ -40,6 +48,27 @@ module Squishling
 
     def reset_config!
       @config = Configuration.new
+    end
+
+    # Forgets the registered harnesses (the built-ins stay), e.g. between specs. Kept apart from reset_config!
+    # because harnesses are registered once at boot, and a suite that resets its config between examples
+    # shouldn't lose them.
+    def reset_harnesses!
+      Harness::Registry.reset!
+    end
+
+    # Registers a custom harness under a name, usable anywhere a built-in type is (harness: :name, or
+    # harness: { type: :name, option: value }, on a class, a method, a squish! call, or config.default_harness).
+    # Pass a Harness::Base subclass, or a block that becomes the body of one (see Harness::Base). Registered
+    # globally, so do it before the classes that use it load (an initializer). Raises ConfigurationError for a
+    # name that is invalid or already taken, including the built-in :escalation, :squishsum, :judged_squishsum.
+    def register_harness(name, klass = nil, &)
+      Harness::Registry.register(name, klass, &)
+    end
+
+    # The names of the harnesses that can be declared: the built-ins, then those registered.
+    def harnesses
+      Harness.types
     end
 
     def included(base)

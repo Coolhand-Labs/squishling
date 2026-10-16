@@ -184,3 +184,4 @@ RSpec/DescribeClass:
     - 'spec/squawk_spec.rb'
     - 'spec/contracts_spec.rb'
     - 'spec/harness_spec.rb'
+    - 'spec/custom_harness_spec.rb'

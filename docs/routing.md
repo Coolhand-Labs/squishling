@@ -90,7 +90,7 @@ end
 - `append_to_purpose:` (added to the class's, see [Appending to the purpose](#appending-to-the-purpose))
 - `output_schema:` (or a schema block)
 - `model:` or `escalation:`, `provider:`, and `params:` (generation params; see [Configuration](configuration.md))
-- `harness:` (see [Harnesses](harnesses.md))
+- `harness:` (see [Harnesses](harnesses.md), including your own)
 - `when:`, a predicate proc
 - `validate:` and `fallback:` (see [Failure handling](failures.md))
 
