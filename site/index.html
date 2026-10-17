@@ -456,15 +456,14 @@ end</code></pre>
   # two Haiku samples; Opus judges when they differ
 end</code></pre>
   <p>Run against the same 100 records:</p>
-  <div class="run" role="group" aria-label="Two samples plus a judge: 95 of 100 passed, $1.02 per 100 calls">
-    <div class="pass"><b>95 / 100</b><small>pass</small></div>
+  <div class="run" role="group" aria-label="Two samples plus a judge: 99 of 100 passed, $1.02 per 100 calls">
+    <div class="pass"><b>99 / 100</b><small>pass</small></div>
     <div class="cost"><b>$1.02</b><small>per 100 calls</small></div>
-    <div class="bar" aria-hidden="true"><i style="width:95%"></i></div>
+    <div class="bar" aria-hidden="true"><i style="width:99%"></i></div>
   </div>
-  <p>Same five failures, double the cost, and the judge was never called. At temperature 0.1 the model agreed with
-  itself on every record, including the five it got wrong. Those were systematic misreadings, not noise.</p>
-  <p class="note">Asking twice protects you from random mistakes, not from misunderstanding. And validation checks the
-  <em>shape</em> of an answer, not that it's true.</p>
+  <p>Four of the five misses are now right, for double the cost of the tuned purpose. The one that remains is a
+  reminder that a second opinion helps most with random mistakes, less with systematic misreadings.</p>
+  <p class="note">Validation checks the <em>shape</em> of an answer, not that it's true.</p>
 
   <h3>Or create your own harness</h3>
   <p>Register a harness under a name and use it like a built-in. It decides how to use the escalation, and gets
@@ -547,7 +546,7 @@ end</code></pre>
     <tbody>
       <tr><td>Bare purpose</td><td class="num">73 / 100</td><td class="num">$0.48<span class="meter" style="width:47%"></span></td></tr>
       <tr><td>Tuned purpose</td><td class="num">95 / 100</td><td class="num">$0.51<span class="meter" style="width:50%"></span></td></tr>
-      <tr><td>Two samples and a judge</td><td class="num">95 / 100</td><td class="num">$1.02<span class="meter" style="width:100%"></span></td></tr>
+      <tr><td>Two samples and a judge</td><td class="num">99 / 100</td><td class="num">$1.02<span class="meter" style="width:100%"></span></td></tr>
       <tr class="hl"><td>Code the 63%, squish the rest</td><td class="num">95 / 100</td><td class="num">$0.12<span class="meter" style="width:12%"></span></td></tr>
     </tbody>
   </table>
@@ -588,8 +587,11 @@ end</code></pre>
 <section id="services" data-toc="Service failures">
   <p class="kicker">Beyond parsing</p>
   <h2>When a service call fails, squish it</h2>
-  <p>Not parsing health data? Anything that talks to another service has the same shape. Keep your Ruby parser for well-formed payloads, and hand the rest to the
-  model. Save yourself, and the engineers who come after you, uncountable headaches.</p>
+  <div class="beside">
+    <p>Not parsing health data? Anything that talks to another service has the same shape. Keep your Ruby parser for well-formed payloads, and hand the rest to the
+    model. Save yourself, and the engineers who come after you, uncountable headaches.</p>
+    <img loading="lazy" decoding="async" src="img/squishling-pressed.webp" width="640" height="640" alt="A finger pressing down on a smiling ruby gem, which squishes happily">
+  </div>
   <div class="beside">
     <div>
 <pre><code>class WebhookHandler
