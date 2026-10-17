@@ -242,11 +242,11 @@ RSpec.describe "Squishling model escalation" do
         .to raise_error(Squishling::InvalidOutputError) { |e| expect(e.models).to eq(%w[a a a b]) }
     end
 
-    it "sorts steps by an explicit order:, lowest first" do
+    it "sorts steps by an explicit priority:, lowest first" do
       klass.squishling(escalation: [
-        { model: "claude-opus-5-5", order: 20 },
-        { model: "claude-haiku-4-5", order: 0, attempts: 2 },
-        { model: "claude-sonnet-5-5", order: 10 }
+        { model: "claude-opus-5-5", priority: 20 },
+        { model: "claude-haiku-4-5", priority: 0, attempts: 2 },
+        { model: "claude-sonnet-5-5", priority: 10 }
       ])
       stub_llm(nil, nil, nil, nil)
 
@@ -255,8 +255,18 @@ RSpec.describe "Squishling model escalation" do
       end
     end
 
-    it "accepts negative orders and string keys" do
-      klass.squishling(escalation: [{ "model" => "b", "order" => 1 }, { "model" => "a", "order" => -1 }])
+    it "accepts negative priorities and string keys" do
+      klass.squishling(escalation: [{ "model" => "b", "priority" => 1 }, { "model" => "a", "priority" => -1 }])
+      stub_llm(nil, nil)
+
+      expect { klass.call(text: "x") }
+        .to raise_error(Squishling::InvalidOutputError) { |e| expect(e.models).to eq(%w[a b]) }
+    end
+
+    it "still accepts order: for priority:, with a deprecation warning" do
+      expect do
+        klass.squishling(escalation: [{ model: "b", order: 2 }, { model: "a", order: 1 }])
+      end.to output(/order: is deprecated, use priority:/).to_stderr
       stub_llm(nil, nil)
 
       expect { klass.call(text: "x") }
@@ -374,9 +384,10 @@ RSpec.describe "Squishling model escalation" do
       [[{ model: "a", params: { messages: [] } }], /messages can't be set through params/],
       [[{ model: "a", attempts: 0 }], /attempts: must be a positive Integer/],
       [[{ model: "a", attempts: "2" }], /attempts: must be a positive Integer/],
-      [[{ model: "a", order: 1 }, "b"], /every step an order: or none \(1 of 2/],
-      [[{ model: "a", order: 1 }, { model: "b", order: 1 }], /duplicate order: 1/],
-      [[{ model: "a", order: 1.5 }], /order: must be an Integer/],
+      [[{ model: "a", priority: 1 }, "b"], /every step a priority: or none \(1 of 2/],
+      [[{ model: "a", priority: 1.5 }], /priority: must be an Integer/],
+      [[{ model: "a", priority: 1, order: 1 }], /give priority: or order:, not both/],
+      [[{ model: "a", rotate: "yes" }], /rotate: must be true or false/],
       [[{ model: "a", forward_rejected: "no" }], /forward_rejected: must be true or false/],
       [[{ model: "a", forward_rejected: nil }], /forward_rejected: must be true or false/]
     ].each do |escalation, message|

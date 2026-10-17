@@ -46,7 +46,10 @@ Flag any change that breaks one of these; they are behavior contracts, not style
   (`if`/`then`/`else`, `dependentRequired`, `dependentSchemas`) are enforced locally and never sent to the
   provider (`Schema::LOCAL_ONLY_KEYWORDS`).
 - **The escalation decides attempts.** A level declares either `model:` (one attempt) or `escalation:` (ordered
-  steps with `attempts:`, optionally explicit `order:`); there is no separate retry count, and levels are never merged.
+  steps with `attempts:`, optionally explicit `priority:`, whose old name `order:` is deprecated); there is no
+  separate retry count, and levels are never merged. Steps tied on priority are one tier that rotates per call
+  (`Rotation`, counted per class and method): the first model alternates, and the tier's other models are tried before
+  the next priority. `rotate: false` pins a tier.
   Invalid output and `LLMError` move on to the next attempt; `ConfigurationError` never does.
 - **Error taxonomy.** Everything Squishling raises inherits `Squishling::Error`: `ConfigurationError`
   (setup mistakes; never retried, escalated, or passed to fallbacks), `InvalidOutputError` (bad output after every
@@ -67,9 +70,9 @@ Flag any change that breaks one of these; they are behavior contracts, not style
   provider 400 is a `ConfigurationError`, never something a fallback absorbs.
 - **No silent shadowing.** `include Squishling` raises `ConfigurationError` if the class inherits a method it would
   override (`Collisions`), and only adds the `result` alias when the class has no `result`. Classes' own methods win.
-- **Thread/fiber safety.** Routing state is fiber-local; shared caches are mutex-guarded. Don't add
-  unsynchronized class-level mutable state. `Run#samples` (every harness's samples, the squishsum ones included)
-  sends the sample requests on worker threads (`LLMClient.concurrently`), and only the requests: parsing, validation,
+- **Thread/fiber safety.** Routing state is fiber-local; shared caches and `Rotation`'s call counts are mutex-guarded.
+  Don't add unsynchronized class-level mutable state. `Run#samples` (every harness's samples, the squishsum ones
+  included) sends the sample requests on worker threads (`LLMClient.concurrently`), and only the requests: parsing, validation,
   the harness's own code, and every Squishling callback (`squish_validate`, `compare:`, procs) run on the caller's
   thread, and a `Run`'s primitives raise `ConfigurationError` when called from any other. (RubyLLM instrumentation
   subscribers fire on the worker threads.) Workers must not enter the Rails executor: the caller already holds it,
@@ -85,7 +88,8 @@ Flag any change that breaks one of these; they are behavior contracts, not style
 ## Public API
 
 The public surface is `Squishling.configure`/`config`, the `include Squishling` DSL (`squishling` — including its
-`model:`/`escalation:` (steps with `model:`, `attempts:`, `order:`, `provider:`, `params:`, `forward_rejected:`)/`provider:`/`params:`/
+`model:`/`escalation:` (steps with `model:`, `attempts:`, `priority:`, `rotate:`, `provider:`, `params:`,
+`forward_rejected:`)/`provider:`/`params:`/
 `harness:` (`type:`, `compare:`, `judge:` (a step, plus `type: :chat | :judgment` and `min_confidence:`),
 `judge_instructions:`)/`append_to_purpose:`/`squawk:` options — `purpose`, `append_to_purpose`, `output_schema`,
 `squish_when`, `squish_context`, `squish` (including `validate:`/`harness:`/`squawk:`), `squish_validate`,

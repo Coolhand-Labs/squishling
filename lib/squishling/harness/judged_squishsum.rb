@@ -3,7 +3,7 @@
 module Squishling
   class Harness
     # Like Squishling::Harness::Squishsum, but samples that disagree go to a judge, which picks one or rejects both.
-    # A judge is one step: a model name or a Hash with the escalation step keys (except order:), plus
+    # A judge is one step: a model name or a Hash with the escalation step keys (except priority:), plus
     # type: (:chat, the default, or :judgment for a System One decision model through RubyLLM.judge) and,
     # for :judgment, min_confidence: (the probability the chosen candidate needs).
     class JudgedSquishsum < Base
@@ -19,8 +19,6 @@ module Squishling
           return ModelPath.normalize_step(judge, judge_label).merge(type: :chat) unless judge.is_a?(Hash)
 
           judge = judge.transform_keys(&:to_sym)
-          raise ConfigurationError, "#{judge_label}: a judge is one step, so it takes no order:" if judge.key?(:order)
-
           type = judge.fetch(:type, :chat)
           type = type.to_sym if type.is_a?(String)
           unless Judge::TYPES.include?(type)
@@ -33,6 +31,7 @@ module Squishling
           end
 
           step = ModelPath.normalize_step(judge.except(*Judge::STEP_KEYS), judge_label).merge(type:)
+          ModelPath.single_step!(step, "#{judge_label}: a judge is one step, so it")
           return step unless type == :judgment
 
           reserved = (step[:params] || {}).keys & JUDGMENT_RESERVED_PARAMS
