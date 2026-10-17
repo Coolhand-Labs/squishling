@@ -74,6 +74,12 @@ Flag any change that breaks one of these; they are behavior contracts, not style
   thread, and a `Run`'s primitives raise `ConfigurationError` when called from any other. (RubyLLM instrumentation
   subscribers fire on the worker threads.) Workers must not enter the Rails executor: the caller already holds it,
   and a second interlock share can deadlock against a pending code reload.
+- **Evaluators see metadata, around the request.** `config.evaluator` (`Squishling::Evaluator`) wraps each provider
+  request (`LLMClient#ask`/`#judge`) on the thread that makes it, so a sample's evaluator runs on its worker thread.
+  The `Evaluator::Call` it receives holds label, purpose, harness, role/sample, attempt/attempts, model/provider, and
+  request type, never inputs, context, or output. An evaluator's own exceptions propagate unwrapped. With `evaluator`
+  nil, the Coolhand evaluator is used when the `coolhand` gem is loaded and configured (no gem dependency, and it
+  must never break a call it can't declare).
 - **Harnesses don't add a second rescue path.** Every harness failure surfaces as `InvalidOutputError`
   (disagreements as its `DisagreementError` subclass) or `LLMError`, so `squish_fallback` stays the only fallback.
 - **Built-ins and custom harnesses share one interface.** `:escalation`, `:squishsum`, and `:judged_squishsum` are
@@ -90,10 +96,11 @@ The public surface is `Squishling.configure`/`config`, the `include Squishling` 
 `judge_instructions:`)/`append_to_purpose:`/`squawk:` options — `purpose`, `append_to_purpose`, `output_schema`,
 `squish_when`, `squish_context`, `squish` (including `validate:`/`harness:`/`squawk:`), `squish_validate`,
 `squish_fallback`, `result`/`squishling_result`, `squish!` (including `model:`/`escalation:`/`harness:`)),
-`Squishling::Configuration` options (including `default_harness`, and `squawk`, whose `output:`/`metadata:`/`error:`
-keywords are public), `Squishling::Harness::DEFAULT_JUDGE_INSTRUCTIONS`, result objects (`squished?`,
-`to_h`, `[]`), and the error classes (including `InvalidOutputError#models` and
-`DisagreementError#candidates`/`verdict`/`reason`). The custom-harness plugin point is public too:
+`Squishling::Configuration` options (including `default_harness`, `evaluator`, and `squawk`, whose
+`output:`/`metadata:`/`error:` keywords are public), `Squishling::Evaluator::Call`,
+`Squishling::Harness::DEFAULT_JUDGE_INSTRUCTIONS`, result objects (`squished?`, `to_h`, `[]`), and the error classes
+(including `InvalidOutputError#models` and `DisagreementError#candidates`/`verdict`/`reason`). The custom-harness
+plugin point is public too:
 `Squishling.register_harness`/`harnesses`/`reset_harnesses!`, `Squishling::Harness::Base` (`option` and its types,
 `call(run, **options)`, `validate_options!`), the `Squishling::Run` primitives a harness gets (`receiver`, `inputs`,
 `label`, `steps`, `stages`, `stage`, `escalate`, `samples`, `judge`, `agree?`, `log`) with
