@@ -38,7 +38,8 @@ stays small, the debt you haven't taken on is cheaper than the code.
 
 Add and initialize the [`coolhand`](https://github.com/Coolhand-Labs/coolhand-ruby) gem. It intercepts the LLM
 requests your app makes, so it picks up your squishling calls automatically and measures their cost, and their
-accuracy through Coolhand's feedback tools. No changes to your squishling classes.
+accuracy through Coolhand's feedback tools. No changes to your squishling classes. With a `coolhand` version that supports
+declared workloads, Squishling also declares each call's workload and template automatically; see [Coolhand Labs](coolhand.md).
 
 ```ruby
 # Gemfile
