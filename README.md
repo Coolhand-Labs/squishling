@@ -165,7 +165,7 @@ sees it right where the value goes, and the purpose stays short and about the go
 - **Any RubyLLM provider and model**: OpenAI, Anthropic Claude, Google Gemini, AWS Bedrock, OpenRouter, and more.
   Set a universal, per-class, per-method, or per-call model, plus layered generation params (temperature,
   reasoning effort, top_p, …).
-- **Model escalation**: declare an `escalation:` instead of a `model:`, with per-step `attempts:`, `order:`, provider,
+- **Model escalation**: declare an `escalation:` instead of a `model:`, with per-step `attempts:`, `priority:` (models tied on priority take turns going first), provider,
   params, and `forward_rejected:`. Invalid output (with its errors fed back) or a provider failure moves on to the next attempt. Steps can
   cross providers, e.g. a local Qwen model on Ollama, then Anthropic Claude Haiku on AWS Bedrock, then Claude Opus:
 

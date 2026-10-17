@@ -40,11 +40,9 @@ module Squishling
       end
 
       def check_step(value, label, _where)
-        if value.is_a?(Hash) && value.transform_keys(&:to_sym).key?(:order)
-          raise ConfigurationError, "#{label}: a harness step takes no order:"
-        end
-
-        deep_freeze(ModelPath.normalize_step(value, label))
+        step = ModelPath.normalize_step(value, label)
+        ModelPath.single_step!(step, "#{label}: a harness step")
+        deep_freeze(step)
       end
 
       def check_proc(value, _label, where)

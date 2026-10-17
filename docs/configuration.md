@@ -62,20 +62,49 @@ Each step is a model name, or a Hash with:
 |---|---|---|
 | `model:` | required | The model id. |
 | `attempts:` | `1` | How many attempts this step gets before escalating to the next one. |
-| `order:` | position | An Integer; steps run lowest first. Give every step an `order:` or none (duplicates are rejected). Gaps are fine. |
+| `priority:` | position | An Integer; steps run lowest first. Give every step a `priority:` or none. Steps with the same priority are one tier (see [Rotating models](#rotating-models-within-a-priority)). Gaps are fine. `order:` is the deprecated name for it. |
+| `rotate:` | `true` | Set `false` on a step to keep its tier in the order written instead of rotating it. |
 | `provider:` | the level's `provider:` | See [Providers](#providers-and-newly-released-models). |
 | `forward_rejected:` | `true` | Set `false` to start this step from the original input alone, without the previous step's rejected output and its errors (see below). |
 | `params:` | `{}` | [Generation params](#generation-params) for this step, merged over the class and method params key by key. |
 
-Without `order:`, steps run in the order written. With it, the order is explicit and doesn't depend on position:
+Without `priority:`, steps run in the order written. With it, the order is explicit and doesn't depend on position:
 
 ```ruby
 squishling escalation: [
-  { model: "claude-opus-5-5",   order: 20, params: { thinking: { effort: :high } } },
-  { model: "claude-haiku-4-5",  order: 0, attempts: 2 },
-  { model: "claude-sonnet-5-5", order: 10 }
+  { model: "claude-opus-5-5",   priority: 30, params: { thinking: { effort: :high } } },
+  { model: "claude-haiku-4-5",  priority: 10, attempts: 2 },
+  { model: "gemma-4b",          priority: 10 },
+  { model: "claude-sonnet-5-5", priority: 20 }
 ]
 ```
+
+**Best practice:** number priorities 10, 20, 30, and so on, so a model can be slotted in between later (a `15`)
+without renumbering the rest. Haiku and Gemma share the lowest priority here, so they take turns going first (see below).
+
+### Rotating models within a priority
+
+Give several models the same `priority:` and they share a tier. Each call rotates which of them goes first, so
+every model gets an even share of the real work over many calls, a fair test of how well each handles it:
+
+```ruby
+squishling escalation: [
+  { model: "claude-haiku-4-5",  priority: 10 },
+  { model: "gemma-4b",          priority: 10 },
+  { model: "claude-sonnet-5-5", priority: 20 }
+]
+# call 1: haiku, gemma-4b, sonnet    call 2: gemma-4b, haiku, sonnet    call 3: haiku, gemma-4b, sonnet
+```
+
+- If the model that goes first fails (invalid output or a provider failure, after its own `attempts:`), the other
+  models in the tier are tried, in rotated order, before the call escalates to the next priority.
+- Each class and method counts its own calls (`AClass#a`, `AClass#b` and `BClass#a` rotate independently), shared across
+  threads, but not across processes: each process (a Puma worker, say) starts its own count at the first model, and it
+  restarts with the process. A `squish!` whose own escalation has a rotating tier counts against its method too.
+- A tier rotates by its declared order, so ties keep the order they were written in. A tier with a single model
+  never rotates, and neither does an escalation without `priority:`. `rotate: false` on any step of a tier keeps the
+  whole tier in the order written, whatever its other steps say.
+- Rotation also moves which stages the [`:squishsum` and `:judged_squishsum`](harnesses.md) harnesses sample first.
 
 `params:` on a step let one step switch to a reasoning model that rejects sampling params:
 
