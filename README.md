@@ -218,7 +218,9 @@ sees it right where the value goes, and the purpose stays short and about the go
 - [Harnesses](docs/harnesses.md): escalation, squishsum, judges (chat or Jev), and custom harnesses
 - [Naming and collisions](docs/naming.md): the methods `include Squishling` adds and what happens when a name is taken
 - [Measuring token spend](docs/measuring-tokens.md): see what each squished path costs, with Coolhand Labs,
-  the `squawk` hook, OpenTelemetry, LangSmith, or RubyLLM's instrumenter
+  the `squawk` hook, your own observer, or OpenTelemetry
+- [Observers](docs/observers.md): wrap every provider request, and the built-in [Coolhand Labs](docs/coolhand.md) observer
+  that files each call under its workload and template
 - [Live examples](examples/README.md): end-to-end tests against Anthropic Claude Haiku and OpenAI GPT-6 Luna
 
 ## Development

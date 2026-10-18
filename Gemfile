@@ -7,6 +7,7 @@ gemspec
 
 group :development, :test do
   gem "bundler-audit", "~> 0.9", require: false
+  gem "coolhand", "~> 0.9", require: false # examples/coolhand_example.rb only
   gem "exhale", "~> 0.2", require: false
   gem "simplecov", require: false
   gem "rake", "~> 13.0"

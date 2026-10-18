@@ -33,7 +33,7 @@ module Squishling
       @purpose = purpose
       @harness = harness
       @steps = definition.escalation_path.freeze
-      @client = LLMClient.new(definition.label)
+      @client = LLMClient.new(definition.label, purpose:, harness: harness.type)
       @output_check = OutputCheck.new(definition, receiver, inputs)
       @owner = Thread.current
       @produced = {}.compare_by_identity
@@ -179,7 +179,7 @@ module Squishling
         end
 
         begin
-          response = @client.ask(chat, message, step)
+          response = @client.ask(chat, message, step, attempt:, attempts: path.size, role: prompt.role)
         rescue LLMError => e
           squawk(prompt, path, attempt, nil, e)
           raise if last
@@ -211,7 +211,9 @@ module Squishling
       jobs = pending.map do |sample|
         step = sample.stage[attempt - 1]
         message = sample_message(sample, step)
-        -> { @client.ask(sample.chat, message, step) }
+        chat = sample.chat
+        attempts = sample.stage.size
+        -> { @client.ask(chat, message, step, attempt:, attempts:, role: :sample, sample: sample.name) }
       end
       outcomes = LLMClient.concurrently(jobs)
       # A setup mistake (or anything that isn't a failed request) ends the call, whichever sample hit it.

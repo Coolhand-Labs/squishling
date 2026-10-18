@@ -50,8 +50,11 @@ module Squishling
 
     private_class_method :capture, :instrumentation_context, :with_instrumentation_context
 
-    def initialize(label)
+    # purpose and harness (the harness type) are only told to the observer.
+    def initialize(label, purpose:, harness:)
       @label = label
+      @purpose = purpose
+      @harness = harness
     end
 
     # A fresh chat on one escalation step, with the system prompt, the strict output schema, and its params.
@@ -68,8 +71,11 @@ module Squishling
     # escalation (or propagates from the last one). A 400 means the request we built is invalid (an
     # unsupported param, a schema the provider rejects), so it's a setup mistake: escalating or a
     # fallback would otherwise hide it on every call.
-    def ask(chat, message, step)
-      request(step) { chat.ask(message) }
+    # The request runs inside the configured observer (see Observer), on this thread: for samples, the worker's.
+    # role is nil for an escalation attempt, :sample (with its name) or :judge; attempt counts in attempts.
+    def ask(chat, message, step, attempt:, attempts:, role: nil, sample: nil)
+      call = call_info(step, :chat, role:, sample:, attempt:, attempts:)
+      Observer.around(call) { request(step) { chat.ask(message) } }
     end
 
     # A System One judgment (RubyLLM.judge) on one step. The step's params are sent as provider options.
@@ -93,7 +99,18 @@ module Squishling
       end
     end
 
+    # #judge inside the configured observer (see Observer), attempt counting in attempts.
+    def observed_judgment(input, questions:, step:, attempt:, attempts:)
+      call = call_info(step, :judgment, role: :judge, attempt:, attempts:)
+      Observer.around(call) { judge(input, questions:, step:) }
+    end
+
     private
+
+    def call_info(step, request, attempt:, attempts:, role: nil, sample: nil)
+      Observer::Call.new(label: @label, purpose: @purpose, harness: @harness, role:, sample:, attempt:, attempts:,
+        model: step.model, provider: step.provider, request:)
+    end
 
     def raised_by_ruby_llm?(error)
       error.backtrace&.first&.start_with?("#{RUBY_LLM_LIB}/") || false

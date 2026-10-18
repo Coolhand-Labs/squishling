@@ -10,7 +10,7 @@ first tells you when the second is worth paying.
   method (`label`, e.g. `"ShipmentUpdate#call"`), the model and provider, which attempt it was, and the token usage
   RubyLLM reported. That is enough to attribute spend to a squishling method without any other tooling.
 - Cost in dollars comes from RubyLLM's model pricing. Multiply the reported tokens by your model's price, or read it
-  from RubyLLM directly (see [the instrumenter](#lower-level-rubyllms-instrumenter)).
+  from RubyLLM directly (see [OpenTelemetry](#opentelemetry), or RubyLLM's `config.instrumenter`).
 
 ## Deciding when to write the code
 
@@ -31,8 +31,8 @@ stays small, the debt you haven't taken on is cheaper than the code.
 |---|---|---|
 | [Coolhand Labs](#coolhand-labs) | Picking up your squishling calls automatically and measuring their cost and accuracy | The `coolhand` gem and an initializer |
 | [Custom: the `squawk` hook](#custom-the-squawk-hook) | Logging or metrics in your own stack, with no new dependency | A lambda and one config line |
-| [OpenTelemetry](#opentelemetry) | Sending traces to Datadog, Langfuse, Arize, Braintrust, LangSmith, or any OTel backend | The OpenTelemetry SDK, an exporter, and one line |
-| [LangSmith](#langsmith) | Browsing traces and token usage in LangSmith | Through OpenTelemetry |
+| [Your own observer](#your-own-observer) | Wrapping each request in your tracing or metrics tool, knowing which method, level, and sample it was | An object with `around(call)` |
+| [OpenTelemetry](#opentelemetry) | Sending traces to Datadog, Langfuse, Arize, Braintrust, LangSmith, or any OTel backend | RubyLLM's tracer and an exporter |
 
 ### Coolhand Labs
 
@@ -51,7 +51,8 @@ end
 ```
 
 Get an API key at [coolhandlabs.com](https://coolhandlabs.com/). To keep the data in your own infrastructure, point
-`config.base_url` at a Coolhand-compatible endpoint of your own.
+`config.base_url` at a Coolhand-compatible endpoint of your own. Squishling also tells Coolhand which workload and
+template each call belongs to; see [Coolhand Labs](coolhand.md).
 
 ### Custom: the `squawk` hook
 
@@ -77,42 +78,35 @@ Under a [harness](harnesses.md), including a [custom one](harnesses.md#custom-ha
 request reaches the hook too. `metadata[:role]` (`nil`, `:sample`, or `:judge`) and `metadata[:sample]` (`"a"`, `"b"`, ...)
 split the spend by what each request was for.
 
-### Lower level: RubyLLM's instrumenter
+### Your own observer
 
-To meter every RubyLLM request in your app, not only Squishling's, use RubyLLM's own instrumentation. It reports a
-`usage.ruby_llm` event for each provider request, with `model`, `provider`, `status`, `tokens` (`input`, `output`,
-and more) and `cost`. Give it an object that responds to `instrument(name, payload)` and optionally takes a block. In
-Rails, `ActiveSupport::Notifications` is used automatically.
+An [observer](observers.md) wraps each provider request and gets the request's token usage back from `yield`, so it
+can meter spend knowing which method, escalation level, sample, or judge made the request. Any object that responds to
+`around(call)` is one:
 
 ```ruby
-class TokenMeter
-  def instrument(name, payload = {})
-    if name == "usage.ruby_llm"
-      Rails.logger.info("llm model=#{payload[:model]} workflow=#{payload[:workflow_name]} " \
-                        "in=#{payload[:tokens].input} out=#{payload[:tokens].output}")
-    end
-    block_given? ? yield : nil
+class SpendObserver
+  def around(call)
+    usage = yield # input_tokens, output_tokens (nil if unreported), and model; never the content
+    tags = ["label:#{call.label}", "role:#{call.role || 'squish'}", "model:#{usage.model}"]
+    Metrics.increment("squishling.tokens.in", usage.input_tokens.to_i, tags:)
+    Metrics.increment("squishling.tokens.out", usage.output_tokens.to_i, tags:)
   end
 end
 
-RubyLLM.configure { |config| config.instrumenter = TokenMeter.new }
+Squishling.configure { |config| config.observer = SpendObserver.new }
 ```
 
-These events don't know which squishling made the request. To attribute the spend, wrap the call in a RubyLLM
-workflow, and every event emitted inside the block carries its name, id and any `metadata:` you pass. (The
-`squawk` hook above needs no wrapping.)
-
-```ruby
-RubyLLM.workflow("ShipmentUpdate", metadata: { carrier: "acme-freight" }) do
-  ShipmentUpdate.call(carrier: "acme-freight", payload: body)
-end
-```
+An observer sees usage, never the model's output or your inputs. See [Observers](observers.md) for the `call` fields
+and the rules.
 
 ### OpenTelemetry
 
 RubyLLM 2.1+ ships its own OpenTelemetry tracer. Each request becomes a span with the model, request settings and
 token usage (`gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens`), following the OpenTelemetry GenAI
-conventions. It does not record message text. Your app owns the SDK and exporters.
+conventions. It does not record message text. Your app owns the SDK and exporters, and the spans work with any OTLP
+backend, [LangSmith](https://docs.smith.langchain.com/observability/how_to_guides/tracing/trace_with_opentelemetry)
+included.
 
 ```ruby
 # Gemfile
@@ -124,16 +118,9 @@ OpenTelemetry::SDK.configure        # reads the standard OTEL_* environment vari
 RubyLLM::OpenTelemetry.enable       # starts tracing RubyLLM requests
 ```
 
-Spans don't say which squishling made the request, so pair this with a `RubyLLM.workflow` (see
-[above](#lower-level-rubyllms-instrumenter)) or group by model and prompt in your backend.
-
-### LangSmith
-
-LangSmith accepts OpenTelemetry traces, so the OpenTelemetry setup above covers it: point the OTLP exporter at
-LangSmith. See LangSmith's
-[OpenTelemetry docs](https://docs.smith.langchain.com/observability/how_to_guides/tracing/trace_with_opentelemetry)
-for the endpoint and headers. A community Ruby gem, [`langsmith-sdk`](https://github.com/felipekb/langsmith-ruby-sdk),
-also exists; it isn't published by LangChain.
+Spans don't say which squishling made the request. To attribute them, wrap the call in `RubyLLM.workflow("Name")`, or
+use an [observer](observers.md) that adds the label to the current span. RubyLLM's `config.instrumenter` also reports
+a `usage.ruby_llm` event per request, with tokens and cost, if you would rather meter than trace.
 
 ## Privacy
 
@@ -147,5 +134,7 @@ append. Tools that sit on the request path are a separate route out of your proc
   send them. That is the sanctioned route for model output; see
   [Observing every attempt](failures.md#observing-every-attempt-squawk). The examples above log only metadata.
 - **OpenTelemetry** with RubyLLM's tracer records usage and request settings, not message text.
+- **An observer** sees timing, token usage, and the call's metadata (method, model, level), never the model's output or
+  your inputs.
 
 Check what your tool stores before pointing it at inputs that contain personal data.

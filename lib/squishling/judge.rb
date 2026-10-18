@@ -163,7 +163,7 @@ module Squishling
     # A judgment always matches its questions, so only a failed request (LLMError) moves on to the next attempt.
     def judge_with_retries(input, questions)
       @steps.each.with_index(1) do |step, attempt|
-        return @client.judge(input, questions:, step:)
+        return @client.observed_judgment(input, questions:, step:, attempt:, attempts: @steps.size)
       rescue LLMError => e
         raise if attempt == @steps.size
 
