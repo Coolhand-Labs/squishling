@@ -35,13 +35,13 @@ module Squishling
     #   ->(output:, metadata:, error:) { Tracer.record(output, metadata, error) }
     attr_reader :squawk
 
-    # Optional around-style hook wrapped around every provider request (see Evaluator): an object responding to
-    # around(call) { ... }, or :coolhand. nil (the default) uses the Coolhand evaluator when the coolhand gem is
+    # Optional around-style hook wrapped around every provider request (see Observer): an object responding to
+    # around(call) { ... }, or :coolhand. nil (the default) uses the Coolhand observer when the coolhand gem is
     # loaded and configured, and nothing otherwise; false never wraps.
-    attr_reader :evaluator
+    attr_reader :observer
 
     def initialize
-      @evaluator = nil
+      @observer = nil
       @default_model = nil
       @default_escalation = nil
       @default_model_path = nil
@@ -68,11 +68,11 @@ module Squishling
       @squawk = Squawk.validate(hook, "Squishling.configure")
     end
 
-    def evaluator=(evaluator)
-      Evaluator.validate(evaluator, "Squishling.configure")
-      # A named evaluator is built now, so a missing gem fails at setup rather than on the first request.
-      Evaluator.resolve(evaluator) if evaluator.is_a?(Symbol)
-      @evaluator = evaluator
+    def observer=(observer)
+      Observer.validate(observer, "Squishling.configure")
+      # A named observer is built now, so a missing gem fails at setup rather than on the first request.
+      Observer.resolve(observer) if observer.is_a?(Symbol)
+      @observer = observer
     end
 
     def default_params=(params)

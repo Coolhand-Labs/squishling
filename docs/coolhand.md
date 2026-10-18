@@ -1,29 +1,36 @@
 # Coolhand Labs
 
-Squishling ships an [evaluator](evaluators.md) for [Coolhand Labs](https://coolhandlabs.com/). With it, every LLM call a
-squished method makes is filed under a named **workload** and **template** in Coolhand, instead of Coolhand having to
-match the logged request to a template afterwards. Squishling knows exactly where each call sits (which method, which
-escalation level, which sample, which judge), so it declares that for you.
+Squishling ships an [observer](observers.md) for [Coolhand Labs](https://coolhandlabs.com/). With it, every LLM call a
+squished method makes is filed under a named **workload** and **template** in Coolhand. Squishling knows exactly
+where each call sits (which method, which escalation level, which sample, which judge), so it declares that for you.
 
 ## Setup
 
 Add and configure the [`coolhand`](https://github.com/Coolhand-Labs/coolhand-ruby) gem as described in
-[Measuring token spend](measuring-tokens.md#coolhand-labs). **That's all.** With no `evaluator` set, Squishling uses the
-Coolhand evaluator whenever Coolhand is loaded, has an `api_key`, and isn't disabled (`config.enabled = false`). Nothing
-is added to Squishling's dependencies, and nothing happens when the gem isn't there.
+[Measuring token spend](measuring-tokens.md#coolhand-labs). **That's all.** Squishling defaults to the Coolhand
+observer whenever Coolhand is already available in your codebase: loaded, with an `api_key`, and not disabled
+(`config.enabled = false`). Nothing is added to Squishling's dependencies, and nothing happens when the gem isn't
+there. It needs a version of the `coolhand` gem that has `Coolhand.with_context` (declared workloads); with an older
+one, the observer stays off.
 
-It needs a version of the `coolhand` gem that has `Coolhand.with_context` (declared workloads). With an older one,
-the evaluator stays off.
+To turn it off, set `observer` to `false`:
 
 ```ruby
 Squishling.configure do |config|
-  config.evaluator = :coolhand # always declare; raises ConfigurationError now if the gem is missing or too old
-  # config.evaluator = false   # never declare, even though Coolhand is configured
-  # config.evaluator = nil     # the default: declare when Coolhand is loaded and configured
+  config.observer = false # never declare, even though Coolhand is configured
 end
 ```
 
-To report somewhere else, or as well, use any [other evaluator](evaluators.md). `config.evaluator` holds one.
+The other settings:
+
+```ruby
+Squishling.configure do |config|
+  config.observer = :coolhand # always declare; raises ConfigurationError now if the gem is missing or too old
+  config.observer = nil       # the default: declare when Coolhand is loaded and configured
+end
+```
+
+To report somewhere else, or as well, use any [other observer](observers.md). `config.observer` holds one.
 
 ## What is declared
 
@@ -53,5 +60,5 @@ So `Parser#call/squish:L2` is the second attempt of `Parser#call`, e.g. `Parser#
 - Squishling's declaration is made inside any `Coolhand.with_context` you wrapped around the call, so for the fields it
   sets, Squishling's wins.
 - The purpose text becomes the workload's description in Coolhand. It is already part of every request Coolhand logs.
-- `evaluator = :coolhand` loads the gem when it is assigned, so assign it after `coolhand` is available (the default
+- `observer = :coolhand` loads the gem when it is assigned, so assign it after `coolhand` is available (the default
   needs no ordering).

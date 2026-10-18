@@ -1,12 +1,12 @@
 # frozen_string_literal: true
 
 module Squishling
-  module Evaluators
+  module Observers
     # Declares each request's workload and template to Coolhand (Coolhand.with_context), so Coolhand files the
     # logged call under them instead of matching it to a template. The workload is the squished method
     # ("Class#method"); the template is the call's place in it: "Class#method/squish:L2" (an escalation attempt),
     # "/sample:a", or "/judge". The model isn't in the key: it's on the log, and the place is the stable identity.
-    # Used automatically when the coolhand gem is loaded and configured (see Evaluator.resolve). See docs/coolhand.md.
+    # Used automatically when the coolhand gem is loaded and configured (see Observer.resolve). See docs/coolhand.md.
     class Coolhand
       REPORTER = "squishling"
 
@@ -22,7 +22,7 @@ module Squishling
 
         configuration.enabled != false && !configuration.api_key.to_s.strip.empty?
       rescue StandardError
-        false # nobody asked for this evaluator, so a Coolhand that can't say whether it's set up isn't ours to break
+        false # nobody asked for this observer, so a Coolhand that can't say whether it's set up isn't ours to break
       end
 
       def self.load_library
@@ -35,10 +35,10 @@ module Squishling
         self.class.send(:load_library) unless defined?(::Coolhand)
         return if ::Coolhand.respond_to?(:with_context)
 
-        raise ConfigurationError, "evaluator :coolhand needs a coolhand gem version with Coolhand.with_context " \
+        raise ConfigurationError, "observer :coolhand needs a coolhand gem version with Coolhand.with_context " \
                                   "(declared workloads); upgrade the coolhand gem"
       rescue LoadError
-        raise ConfigurationError, "evaluator :coolhand needs the coolhand gem; add `gem \"coolhand\"` to your Gemfile"
+        raise ConfigurationError, "observer :coolhand needs the coolhand gem; add `gem \"coolhand\"` to your Gemfile"
       end
 
       def around(call, &)

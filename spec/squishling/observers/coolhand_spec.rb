@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-RSpec.describe Squishling::Evaluators::Coolhand do
+RSpec.describe Squishling::Observers::Coolhand do
   let(:klass) do
     Class.new do
       include Squishling
@@ -39,7 +39,7 @@ RSpec.describe Squishling::Evaluators::Coolhand do
     declared.map(&:first)
   end
 
-  describe "when Coolhand is configured and no evaluator is declared" do
+  describe "when Coolhand is configured and no observer is declared" do
     before { stub_const("Coolhand", coolhand) }
 
     it "declares the workload and the escalation level of each attempt" do
@@ -57,8 +57,8 @@ RSpec.describe Squishling::Evaluators::Coolhand do
       ])
     end
 
-    it "returns the request's value through Coolhand.with_context" do
-      call = Squishling::Evaluator::Call.new(label: "A#b", purpose: "p", harness: :escalation, role: nil, sample: nil,
+    it "yields once and returns the block's value from Coolhand.with_context" do
+      call = Squishling::Observer::Call.new(label: "A#b", purpose: "p", harness: :escalation, role: nil, sample: nil,
         attempt: 1, attempts: 1, model: "m", provider: nil, request: :chat)
 
       expect(described_class.new.around(call) { :response }).to eq(:response)
@@ -103,8 +103,8 @@ RSpec.describe Squishling::Evaluators::Coolhand do
       expect(contexts.last[:template]).to eq(key: "TicketTriage#call/judge", name: "TicketTriage#call · judge")
     end
 
-    it "doesn't declare when evaluator is false" do
-      Squishling.configure { |c| c.evaluator = false }
+    it "doesn't declare when observer is false" do
+      Squishling.configure { |c| c.observer = false }
       stub_llm(high)
 
       klass.call(text: "x")
@@ -162,11 +162,11 @@ RSpec.describe Squishling::Evaluators::Coolhand do
     end
   end
 
-  describe "evaluator = :coolhand" do
+  describe "observer = :coolhand" do
     it "declares even without an api key" do
       stub_const("Coolhand", coolhand)
       settings.api_key = nil
-      Squishling.configure { |c| c.evaluator = :coolhand }
+      Squishling.configure { |c| c.observer = :coolhand }
       stub_llm(high)
 
       klass.call(text: "x")
@@ -178,14 +178,14 @@ RSpec.describe Squishling::Evaluators::Coolhand do
       hide_const("Coolhand")
       allow(described_class).to receive(:load_library).and_raise(LoadError)
 
-      expect { Squishling.configure { |c| c.evaluator = :coolhand } }
+      expect { Squishling.configure { |c| c.observer = :coolhand } }
         .to raise_error(Squishling::ConfigurationError, /needs the coolhand gem/)
     end
 
     it "raises a clear ConfigurationError at setup when the gem can't declare workloads" do
       stub_const("Coolhand", Module.new)
 
-      expect { Squishling.configure { |c| c.evaluator = :coolhand } }
+      expect { Squishling.configure { |c| c.observer = :coolhand } }
         .to raise_error(Squishling::ConfigurationError, /Coolhand\.with_context/)
     end
   end

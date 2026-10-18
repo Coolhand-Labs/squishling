@@ -50,7 +50,7 @@ module Squishling
 
     private_class_method :capture, :instrumentation_context, :with_instrumentation_context
 
-    # purpose and harness (the harness type) are only told to the evaluator.
+    # purpose and harness (the harness type) are only told to the observer.
     def initialize(label, purpose:, harness:)
       @label = label
       @purpose = purpose
@@ -71,11 +71,11 @@ module Squishling
     # escalation (or propagates from the last one). A 400 means the request we built is invalid (an
     # unsupported param, a schema the provider rejects), so it's a setup mistake: escalating or a
     # fallback would otherwise hide it on every call.
-    # The request runs inside the configured evaluator (see Evaluator), on this thread: for samples, the worker's.
+    # The request runs inside the configured observer (see Observer), on this thread: for samples, the worker's.
     # role is nil for an escalation attempt, :sample (with its name) or :judge; attempt counts in attempts.
     def ask(chat, message, step, attempt:, attempts:, role: nil, sample: nil)
       call = call_info(step, :chat, role:, sample:, attempt:, attempts:)
-      Evaluator.around(call) { request(step) { chat.ask(message) } }
+      Observer.around(call) { request(step) { chat.ask(message) } }
     end
 
     # A System One judgment (RubyLLM.judge) on one step. The step's params are sent as provider options.
@@ -85,7 +85,7 @@ module Squishling
     # runs inside the call) is the developer's own and propagates as-is.
     def judge(input, questions:, step:, attempt:, attempts:)
       call = call_info(step, :judgment, role: :judge, attempt:, attempts:)
-      Evaluator.around(call) do
+      Observer.around(call) do
         request(step) do
           RubyLLM.judge(input, questions:, provider_options: step.params, **model_options(step))
         rescue RubyLLM::ModelNotFoundError => e
@@ -105,7 +105,7 @@ module Squishling
     private
 
     def call_info(step, request, attempt:, attempts:, role: nil, sample: nil)
-      Evaluator::Call.new(label: @label, purpose: @purpose, harness: @harness, role:, sample:, attempt:, attempts:,
+      Observer::Call.new(label: @label, purpose: @purpose, harness: @harness, role:, sample:, attempt:, attempts:,
         model: step.model, provider: step.provider, request:)
     end
 
