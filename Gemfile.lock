@@ -11,11 +11,15 @@ GEM
   specs:
     ast (2.4.3)
     base64 (0.3.0)
-    bigdecimal (4.0.1)
+    bigdecimal (3.3.1)
     bundler-audit (0.9.3)
       bundler (>= 1.2.0)
       thor (~> 1.0)
     diff-lcs (1.6.2)
+    exhale (0.2.0)
+      bigdecimal (~> 3.1)
+      herb (~> 0.11)
+      prism (~> 1.9)
     faraday (2.14.4)
       faraday-net_http (>= 2.0, < 3.5)
       json
@@ -27,6 +31,10 @@ GEM
     faraday-retry (2.4.0)
       faraday (~> 2.0)
     hana (1.3.7)
+    herb (0.11.0)
+    herb (0.11.0-aarch64-linux-gnu)
+    herb (0.11.0-x86_64-darwin)
+    herb (0.11.0-x86_64-linux-gnu)
     json (2.21.2)
     json_schemer (2.5.0)
       bigdecimal
@@ -113,6 +121,7 @@ PLATFORMS
 
 DEPENDENCIES
   bundler-audit (~> 0.9)
+  exhale (~> 0.2)
   rake (~> 13.0)
   rspec (~> 3.13)
   rubocop (~> 1.62)
@@ -124,14 +133,19 @@ DEPENDENCIES
 CHECKSUMS
   ast (2.4.3) sha256=954615157c1d6a382bc27d690d973195e79db7f55e9765ac7c481c60bdb4d383
   base64 (0.3.0) sha256=27337aeabad6ffae05c265c450490628ef3ebd4b67be58257393227588f5a97b
-  bigdecimal (4.0.1) sha256=8b07d3d065a9f921c80ceaea7c9d4ae596697295b584c296fe599dd0ad01c4a7
+  bigdecimal (3.3.1) sha256=eaa01e228be54c4f9f53bf3cc34fe3d5e845c31963e7fcc5bedb05a4e7d52218
   bundler-audit (0.9.3) sha256=81c8766c71e47d0d28a0f98c7eed028539f21a6ea3cd8f685eb6f42333c9b4e9
   diff-lcs (1.6.2) sha256=9ae0d2cba7d4df3075fe8cd8602a8604993efc0dfa934cff568969efb1909962
+  exhale (0.2.0) sha256=e8b0373c2cea10f7b2261b2335a12fbf30d9fc4f000f96d66cdc9cca025e29e1
   faraday (2.14.4) sha256=9bb4408c44621b0dbaaaa39e5dbfc4dbe58cc6751b6eb94d16ae9e1f2f2fab6e
   faraday-multipart (1.2.0) sha256=7d89a949693714176f612323ca13746a2ded204031a6ba528adee788694ef757
   faraday-net_http (3.4.4) sha256=0e78af151747ed1b00f33e25973b4bc220d7f16c00c39676817c8b12331eb588
   faraday-retry (2.4.0) sha256=7b79c48fb7e56526faf247b12d94a680071ff40c9fda7cf1ec1549439ad11ebe
   hana (1.3.7) sha256=5425db42d651fea08859811c29d20446f16af196308162894db208cac5ce9b0d
+  herb (0.11.0) sha256=cba4bfc57f7c1f4b3ee2f4ed02d966d121ce9d8649b087c721d4f9c61f7c63e2
+  herb (0.11.0-aarch64-linux-gnu) sha256=7d8244655bb99a50b2d52ea13408c2a76b3fbd70bcca8ccee4229d3e1902bb0b
+  herb (0.11.0-x86_64-darwin) sha256=2eb9db026a1949cb2ad8cfa1944ef8402feab784c7d37a35c48575a9e0d79912
+  herb (0.11.0-x86_64-linux-gnu) sha256=aba19094bc1618e1bc0fb59db52ba251c93a24598f5228815616b282f10bb8a0
   json (2.21.2) sha256=1f1d3b7cf2b3ba1a69beca0bb6db13d5438b80bff3cd54cdaaa620b9b07c1c6a
   json_schemer (2.5.0) sha256=2f01fb4cce721a4e08dd068fc2030cffd0702a7f333f1ea2be6e8991f00ae396
   language_server-protocol (3.17.0.6) sha256=5ef2c0c138f8267e1bc631d3328347d354f96724b0af22f2c79516120443b7f0

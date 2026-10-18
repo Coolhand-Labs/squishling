@@ -46,9 +46,7 @@ module Squishling
       end
 
       def check_proc(value, _label, where)
-        return value if value.is_a?(Proc)
-
-        raise ConfigurationError, "#{where} must be a Proc, got #{value.class}"
+        check_kind(value, Proc, "a Proc", where)
       end
 
       def check_string(value, _label, where)
@@ -64,15 +62,20 @@ module Squishling
       end
 
       def check_integer(value, _label, where)
-        return value if value.is_a?(Integer)
-
-        raise ConfigurationError, "#{where} must be an Integer, got #{value.class}"
+        check_kind(value, Integer, "an Integer", where)
       end
 
       def check_boolean(value, _label, where)
         return value if [true, false].include?(value)
 
         raise ConfigurationError, "#{where} must be true or false, got #{value.inspect}"
+      end
+
+      # The value itself when it is a kind, else a ConfigurationError saying what was expected.
+      def check_kind(value, kind, description, where)
+        return value if value.is_a?(kind)
+
+        raise ConfigurationError, "#{where} must be #{description}, got #{value.class}"
       end
 
       # A frozen copy: normalized steps are shared by every call that uses the declaration, so none can change
