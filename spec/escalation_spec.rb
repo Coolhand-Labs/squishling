@@ -175,7 +175,7 @@ RSpec.describe "Squishling model escalation" do
       error = RubyLLM::ServerError.new("boom")
       stub_llm(nil, nil, error)
 
-      expect { klass.call(text: "x") }.to raise_error(Squishling::LLMError, /boom/) { |e| expect(e.cause).to equal(error) }
+      expect { klass.call(text: "x") }.to raise_error(Squishling::LLMError, /ServerError/) { |e| expect(e.cause).to equal(error) }
     end
 
     it "raises LLMError, not InvalidOutputError, when the last step fails after an earlier step's invalid output" do
@@ -183,7 +183,7 @@ RSpec.describe "Squishling model escalation" do
       chats = stub_llm({ "label" => 1 }, { "label" => 2 }, error)
 
       expect { klass.call(text: "x") }
-        .to raise_error(Squishling::LLMError, /overloaded/) { |e| expect(e.cause).to equal(error) }
+        .to raise_error(Squishling::LLMError, /ServerError/) { |e| expect(e.cause).to equal(error) }
       expect(chats.map(&:model)).to eq(%w[claude-haiku-4-5 claude-sonnet-5-5])
       expect(chats.last.messages.size).to eq(1)
       expect(chats.last.messages.first).to include('{"label":2}', "not a string")
@@ -196,7 +196,7 @@ RSpec.describe "Squishling model escalation" do
       chats = stub_llm({ "label" => 1 }, first, last)
 
       expect { klass.call(text: "x") }
-        .to raise_error(Squishling::LLMError, /boom/) { |e| expect(e.cause).to equal(last) }
+        .to raise_error(Squishling::LLMError, /ServerError/) { |e| expect(e.cause).to equal(last) }
       expect(chats.map { |chat| chat.messages.size }).to eq([2, 1])
       expect(chats.last.messages.first).to include('{"label":1}', "not a string")
     end
@@ -214,7 +214,7 @@ RSpec.describe "Squishling model escalation" do
     it "never escalates a configuration error" do
       chats = stub_llm(RubyLLM::UnauthorizedError.new("bad key"), { "label" => "ok" })
 
-      expect { klass.call(text: "x") }.to raise_error(Squishling::ConfigurationError, /bad key/)
+      expect { klass.call(text: "x") }.to raise_error(Squishling::ConfigurationError, /UnauthorizedError/)
       expect(chats.size).to eq(1)
     end
 

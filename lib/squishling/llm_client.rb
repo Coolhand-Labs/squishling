@@ -50,11 +50,12 @@ module Squishling
 
     private_class_method :capture, :instrumentation_context, :with_instrumentation_context
 
-    # purpose and harness (the harness type) are only told to the observer.
-    def initialize(label, purpose:, harness:)
+    # purpose, harness (the harness type), and handed_off (squish! sent the call here) are only told to the observer.
+    def initialize(label, purpose:, harness:, handed_off:)
       @label = label
       @purpose = purpose
       @harness = harness
+      @handed_off = handed_off
     end
 
     # A fresh chat on one escalation step, with the system prompt, the strict output schema, and its params.
@@ -108,8 +109,8 @@ module Squishling
     private
 
     def call_info(step, request, attempt:, attempts:, role: nil, sample: nil)
-      Observer::Call.new(label: @label, purpose: @purpose, harness: @harness, role:, sample:, attempt:, attempts:,
-        model: step.model, provider: step.provider, request:)
+      Observer::Call.new(label: @label, purpose: @purpose, harness: @harness, handed_off: @handed_off, role:, sample:,
+        attempt:, attempts:, model: step.model, provider: step.provider, request:)
     end
 
     def raised_by_ruby_llm?(error)
@@ -130,15 +131,27 @@ module Squishling
       raise ConfigurationError, "#{@label}: invalid params #{params.inspect} (#{e.message})"
     end
 
+    # A provider's or transport's own message never goes into ours: a provider can echo request content or part of
+    # an API key in it, and ours reach logs and error trackers. The original stays as #cause for whoever
+    # chooses to read it. RubyLLM's own ConfigurationError is local (it names a missing setting), so it is kept.
     def request(step)
       yield
-    rescue RubyLLM::ConfigurationError, RubyLLM::UnauthorizedError, RubyLLM::ForbiddenError => e
+    rescue RubyLLM::ConfigurationError => e
       raise ConfigurationError, "#{@label}: #{e.class}: #{e.message}"
+    rescue RubyLLM::UnauthorizedError, RubyLLM::ForbiddenError => e
+      raise ConfigurationError, "#{@label}: #{describe_failure(e)}"
     rescue RubyLLM::BadRequestError => e
       raise ConfigurationError,
-        "#{@label}: the provider rejected the request (#{e.message})#{params_hint(step.params)}"
+        "#{@label}: the provider rejected the request (#{describe_failure(e)})#{params_hint(step.params)}"
     rescue RubyLLM::Error, Faraday::Error => e
-      raise LLMError, "#{@label}: #{e.class}: #{e.message}"
+      raise LLMError, "#{@label}: #{describe_failure(e)}"
+    end
+
+    # The error's class and HTTP status, when it has one, which is all of it that is ours to repeat.
+    def describe_failure(error)
+      response = error.response
+      status = response.is_a?(Hash) ? response[:status] : (response.status if response.respond_to?(:status))
+      status ? "#{error.class}, HTTP #{status}" : error.class.to_s
     end
 
     # Models missing from RubyLLM's registry (e.g. newly released ones) are only usable when a

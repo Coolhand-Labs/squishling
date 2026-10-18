@@ -4,8 +4,9 @@ module Squishling
   module Observers
     # Declares each request's workload and template to Coolhand (Coolhand.with_context), so Coolhand files the
     # logged call under them instead of matching it to a template. The workload is the squished method
-    # ("Class#method"); the template is the call's place in it: "Class#method/squish:L2" (an escalation attempt),
-    # "/sample:a", or "/judge". The model isn't in the key: it's on the log, and the place is the stable identity.
+    # ("Class#method", described as that, plus "(rescue)" when squish! handed the call over); the template is the
+    # call's place in it: "Class#method/squish:L2" (an escalation attempt), "/sample:a", or "/judge". The model
+    # isn't in the key: it's on the log, and the place is the stable identity.
     # Used automatically when the coolhand gem is loaded and configured (see Observer.resolve). See docs/coolhand.md.
     class Coolhand
       REPORTER = "squishling"
@@ -48,13 +49,19 @@ module Squishling
 
         ::Coolhand.with_context(
           reporter: REPORTER,
-          workload: { key: workload, name: workload, description: call.purpose },
+          workload: { key: workload, name: workload, description: description(call) },
           template: { key: template, name: "#{workload} · #{role_name(call)}" },
           &
         )
       end
 
       private
+
+      # The squished method, marked "(rescue)" when squish! handed it to the LLM. Not the purpose text, which can be
+      # a proc that differs per call.
+      def description(call)
+        call.handed_off ? "#{call.label} (rescue)" : call.label
+      end
 
       # Coolhand rejects, and drops the whole log for, a key over the limit, with surrounding whitespace, or with
       # a leading, trailing or doubled "/".

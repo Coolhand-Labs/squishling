@@ -196,7 +196,7 @@ RSpec.describe Squishling::Params do
       stub_llm(RubyLLM::BadRequestError.new("Invalid schema"))
 
       expect { base.call }.to raise_error(Squishling::ConfigurationError) do |e|
-        expect(e.message).to include("Invalid schema")
+        expect(e.message).to include("provider rejected the request", "BadRequestError")
         expect(e.message).not_to include("Check params")
       end
     end

@@ -63,6 +63,8 @@ Flag any change that breaks one of these; they are behavior contracts, not style
 - **Model output leaves the process only through `InvalidOutputError#raw` and the opt-in `squawk` hook.** Error
   messages and `config.logger` lines carry parse positions and schema paths, never the response itself (the
   documented exceptions are model-chosen extra key names and the developer's own `squish_validate` messages).
+  A provider's or transport's own message is the same: ours carry the error class and HTTP status, and the
+  original stays on `cause`.
 - **Only named context leaves the process.** The LLM sees method arguments, `squish_context` values, a
   `squish!` call's `context:`, and source the developer explicitly passes to `append_to_purpose` — never
   instance variables wholesale. Exceptions in context are sent as class and message only. The one model-generated
@@ -83,8 +85,9 @@ Flag any change that breaks one of these; they are behavior contracts, not style
   and a second interlock share can deadlock against a pending code reload.
 - **Observers see metadata and usage, around the request.** `config.observer` (`Squishling::Observer`) wraps each
   provider request (`LLMClient#ask`/`#judge`) on the thread that makes it, so a sample's observer runs on its worker
-  thread. The `Observer::Call` it receives holds label, purpose, harness, role/sample, attempt/attempts,
-  model/provider, and request type; the block's `yield` returns an `Observer::Usage` (token counts and model). Never
+  thread. The `Observer::Call` it receives holds label, purpose, harness, `handed_off` (whether `squish!` sent the
+  call), role/sample, attempt/attempts, model/provider, and request type; the block's `yield` returns an
+  `Observer::Usage` (token counts and model). Never
   inputs, context, or output: the observer's return value is ignored and the real response goes to Squishling's own
   caller, so output still leaves only through `InvalidOutputError#raw` and `squawk`. An observer's own exceptions
   propagate unwrapped. With `observer` nil, the Coolhand observer is used when the `coolhand` gem is loaded and

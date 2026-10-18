@@ -7,6 +7,63 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-18
+
+### Added
+
+- Custom harnesses: `Squishling.register_harness` (with `Squishling.harnesses` and `reset_harnesses!`) and
+  `Squishling::Harness::Base` let you write your own harness and use it anywhere a built-in works (`harness:`,
+  `squish!`, `default_harness`). A harness gets a `Squishling::Run` with `escalate`, `samples`, `judge`, `agree?`,
+  `stage`, and `log`, so it keeps model, provider, and params resolution, `squish_validate`, concurrent samples, and the
+  normal failure handling; it can only return typed results its `Run` produced, and its options are validated when it
+  is declared. The built-in `:escalation`, `:squishsum`, and `:judged_squishsum` now run on the same interface.
+  `squawk` metadata gains `role:` and `sample:`. See [Custom harnesses](docs/harnesses.md#custom-harnesses). (#31)
+- Round-robin models: escalation steps that share a `priority:` form a tier. Each call rotates which model in the tier
+  goes first (counted per class and method, shared across threads), and the tier's other models are tried before the
+  next priority. `rotate: false` on a step pins its tier to the order written. (#38)
+- `config.observer`: an around-style hook (`around(call) { ... }`) wrapped around every provider request, on the thread
+  that makes it, so a `:squishsum` sample's observer runs on its worker thread. It is told the request's `Observer::Call`
+  and gets back only an `Observer::Usage` (token counts and model), never the response. An observer that yields twice
+  or never raises `ConfigurationError`, and one that rescues the request's error has it raised again. See
+  [Observers](docs/observers.md). (#25, #40)
+- A bundled Coolhand observer (`observer = :coolhand`) that declares each call's workload (`Class#method`) and template
+  (`squish:L<n>`, `sample:a`, or `judge`) through `Coolhand.with_context`. The workload's description is
+  `Class#method`, or `Class#method (rescue)` when a `squish!` call handed the call to the LLM (`Observer::Call#handed_off`),
+  never the purpose text. It needs coolhand 0.9.0 or newer. See
+  [Coolhand Labs](docs/coolhand.md). (#40)
+- A docs page and landing-page section on the architecture, an explainer site in `site/` deployed to GitHub Pages, and
+  per-field `description:` documented as the best practice over `purpose` guidance. (#30, #33, #34, #36)
+
+### Changed
+
+- **Behavior change:** when the `coolhand` gem is loaded and configured (an API key, not disabled), Squishling now
+  declares each request's workload and template to it automatically. Nothing changes for apps without Coolhand. To
+  opt out, set `config.observer = false`.
+- **Behavior change:** two escalation steps may now share a `priority:` (they used to raise `duplicate order:`), and
+  they rotate per call as described above. If you relied on a fixed order between tied steps, give them distinct
+  priorities or set `rotate: false`.
+- `order:` on an escalation step is deprecated in favor of `priority:`. It still works, with a deprecation warning, and
+  giving both on one step raises `ConfigurationError`. Judge and harness steps take no `priority:` or `rotate:`. (#38)
+- **Behavior change:** `LLMError` and the `ConfigurationError` for a rejected request (400), bad credentials, or a
+  forbidden key no longer repeat the provider's own message, which can echo request content or part of an API key into
+  logs and error trackers. They carry the error class and HTTP status (`RubyLLM::RateLimitError, HTTP 429`); the
+  provider's message is still on `cause`. If you matched on provider text in `e.message`, read `e.cause.message`
+  instead.
+- `docs/measuring-tokens.md` now points to observers for bringing your own metrics instead of walking through a
+  hand-rolled one. (#40)
+
+### Removed
+
+- **Breaking change:** the `:ensemble` and `:judged_ensemble` harnesses added in 0.3.0 are gone. `harness: :ensemble`
+  or `:judged_ensemble` (and `default_harness`) now raise `ConfigurationError` (unknown harness). Use `:squishsum` or
+  `:judged_squishsum`, which sample the first escalation step twice with the judge defaulting to the next step, or
+  write a custom harness. (#22, #24)
+
+### Internal
+
+- CI gains an exhale duplication and complexity gate (`bin/exhale`), and dependabot bumps `rubocop` (1.92), `ruby/setup-ruby`,
+  and `actions/upload-artifact`. These are development-only changes. (#27, #28, #29, #41)
+
 ## [0.3.0] - 2026-10-10
 
 ### Added
