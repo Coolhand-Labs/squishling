@@ -27,7 +27,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   or never raises `ConfigurationError`, and one that rescues the request's error has it raised again. See
   [Observers](docs/observers.md). (#25, #40)
 - A bundled Coolhand observer (`observer = :coolhand`) that declares each call's workload (`Class#method`) and template
-  (`squish:L<n>`, `sample:a`, or `judge`) through `Coolhand.with_context`. It needs coolhand 0.9.0 or newer. See
+  (`squish:L<n>`, `sample:a`, or `judge`) through `Coolhand.with_context`. The workload's description is
+  `Class#method`, or `Class#method (rescue)` when a `squish!` call handed the call to the LLM (`Observer::Call#handed_off`),
+  never the purpose text. It needs coolhand 0.9.0 or newer. See
   [Coolhand Labs](docs/coolhand.md). (#40)
 - A docs page and landing-page section on the architecture, an explainer site in `site/` deployed to GitHub Pages, and
   per-field `description:` documented as the best practice over `purpose` guidance. (#30, #33, #34, #36)
@@ -42,6 +44,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   priorities or set `rotate: false`.
 - `order:` on an escalation step is deprecated in favor of `priority:`. It still works, with a deprecation warning, and
   giving both on one step raises `ConfigurationError`. Judge and harness steps take no `priority:` or `rotate:`. (#38)
+- **Behavior change:** `LLMError` and the `ConfigurationError` for a rejected request (400), bad credentials, or a
+  forbidden key no longer repeat the provider's own message, which can echo request content or part of an API key into
+  logs and error trackers. They carry the error class and HTTP status (`RubyLLM::RateLimitError, HTTP 429`); the
+  provider's message is still on `cause`. If you matched on provider text in `e.message`, read `e.cause.message`
+  instead.
 - `docs/measuring-tokens.md` now points to observers for bringing your own metrics instead of walking through a
   hand-rolled one. (#40)
 

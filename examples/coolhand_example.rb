@@ -147,7 +147,8 @@ CoolhandExample::SCENARIOS = [
     LiveHarness.check(identity["reporter"] == "squishling", "reporter was #{identity['reporter'].inspect}")
     LiveHarness.check(identity["workload"]["key"] == "CoolhandExample::Auto#call",
       "workload was #{identity['workload']}")
-    LiveHarness.check(identity["workload"]["description"].include?("sentiment"), "description lacked the purpose")
+    LiveHarness.check(identity["workload"]["description"] == identity["workload"]["key"],
+      "description was #{identity['workload']['description'].inspect}")
     LiveHarness.check(identity.dig("template", "key") == "CoolhandExample::Auto#call/squish:L1",
       "template was #{identity['template']}")
     identity.dig("template", "name")

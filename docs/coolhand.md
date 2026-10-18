@@ -39,7 +39,7 @@ Net::HTTP interception tags it with the declaration.
 
 | | Key | Name |
 |---|---|---|
-| Workload | `Class#method` | `Class#method` (its `description` is the method's purpose) |
+| Workload | `Class#method` | `Class#method` (its `description` is `Class#method`, or `Class#method (rescue)` when a [`squish!`](routing.md#handing-off-to-the-llm-with-squish) call handed it to the LLM) |
 | Template | `Class#method/<role>` | `Class#method · <role>` |
 
 `<role>` is where the request sits:
@@ -59,6 +59,8 @@ So `Parser#call/squish:L2` is the second attempt of `Parser#call`, e.g. `Parser#
   breaking the call.
 - Squishling's declaration is made inside any `Coolhand.with_context` you wrapped around the call, so for the fields it
   sets, Squishling's wins.
-- The purpose text becomes the workload's description in Coolhand. It is already part of every request Coolhand logs.
+- The description never contains the purpose text, which can be a proc that differs per call. The workload's key
+  and name stay `Class#method` either way, so calls that went through `squish!` and calls that didn't share one
+  workload.
 - `observer = :coolhand` loads the gem when it is assigned, so assign it after `coolhand` is available (the default
   needs no ordering).

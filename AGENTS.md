@@ -63,6 +63,8 @@ Flag any change that breaks one of these; they are behavior contracts, not style
 - **Model output leaves the process only through `InvalidOutputError#raw` and the opt-in `squawk` hook.** Error
   messages and `config.logger` lines carry parse positions and schema paths, never the response itself (the
   documented exceptions are model-chosen extra key names and the developer's own `squish_validate` messages).
+  A provider's or transport's own message is the same: ours carry the error class and HTTP status, and the
+  original stays on `cause`.
 - **Only named context leaves the process.** The LLM sees method arguments, `squish_context` values, a
   `squish!` call's `context:`, and source the developer explicitly passes to `append_to_purpose` — never
   instance variables wholesale. Exceptions in context are sent as class and message only. The one model-generated

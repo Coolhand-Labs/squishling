@@ -284,7 +284,7 @@ RSpec.describe "Squishling harnesses" do
     it "raises LLMError when a sample's last attempt fails" do
       stub_llm_chats([high], [RubyLLM::ServerError.new("boom")], [RubyLLM::ServerError.new("again")])
 
-      expect { klass.call(text: "x") }.to raise_error(Squishling::LLMError, /again/)
+      expect { klass.call(text: "x") }.to raise_error(Squishling::LLMError, /ServerError/) { |e| expect(e.cause.message).to eq("again") }
     end
 
     it "raises a provider 400 as a ConfigurationError, never handing it to the fallback" do
@@ -292,7 +292,7 @@ RSpec.describe "Squishling harnesses" do
       klass.squish_fallback { |error, **| fallback << error }
       stub_llm_chats([high], [RubyLLM::BadRequestError.new("bad temperature")])
 
-      expect { klass.call(text: "x") }.to raise_error(Squishling::ConfigurationError, /bad temperature/)
+      expect { klass.call(text: "x") }.to raise_error(Squishling::ConfigurationError, /BadRequestError/) { |e| expect(e.cause.message).to eq("bad temperature") }
       expect(fallback).to be_empty
     end
 
@@ -584,7 +584,7 @@ RSpec.describe "Squishling harnesses" do
         stub_llm_chats([high], [low])
         calls = stub_judgment(RubyLLM::ServerError.new("busy"), RubyLLM::ServerError.new("still busy"))
 
-        expect { klass.call(text: "x") }.to raise_error(Squishling::LLMError, /still busy/)
+        expect { klass.call(text: "x") }.to raise_error(Squishling::LLMError, /ServerError/) { |e| expect(e.cause.message).to eq("still busy") }
         expect(calls.size).to eq(2)
       end
 

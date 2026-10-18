@@ -49,17 +49,40 @@ RSpec.describe Squishling::Observers::Coolhand do
 
       expect(contexts).to eq([
         { reporter: "squishling",
-          workload: { key: "TicketTriage#call", name: "TicketTriage#call", description: "Triage the ticket." },
+          workload: { key: "TicketTriage#call", name: "TicketTriage#call", description: "TicketTriage#call" },
           template: { key: "TicketTriage#call/squish:L1", name: "TicketTriage#call · squish L1" } },
         { reporter: "squishling",
-          workload: { key: "TicketTriage#call", name: "TicketTriage#call", description: "Triage the ticket." },
+          workload: { key: "TicketTriage#call", name: "TicketTriage#call", description: "TicketTriage#call" },
           template: { key: "TicketTriage#call/squish:L2", name: "TicketTriage#call · squish L2" } }
       ])
     end
 
+    it "describes the workload as the method, not the purpose, however the purpose is computed" do
+      klass.purpose { "Triage ticket #{rand(1_000_000)}." }
+      stub_llm(high)
+
+      klass.call(text: "x")
+
+      expect(contexts.map { |context| context.dig(:workload, :description) }).to eq(["TicketTriage#call"])
+    end
+
+    it "marks the description (rescue) when squish! handed the call to the LLM, keeping one workload key" do
+      klass.define_method(:call) do |text:|
+        raise ArgumentError, "unparseable: #{text}"
+      rescue ArgumentError
+        squish!
+      end
+      stub_llm(high)
+
+      expect(klass.call(text: "x").priority).to eq("high")
+      expect(contexts.map { |context| context[:workload] }).to eq([
+        { key: "TicketTriage#call", name: "TicketTriage#call", description: "TicketTriage#call (rescue)" }
+      ])
+    end
+
     it "yields once and returns the block's value from Coolhand.with_context" do
-      call = Squishling::Observer::Call.new(label: "A#b", purpose: "p", harness: :escalation, role: nil, sample: nil,
-        attempt: 1, attempts: 1, model: "m", provider: nil, request: :chat)
+      call = Squishling::Observer::Call.new(label: "A#b", purpose: "p", harness: :escalation, handed_off: false,
+        role: nil, sample: nil, attempt: 1, attempts: 1, model: "m", provider: nil, request: :chat)
 
       expect(described_class.new.around(call) { :response }).to eq(:response)
     end

@@ -10,7 +10,7 @@ A failed attempt moves on to the next one; once the last fails, the error is rai
 |---|---|
 | Rate limit, 5xx, overload, timeout, connection error | RubyLLM retries at the HTTP level first (`RubyLLM.config.max_retries`, default 3). If it still fails, moves to the next attempt in a fresh chat; on the last attempt, raises `Squishling::LLMError` with the original exception as its `cause`. |
 | Bad API key, unknown model, missing provider config | Raises `Squishling::ConfigurationError`. Never escalated, never sent to the fallback. |
-| Provider rejects the request (400 Bad Request), e.g. an unsupported `temperature` or a schema it won't accept | Raises `ConfigurationError` with the provider's message and the params in use. Never escalated, never sent to the fallback, so a setup mistake can't be silently covered up on every call. |
+| Provider rejects the request (400 Bad Request), e.g. an unsupported `temperature` or a schema it won't accept | Raises `ConfigurationError` naming the error class and HTTP status, and the params in use; the provider's own message is on `cause`. Never escalated, never sent to the fallback, so a setup mistake can't be silently covered up on every call. |
 | Empty or `nil` response (e.g. a refusal or a max-tokens cutoff) | Moves to the next attempt, then raises `Squishling::InvalidOutputError` |
 | Malformed or truncated JSON | Moves to the next attempt, then raises `InvalidOutputError`. JSON wrapped in a markdown code fence is accepted. |
 | JSON that doesn't match the schema (wrong types, missing or extra keys, `null` in a non-`optional` field, a broken [conditional rule](schemas.md#contracts-beyond-the-schema), root not an object) | Moves to the next attempt with the validation errors, then raises `InvalidOutputError` |
@@ -42,6 +42,9 @@ Model output can echo sensitive input, so the raw response is kept in one place:
   the message, the logger, and the next attempt's prompt.
 - A fixed message when a response contains a value JSON can't represent (`1e400` parses to `Infinity`, or a string
   with invalid UTF-8).
+- For a failed provider request (`LLMError`, and the `ConfigurationError` for a 400, bad credentials, or a forbidden
+  key), only the error class and HTTP status. The provider's own message can echo request content or part of an API
+  key, so it stays on `cause` (`error.cause.message`) for you to read or log deliberately.
 - At most the first 20 of these errors, plus a count of the rest, so a very large malformed response can't flood
   the retry message or the log.
 - For a [`DisagreementError`](harnesses.md#when-the-harness-fails), only what Squishling wrote: a `:judgment` judge's

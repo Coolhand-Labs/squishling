@@ -88,11 +88,11 @@ RSpec.describe Squishling::Observer do
       expect(events.map(&:first)).to eq(%i[before after before after])
       expect(calls).to eq([
         Squishling::Observer::Call.new(label: "TicketTriage#call", purpose: "Triage the ticket.",
-          harness: :escalation, role: nil, sample: nil, attempt: 1, attempts: 2, model: "claude-haiku-4-5",
-          provider: nil, request: :chat),
+          harness: :escalation, handed_off: false, role: nil, sample: nil, attempt: 1, attempts: 2,
+          model: "claude-haiku-4-5", provider: nil, request: :chat),
         Squishling::Observer::Call.new(label: "TicketTriage#call", purpose: "Triage the ticket.",
-          harness: :escalation, role: nil, sample: nil, attempt: 2, attempts: 2, model: "claude-sonnet-5-5",
-          provider: nil, request: :chat)
+          harness: :escalation, handed_off: false, role: nil, sample: nil, attempt: 2, attempts: 2,
+          model: "claude-sonnet-5-5", provider: nil, request: :chat)
       ])
     end
 

@@ -224,7 +224,32 @@ RSpec.describe "Squishling failure handling" do
     it "treats bad credentials as a configuration error" do
       stub_llm(RubyLLM::UnauthorizedError.new("bad key"))
 
-      expect { klass.call(text: "x") }.to raise_error(Squishling::ConfigurationError, /bad key/)
+      expect { klass.call(text: "x") }.to raise_error(Squishling::ConfigurationError, /UnauthorizedError/) { |e| expect(e.cause.message).to eq("bad key") }
+    end
+
+    it "keeps a provider's own message out of ours, leaving it on the cause" do
+      leaked = "Incorrect API key provided: sk-proj-abc***xyz; input was: patient Jane Doe"
+      logger = instance_double(Logger, debug: nil, warn: nil)
+      Squishling.configure { |c| c.logger = logger }
+      klass.squish_fallback { |_error, **| { label: "fallback" } }
+      [RubyLLM::UnauthorizedError, RubyLLM::BadRequestError, RubyLLM::ServerError, Faraday::TimeoutError].each do |type|
+        stub_llm(type.new(leaked), type.new(leaked))
+
+        begin
+          klass.call(text: "x")
+        rescue Squishling::Error => e
+          expect(e.message).not_to include("sk-proj", "Jane Doe")
+          expect(e.cause.message).to eq(leaked)
+        end
+      end
+      expect(logger).not_to have_received(:warn).with(/sk-proj|Jane Doe/)
+    end
+
+    it "reports the HTTP status when the provider sent one" do
+      response = Struct.new(:status).new(429)
+      stub_llm(RubyLLM::RateLimitError.new("slow down", response:), RubyLLM::RateLimitError.new("slow down", response:))
+
+      expect { klass.call(text: "x") }.to raise_error(Squishling::LLMError, /RateLimitError, HTTP 429/)
     end
 
     it "treats an unknown model as a configuration error" do

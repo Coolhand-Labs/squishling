@@ -7,11 +7,11 @@ module Squishling
     # Matches the keys a squish! context: Hash may use.
     NAME_KEY = ->(key) { key.is_a?(String) || key.is_a?(Symbol) }
 
-    attr_reader :klass, :name, :call_context
+    attr_reader :klass, :name, :call_context, :handed_off
 
     def initialize(klass:, name:, purpose: nil, append_to_purpose: nil, output_schema: nil, model: nil,
       provider: nil, params: nil, harness: nil, predicate: nil, fallback: nil, validator: nil, squawk: nil,
-      call_context: {})
+      call_context: {}, handed_off: false)
       @klass = klass
       @name = name
       @purpose = purpose
@@ -26,6 +26,7 @@ module Squishling
       @validator = validator
       @squawk = squawk
       @call_context = call_context
+      @handed_off = handed_off
     end
 
     # This definition with one call's overrides on top. The output schema, predicate, fallback, and validator
@@ -50,7 +51,8 @@ module Squishling
         # merge, not Params.resolve: a nil at the method level must still unset the class's key.
         params: call_params ? (@params || {}).merge(call_params) : @params,
         harness: call_harness || @harness,
-        call_context: @call_context.merge((context || {}).transform_keys(&:to_sym))
+        call_context: @call_context.merge((context || {}).transform_keys(&:to_sym)),
+        handed_off: true
       )
     end
 
