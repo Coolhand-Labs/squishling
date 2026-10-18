@@ -14,8 +14,10 @@ module LiveHarness
 
   # Key resolution order: --api-key flag, then the provider's env var, else exit 1.
   # params: generation params the model supports, applied to every scenario.
-  # rejected_params: params the model is known to reject, which must fail loudly.
-  def run(script:, provider:, env_var:, default_model:, params:, rejected_params:)
+  # rejected_params: params the model is known to reject, which must fail loudly (used by the shared scenarios).
+  # scenarios: the Scenarios to run (the shared ones by default). around: a callable that runs the block it is
+  # given inside whatever a script needs set up and torn down for its scenarios (a local server, say).
+  def run(script:, provider:, env_var:, default_model:, params:, rejected_params: {}, scenarios: SCENARIOS, around: nil)
     options = parse_options(script, default_model)
     api_key = options[:api_key] || ENV.fetch(env_var, nil)
     if api_key.nil? || api_key.strip.empty?
@@ -32,8 +34,9 @@ module LiveHarness
     @rejected_params = rejected_params
 
     puts "Squishling live examples: #{provider} / #{options[:model]} / params #{params.inspect}\n\n"
-    failures = SCENARIOS.count { |scenario| !run_scenario(scenario) }
-    puts "\n#{SCENARIOS.size - failures}/#{SCENARIOS.size} passed"
+    count_failures = -> { scenarios.count { |scenario| !run_scenario(scenario) } }
+    failures = around ? around.call(&count_failures) : count_failures.call
+    puts "\n#{scenarios.size - failures}/#{scenarios.size} passed"
     exit(failures.zero? ? 0 : 1)
   end
 
