@@ -37,14 +37,19 @@ module Squishling
       raise ConfigurationError, "#{label} must be a Hash, got #{params.class}" unless params.is_a?(Hash)
 
       params = params.transform_keys(&:to_sym)
-      reserved = params.keys & RESERVED_KEYS
-      if reserved.any?
-        raise ConfigurationError, "#{label}: #{reserved.join(', ')} can't be set through params " \
-                                  "(controlled by Squishling/RubyLLM; use model:/provider:/output_schema)"
-      end
+      reject_reserved!(params, RESERVED_KEYS, label, "; use model:/provider:/output_schema")
       reject_nested_reserved!(params, label)
       params[:thinking] = normalize_thinking(params[:thinking], label) unless params[:thinking].nil?
       params.freeze
+    end
+
+    # Raises when params sets any of the keys Squishling owns. hint is appended inside the parenthetical.
+    def reject_reserved!(params, keys, label, hint = "")
+      reserved = params.keys & keys
+      return if reserved.empty?
+
+      raise ConfigurationError, "#{label}: #{reserved.join(', ')} can't be set through params " \
+                                "(controlled by Squishling/RubyLLM#{hint})"
     end
 
     # Nested keys are compared as symbols so a string-keyed "responseMimeType" can't slip past the check.

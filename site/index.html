@@ -490,7 +490,10 @@ Squishling.register_harness(:tiebreaker, Tiebreaker)
 class TicketTriager
   include Squishling
 
-  squishling escalation: ["claude-haiku-4-5", "claude-sonnet-5-5"],
+  squishling escalation: [
+      { model: "claude-haiku-4-5", priority: 10 },
+      { model: "gemma-4b", priority: 10 }
+    ],
     harness: { type: :tiebreaker, tiebreaker: "claude-opus-5-5" }
   purpose "Assign a priority and a team."
   output_schema do

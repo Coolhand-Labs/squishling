@@ -265,8 +265,10 @@ RSpec.describe "Squishling custom harnesses" do
         .to raise_error(Squishling::ConfigurationError, /compare: must be a Proc, got Symbol/)
       expect { klass.squishling(harness: { type: :tiebreaker, tiebreaker: 3 }) }
         .to raise_error(Squishling::ConfigurationError, /each step must be a model name or a Hash/)
-      expect { klass.squishling(harness: { type: :tiebreaker, tiebreaker: { model: "x", order: 1 } }) }
-        .to raise_error(Squishling::ConfigurationError, /a harness step takes no order:/)
+      expect { klass.squishling(harness: { type: :tiebreaker, tiebreaker: { model: "x", priority: 1 } }) }
+        .to raise_error(Squishling::ConfigurationError, /a harness step takes no priority: or rotate:/)
+      expect { klass.squishling(harness: { type: :tiebreaker, tiebreaker: { model: "x", rotate: false } }) }
+        .to raise_error(Squishling::ConfigurationError, /a harness step takes no priority: or rotate:/)
       expect { klass.squishling(harness: { type: :tiebreaker, tiebreaker: { model: "x", attempts: 0 } }) }
         .to raise_error(Squishling::ConfigurationError, /attempts: must be a positive Integer/)
       expect { klass.squish(:triage, harness: { type: :tiebreaker }) { string :team } }
@@ -830,8 +832,9 @@ RSpec.describe "Squishling custom harnesses" do
     end
 
     it "validates a step Hash wherever it comes from, and leaves a stage the caller owns unfrozen" do
-      with_harness { |run| run.escalate({ model: "claude-haiku-4-5", order: 1 }) }
-      expect { klass.call(text: "x") }.to raise_error(Squishling::ConfigurationError, /a harness step takes no order:/)
+      with_harness { |run| run.escalate({ model: "claude-haiku-4-5", priority: 1 }) }
+      expect { klass.call(text: "x") }
+        .to raise_error(Squishling::ConfigurationError, /a harness step takes no priority: or rotate:/)
 
       Squishling.reset_harnesses!
       mine = []
@@ -975,7 +978,8 @@ RSpec.describe "Squishling custom harnesses" do
         [{ model: "x", type: false }, /judge type: must be one of chat, judgment, got false/],
         [{ model: "x", type: :judgment, min_confidence: 2 }, /judge min_confidence: must be a number from 0 to 1/],
         [{ model: "x", bogus: 1 }, /unknown step option\(s\) bogus/],
-        [{ model: "x", order: 1 }, /a judge is one step, so it takes no order:/],
+        [{ model: "x", priority: 1 }, /a judge is one step, so it takes no priority: or rotate:/],
+        [{ model: "x", rotate: false }, /a judge is one step, so it takes no priority: or rotate:/],
         [{ model: "x", min_confidence: 0.5 }, /min_confidence: only applies to type: :judgment judges/],
         [false, /each step must be a model name or a Hash/]
       ].each do |declaration, message|
@@ -1020,6 +1024,17 @@ RSpec.describe "Squishling custom harnesses" do
 
   describe "threads and fibers" do
     before { Squishling.register_harness(:tiebreaker, tiebreaker) }
+
+    # A chat that answers every request with the call's own text as the priority.
+    def stub_echo_chat
+      echo = Class.new(FakeChat) do
+        def ask(message)
+          @messages << message
+          FakeChat::Response.new({ "priority" => JSON.parse(message).dig("arguments", "text"), "team" => "api" })
+        end
+      end
+      allow(RubyLLM).to receive(:chat) { |model: nil, **options| echo.new(model:, responses: [], **options) }
+    end
 
     it "sends only the samples' requests from worker threads, keeping the harness and every callback on the caller's" do
       threads = Queue.new
@@ -1076,13 +1091,7 @@ RSpec.describe "Squishling custom harnesses" do
     end
 
     it "keeps concurrent calls apart, each with its own run and results" do
-      echo = Class.new(FakeChat) do
-        def ask(message)
-          @messages << message
-          FakeChat::Response.new({ "priority" => JSON.parse(message).dig("arguments", "text"), "team" => "api" })
-        end
-      end
-      allow(RubyLLM).to receive(:chat) { |model: nil, **options| echo.new(model:, responses: [], **options) }
+      stub_echo_chat
       klass.squishling(harness: { type: :tiebreaker, tiebreaker: "claude-opus-5-5" })
 
       results = Array.new(8) { |index| Thread.new { klass.call(text: "ticket-#{index}").priority } }.map(&:value)
@@ -1091,13 +1100,7 @@ RSpec.describe "Squishling custom harnesses" do
     end
 
     it "keeps calls in separate fibers apart" do
-      echo = Class.new(FakeChat) do
-        def ask(message)
-          @messages << message
-          FakeChat::Response.new({ "priority" => JSON.parse(message).dig("arguments", "text"), "team" => "api" })
-        end
-      end
-      allow(RubyLLM).to receive(:chat) { |model: nil, **options| echo.new(model:, responses: [], **options) }
+      stub_echo_chat
       klass.squishling(harness: { type: :tiebreaker, tiebreaker: "claude-opus-5-5" })
 
       fibers = Array.new(4) { |index| Fiber.new { klass.call(text: "ticket-#{index}").priority } }

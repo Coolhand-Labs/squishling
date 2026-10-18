@@ -72,8 +72,8 @@ RSpec.describe "Squishling harnesses" do
       end.to raise_error(Squishling::ConfigurationError, /min_confidence: must be a number from 0 to 1/)
       expect { klass.squishling(harness: { type: :judged_squishsum, judge: { model: "x", min_confidence: 0.5 } }) }
         .to raise_error(Squishling::ConfigurationError, /only applies to type: :judgment judges/)
-      expect { klass.squishling(harness: { type: :judged_squishsum, judge: { model: "x", order: 1 } }) }
-        .to raise_error(Squishling::ConfigurationError, /takes no order:/)
+      expect { klass.squishling(harness: { type: :judged_squishsum, judge: { model: "x", priority: 1 } }) }
+        .to raise_error(Squishling::ConfigurationError, /takes no priority: or rotate:/)
       expect { klass.squishling(harness: { type: :judged_squishsum, judge: false }) }
         .to raise_error(Squishling::ConfigurationError, /judge: each step must be a model name or a Hash/)
       expect { klass.squishling(harness: { type: :judged_squishsum, judge: { model: "x", attempts: 0 } }) }

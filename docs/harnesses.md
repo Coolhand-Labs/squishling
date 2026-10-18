@@ -83,8 +83,9 @@ whose typed result is returned (`squished?` is `true`), or it picks `neither`, w
 The judge is:
 
 1. the `judge:` step, if declared: a model name, or a Hash with `model:`, `provider:`, `params:`, and `attempts:`
-   (as in an escalation step, without `order:`), plus `type:`; or
-2. the escalation's next step after the sampled one, with its attempts.
+   (as in an escalation step, without `priority:` or `rotate:`), plus `type:`; or
+2. the escalation's next step after the sampled one, with its attempts. Steps tied on `priority:` rotate between calls
+   (see [Rotating models](configuration.md#rotating-models-within-a-priority)), so which model that is can vary.
 
 A judged harness with neither raises `ConfigurationError` before any sample is requested. A `judge:`
 step uses only its own `provider:`; it doesn't inherit the class or method `provider:`, which belongs to their models
@@ -287,7 +288,7 @@ results, the same type the deterministic path returns.
 | `run.stage(declaration)` | A stage from a model name or a step Hash (a single step is a stage of one attempt). It keeps its own provider, and its `params:` merge over the method's, as a [judge](#the-judge) step does |
 | `run.escalate(*stages)` | Makes each attempt in order until an output passes the schema and `squish_validate`, in the same chat after invalid output and in a fresh one (told about the rejected output) on a new step. With no argument, it runs the escalation: exactly what `:escalation` does |
 | `run.samples(stages)` | Takes an Array of stages (so `run.samples([stage, stage])`, not `run.samples(stage)`; a bare step counts as a stage of one attempt): one sample per stage, each in its own chat and retried like an escalation step, with the requests of every round sent concurrently. Returns the outputs in order. Each stage must be one model's attempts: mixed steps raise `ConfigurationError`. Samples are named `"a"`, `"b"`, ... (up to 26) |
-| `run.judge(judge: nil, instructions: nil)` | Resolves a [judge](#the-judge) now (so a missing one raises `ConfigurationError` before any request) and returns it. `judge:` is a model name, or a [judge Hash](#the-judge) (`model:`, `provider:`, `params:`, `attempts:`, `type:`, `min_confidence:`; no `order:`), and `instructions:` a non-blank String or a Proc. `judge.verdict(first, second)` returns a `Squishling::Judge::Verdict` with `choice` (`:a`, `:b`, or `:neither`), `reason`, and `detail`, and `judge.step` is its first attempt. A chat judge's `reason` is model-written, so use `detail` (Squishling's own text, `nil` for a chat judge), not `reason`, in messages and logs. Without `judge:`, the judge is the escalation's second stage |
+| `run.judge(judge: nil, instructions: nil)` | Resolves a [judge](#the-judge) now (so a missing one raises `ConfigurationError` before any request) and returns it. `judge:` is a model name, or a [judge Hash](#the-judge) (`model:`, `provider:`, `params:`, `attempts:`, `type:`, `min_confidence:`; no `priority:` or `rotate:`), and `instructions:` a non-blank String or a Proc. `judge.verdict(first, second)` returns a `Squishling::Judge::Verdict` with `choice` (`:a`, `:b`, or `:neither`), `reason`, and `detail`, and `judge.step` is its first attempt. A chat judge's `reason` is model-written, so use `detail` (Squishling's own text, `nil` for a chat judge), not `reason`, in messages and logs. Without `judge:`, the judge is the escalation's second stage |
 | `run.agree?(first, second, compare = nil)` | `compare` (evaluated against the instance with both results and the method's inputs) or, without one, exact equality |
 | `run.log(message)` | A warning to `config.logger`, prefixed with `"[Squishling] Class#method"` |
 

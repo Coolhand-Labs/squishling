@@ -110,7 +110,7 @@ module Squishling
 
     # A judge that picks between two outputs (see Judge#verdict, which returns a Judge::Verdict), or rejects
     # both. judge: is a model name or a Hash with model:, provider:, params:, and attempts: (as an escalation
-    # step, without order:), plus type: :chat (default) or :judgment and, for :judgment, min_confidence:.
+    # step, without priority:), plus type: :chat (default) or :judgment and, for :judgment, min_confidence:.
     # Without one, the judge is the escalation's next stage after the first. instructions: is a String, or a
     # Proc evaluated against the receiver, replacing Harness::DEFAULT_JUDGE_INSTRUCTIONS. The judge is resolved
     # here, so a missing one raises ConfigurationError before any request is made.
@@ -145,10 +145,10 @@ module Squishling
       stage.frozen? ? stage : stage.dup.freeze
     end
 
-    # A judge declaration as the escalation step Judge takes: one step (no order:), with its type.
+    # A judge declaration as the escalation step Judge takes: one step (no priority:), with its type.
     def judge_step(declaration)
       step = ModelPath.normalize_step(declaration, "#{label} judge", extras: Judge::STEP_KEYS)
-      raise ConfigurationError, "#{label} judge: a judge is one step, so it takes no order:" if step.key?(:order)
+      ModelPath.single_step!(step, "#{label} judge: a judge is one step, so it")
 
       type = step.fetch(:type, :chat)
       type = :chat if type.nil?
