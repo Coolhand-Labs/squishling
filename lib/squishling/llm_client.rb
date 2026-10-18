@@ -83,23 +83,26 @@ module Squishling
     # a provider option its protocol reserves), and a bare RubyLLM::Error without an HTTP response for a provider
     # that doesn't support judgments at all. An ArgumentError from anywhere else (an instrumentation subscriber
     # runs inside the call) is the developer's own and propagates as-is.
-    def judge(input, questions:, step:, attempt:, attempts:)
-      call = call_info(step, :judgment, role: :judge, attempt:, attempts:)
-      Observer.around(call) do
-        request(step) do
-          RubyLLM.judge(input, questions:, provider_options: step.params, **model_options(step))
-        rescue RubyLLM::ModelNotFoundError => e
-          raise ConfigurationError, "#{@label}: #{e.message}"
-        rescue ArgumentError => e
-          raise unless raised_by_ruby_llm?(e)
+    def judge(input, questions:, step:)
+      request(step) do
+        RubyLLM.judge(input, questions:, provider_options: step.params, **model_options(step))
+      rescue RubyLLM::ModelNotFoundError => e
+        raise ConfigurationError, "#{@label}: #{e.message}"
+      rescue ArgumentError => e
+        raise unless raised_by_ruby_llm?(e)
 
-          raise ConfigurationError, "#{@label}: #{e.message}"
-        rescue RubyLLM::Error => e
-          raise unless e.instance_of?(RubyLLM::Error) && e.response.nil?
+        raise ConfigurationError, "#{@label}: #{e.message}"
+      rescue RubyLLM::Error => e
+        raise unless e.instance_of?(RubyLLM::Error) && e.response.nil?
 
-          raise ConfigurationError, "#{@label}: #{e.message}"
-        end
+        raise ConfigurationError, "#{@label}: #{e.message}"
       end
+    end
+
+    # #judge inside the configured observer (see Observer), attempt counting in attempts.
+    def observed_judgment(input, questions:, step:, attempt:, attempts:)
+      call = call_info(step, :judgment, role: :judge, attempt:, attempts:)
+      Observer.around(call) { judge(input, questions:, step:) }
     end
 
     private
