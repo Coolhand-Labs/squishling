@@ -14,6 +14,10 @@ typed result. Both paths must return the same type — that contract is the whol
 bundle exec rake    # RSpec (offline, RubyLLM stubbed) + RuboCop — both must pass
 ```
 
+CI also runs [exhale](https://github.com/tools4imps/exhale-ruby) (duplication and complexity gate, whole-codebase
+sweep). Run it locally with `bin/exhale dry --include-tests` and `bin/exhale complexity`; don't
+introduce new duplicate code or methods over the complexity floor.
+
 After the feature or fix is built and `rake` is green, run `/loop-review` until it comes back clean (see
 [Review and release skills](#review-and-release-skills)).
 
@@ -116,6 +120,13 @@ in your PR.
 
 Releases publish to RubyGems via Trusted Publishing when a `vX.Y.Z` tag is pushed. Agents never create or push
 tags, run `rake release`, or `gem push`.
+
+## Commits and PRs
+
+Author commits and PRs as the local machine's GitHub user (whatever `git config user.name`/`user.email` and
+`gh api user` report), never as Claude or any other agent. Don't add `Co-Authored-By: Claude` trailers or
+"Generated with Claude Code" footers to commit messages or PR descriptions. A human owns every change, and a
+single, accurate author makes it easy to track who is responsible for what.
 
 ## README and docs philosophy
 

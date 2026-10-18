@@ -74,6 +74,55 @@ jobs:
       - name: Audit dependencies for known vulnerabilities
         run: bundle exec bundler-audit check --update
 
+  exhale:
+    name: Exhale (duplication + complexity)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # exhale needs full history for merge-base and blame lookups
+
+      - name: Setup Ruby
+        uses: ruby/setup-ruby@14594264cd68ce8a2345dd349bc3d138a4ef85c8 # v1.327.0
+        with:
+          ruby-version: '3.4'
+          bundler-cache: true
+
+      # Every run sweeps the whole codebase and main passes the same gate; --base only labels
+      # findings as introduced or already there.
+      - name: Exhale duplication check
+        shell: bash
+        env:
+          BASE_REF: ${{ github.base_ref || 'main' }}
+        run: |
+          set -o pipefail
+          bin/exhale dry --include-tests --base "origin/$BASE_REF" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Exhale complexity check
+        shell: bash
+        env:
+          BASE_REF: ${{ github.base_ref || 'main' }}
+        run: |
+          set -o pipefail
+          bin/exhale complexity --base "origin/$BASE_REF" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      # Whole-codebase profile: every unit with its complexity score, for inspection.
+      - name: Profile the whole codebase
+        if: ${{ !cancelled() }}
+        run: bin/exhale complexity --format json > exhale-profile.json
+
+      - name: Upload exhale profile
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: exhale-profile
+          path: exhale-profile.json
+          retention-days: 7
+
   build:
     name: Build Gem
     runs-on: ubuntu-latest

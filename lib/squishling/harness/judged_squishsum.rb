@@ -34,11 +34,7 @@ module Squishling
           ModelPath.single_step!(step, "#{judge_label}: a judge is one step, so it")
           return step unless type == :judgment
 
-          reserved = (step[:params] || {}).keys & JUDGMENT_RESERVED_PARAMS
-          if reserved.any?
-            raise ConfigurationError, "#{judge_label}: #{reserved.join(', ')} can't be set through params " \
-                                      "(controlled by Squishling/RubyLLM)"
-          end
+          Params.reject_reserved!(step[:params] || {}, JUDGMENT_RESERVED_PARAMS, judge_label)
 
           step.merge(min_confidence: min_confidence(judge, judge_label))
         end

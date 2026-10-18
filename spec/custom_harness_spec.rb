@@ -1025,6 +1025,17 @@ RSpec.describe "Squishling custom harnesses" do
   describe "threads and fibers" do
     before { Squishling.register_harness(:tiebreaker, tiebreaker) }
 
+    # A chat that answers every request with the call's own text as the priority.
+    def stub_echo_chat
+      echo = Class.new(FakeChat) do
+        def ask(message)
+          @messages << message
+          FakeChat::Response.new({ "priority" => JSON.parse(message).dig("arguments", "text"), "team" => "api" })
+        end
+      end
+      allow(RubyLLM).to receive(:chat) { |model: nil, **options| echo.new(model:, responses: [], **options) }
+    end
+
     it "sends only the samples' requests from worker threads, keeping the harness and every callback on the caller's" do
       threads = Queue.new
       requested = Queue.new
@@ -1080,13 +1091,7 @@ RSpec.describe "Squishling custom harnesses" do
     end
 
     it "keeps concurrent calls apart, each with its own run and results" do
-      echo = Class.new(FakeChat) do
-        def ask(message)
-          @messages << message
-          FakeChat::Response.new({ "priority" => JSON.parse(message).dig("arguments", "text"), "team" => "api" })
-        end
-      end
-      allow(RubyLLM).to receive(:chat) { |model: nil, **options| echo.new(model:, responses: [], **options) }
+      stub_echo_chat
       klass.squishling(harness: { type: :tiebreaker, tiebreaker: "claude-opus-5-5" })
 
       results = Array.new(8) { |index| Thread.new { klass.call(text: "ticket-#{index}").priority } }.map(&:value)
@@ -1095,13 +1100,7 @@ RSpec.describe "Squishling custom harnesses" do
     end
 
     it "keeps calls in separate fibers apart" do
-      echo = Class.new(FakeChat) do
-        def ask(message)
-          @messages << message
-          FakeChat::Response.new({ "priority" => JSON.parse(message).dig("arguments", "text"), "team" => "api" })
-        end
-      end
-      allow(RubyLLM).to receive(:chat) { |model: nil, **options| echo.new(model:, responses: [], **options) }
+      stub_echo_chat
       klass.squishling(harness: { type: :tiebreaker, tiebreaker: "claude-opus-5-5" })
 
       fibers = Array.new(4) { |index| Fiber.new { klass.call(text: "ticket-#{index}").priority } }
