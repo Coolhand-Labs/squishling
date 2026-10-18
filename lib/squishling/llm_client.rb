@@ -149,7 +149,7 @@ module Squishling
 
     # The error's class and HTTP status, when it has one, which is all of it that is ours to repeat.
     def describe_failure(error)
-      response = error.respond_to?(:response) ? error.response : nil
+      response = error.response
       status = response.is_a?(Hash) ? response[:status] : (response.status if response.respond_to?(:status))
       status ? "#{error.class}, HTTP #{status}" : error.class.to_s
     end

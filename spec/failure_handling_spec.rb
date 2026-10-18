@@ -227,22 +227,46 @@ RSpec.describe "Squishling failure handling" do
       expect { klass.call(text: "x") }.to raise_error(Squishling::ConfigurationError, /UnauthorizedError/) { |e| expect(e.cause.message).to eq("bad key") }
     end
 
-    it "keeps a provider's own message out of ours, leaving it on the cause" do
-      leaked = "Incorrect API key provided: sk-proj-abc***xyz; input was: patient Jane Doe"
-      logger = instance_double(Logger, debug: nil, warn: nil)
-      Squishling.configure { |c| c.logger = logger }
-      klass.squish_fallback { |_error, **| { label: "fallback" } }
-      [RubyLLM::UnauthorizedError, RubyLLM::BadRequestError, RubyLLM::ServerError, Faraday::TimeoutError].each do |type|
-        stub_llm(type.new(leaked), type.new(leaked))
+    describe "a provider's own message" do
+      let(:leaked) { "Incorrect API key provided: sk-proj-abc***xyz; input was: patient Jane Doe" }
 
-        begin
-          klass.call(text: "x")
-        rescue Squishling::Error => e
-          expect(e.message).not_to include("sk-proj", "Jane Doe")
-          expect(e.cause.message).to eq(leaked)
+      {
+        "bad credentials" => [RubyLLM::UnauthorizedError, Squishling::ConfigurationError],
+        "a forbidden key" => [RubyLLM::ForbiddenError, Squishling::ConfigurationError],
+        "a rejected request" => [RubyLLM::BadRequestError, Squishling::ConfigurationError],
+        "a server error" => [RubyLLM::ServerError, Squishling::LLMError],
+        "a timeout" => [Faraday::TimeoutError, Squishling::LLMError]
+      }.each do |label, (type, raised)|
+        it "stays out of the message for #{label}, and is left on the cause" do
+          stub_llm(type.new(leaked), type.new(leaked))
+
+          expect { klass.call(text: "x") }.to raise_error(raised) do |e|
+            expect(e.message).to include(type.name)
+            expect(e.message).not_to include("sk-proj", "Jane Doe")
+            expect(e.cause.message).to eq(leaked)
+          end
         end
       end
-      expect(logger).not_to have_received(:warn).with(/sk-proj|Jane Doe/)
+
+      it "stays out of the logger line when a fallback absorbs the failure" do
+        logger = instance_double(Logger, debug: nil, warn: nil)
+        Squishling.configure { |c| c.logger = logger }
+        klass.squish_fallback { |_error, **| { label: "fallback" } }
+        stub_llm(RubyLLM::ServerError.new(leaked), RubyLLM::ServerError.new(leaked))
+
+        klass.call(text: "x")
+
+        expect(logger).to have_received(:warn).with(/LLM failed, using fallback: .*ServerError/)
+        expect(logger).not_to have_received(:warn).with(/sk-proj|Jane Doe/)
+      end
+    end
+
+    it "keeps RubyLLM's own configuration message, which names a missing setting and holds no provider text" do
+      missing = "Missing configuration for OpenAI: openai_api_key"
+      stub_llm(RubyLLM::ConfigurationError.new(missing))
+
+      expect { klass.call(text: "x") }
+        .to raise_error(Squishling::ConfigurationError, /#{missing}/)
     end
 
     it "reports the HTTP status when the provider sent one" do
@@ -250,6 +274,15 @@ RSpec.describe "Squishling failure handling" do
       stub_llm(RubyLLM::RateLimitError.new("slow down", response:), RubyLLM::RateLimitError.new("slow down", response:))
 
       expect { klass.call(text: "x") }.to raise_error(Squishling::LLMError, /RateLimitError, HTTP 429/)
+    end
+
+    it "reports the HTTP status of a Faraday error, whose response is a Hash" do
+      error = Faraday::ServerError.new("upstream said no", { status: 503 })
+      stub_llm(error, error)
+
+      expect { klass.call(text: "x") }.to raise_error(Squishling::LLMError, /Faraday::ServerError, HTTP 503/) do |e|
+        expect(e.message).not_to include("upstream")
+      end
     end
 
     it "treats an unknown model as a configuration error" do

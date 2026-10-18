@@ -52,7 +52,7 @@ module Squishling
         params: call_params ? (@params || {}).merge(call_params) : @params,
         harness: call_harness || @harness,
         call_context: @call_context.merge((context || {}).transform_keys(&:to_sym)),
-        handed_off: true
+        handed_off: true # only squish! builds a definition this way; it is not part of a declared one
       )
     end
 
