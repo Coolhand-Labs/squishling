@@ -12,7 +12,8 @@ module Squishling
   # instead of positional. Steps sharing a priority are one tier: each call rotates which of them goes first
   # (see Rotation), and the others follow before the next tier, unless a step in the tier sets rotate: false.
   # order: is the deprecated name of priority:. forward_rejected: false starts a step from the original input
-  # alone, without the previous step's rejected output.
+  # alone, without the previous step's rejected output. include_when: (a Proc, called like squish_when with the
+  # method's inputs as keywords, on the instance) drops the step from any call where it is falsy.
   module ModelPath
     # One attempt: the model, its provider, the fully resolved generation params, and whether the previous
     # step's rejected output is shown to it.
@@ -23,7 +24,7 @@ module Squishling
       end
     end
 
-    STEP_KEYS = %i[model provider params attempts priority order rotate forward_rejected].freeze
+    STEP_KEYS = %i[model provider params attempts priority order rotate forward_rejected include_when].freeze
 
     module_function
 
@@ -67,6 +68,18 @@ module Squishling
           params: Params.resolve(params, step[:params]), forward_rejected: step[:forward_rejected])
         [attempt] * step[:attempts]
       end
+    end
+
+    # The steps this call may use: those without an include_when:, and those whose include_when: is truthy for the
+    # call's inputs (evaluated against the receiver, like squish_when). Priority order is kept.
+    def eligible(path, receiver, inputs, label)
+      kept = path.select do |step|
+        gate = step[:include_when]
+        gate.nil? || receiver.instance_exec(**inputs, &gate)
+      end
+      raise ConfigurationError, "#{label}: include_when: excluded every escalation step" if kept.empty?
+
+      kept
     end
 
     # Whether any tier of the path has several models to rotate between.
@@ -134,6 +147,7 @@ module Squishling
         raise ConfigurationError, "#{label} (#{model}): rotate: must be true or false, got #{step[:rotate].inspect}"
       end
 
+      check_include_when!(step, label, model)
       forward_rejected = step.fetch(:forward_rejected, true)
       unless [true, false].include?(forward_rejected)
         raise ConfigurationError,
@@ -142,15 +156,22 @@ module Squishling
 
       params = step[:params] && Params.normalize(step[:params], "#{label} (#{model}) params")
       normalized = { model:, provider: step[:provider], params:, attempts:, forward_rejected: }
-      normalized.merge(step.slice(:priority, :rotate, *extras))
+      normalized.merge(step.slice(:priority, :rotate, :include_when, *extras))
     end
 
-    # A step used on its own (a judge, a harness's step) can't take part in a tier, so it takes no priority: or
-    # rotate:. who names it for the message.
-    def single_step!(step, who)
-      return unless step.key?(:priority) || step.key?(:rotate)
+    def check_include_when!(step, label, model)
+      return if !step.key?(:include_when) || step[:include_when].is_a?(Proc)
 
-      raise ConfigurationError, "#{who} takes no priority: or rotate:"
+      raise ConfigurationError,
+        "#{label} (#{model}): include_when: must be a Proc, got #{step[:include_when].inspect}"
+    end
+
+    # A step used on its own (a judge, a harness's step) can't take part in a tier or be left out of a call, so it
+    # takes no priority:, rotate:, or include_when:. who names it for the message.
+    def single_step!(step, who)
+      return unless step.key?(:priority) || step.key?(:rotate) || step.key?(:include_when)
+
+      raise ConfigurationError, "#{who} takes no priority:, rotate:, or include_when:"
     end
 
     # order: is the deprecated name of priority:.

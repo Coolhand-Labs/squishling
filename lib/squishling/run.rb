@@ -32,7 +32,7 @@ module Squishling
       @payload = payload
       @purpose = purpose
       @harness = harness
-      @steps = definition.escalation_path.freeze
+      @steps = definition.escalation_path(receiver, inputs).freeze
       @client = LLMClient.new(definition.label, purpose:, harness: harness.type, handed_off: definition.handed_off)
       @output_check = OutputCheck.new(definition, receiver, inputs)
       @owner = Thread.current

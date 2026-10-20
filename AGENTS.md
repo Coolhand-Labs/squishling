@@ -53,7 +53,8 @@ Flag any change that breaks one of these; they are behavior contracts, not style
   steps with `attempts:`, optionally explicit `priority:`, whose old name `order:` is deprecated); there is no
   separate retry count, and levels are never merged. Steps tied on priority are one tier that rotates per call
   (`Rotation`, counted per class and method): the first model alternates, and the tier's other models are tried before
-  the next priority. `rotate: false` pins a tier.
+  the next priority. `rotate: false` pins a tier. A step's `include_when:` Proc (inputs as keywords, on the instance)
+  drops it from a call before rotation; a call left with no steps raises `ConfigurationError`.
   Invalid output and `LLMError` move on to the next attempt; `ConfigurationError` never does.
 - **Error taxonomy.** Everything Squishling raises inherits `Squishling::Error`: `ConfigurationError`
   (setup mistakes; never retried, escalated, or passed to fallbacks), `InvalidOutputError` (bad output after every
@@ -104,7 +105,7 @@ Flag any change that breaks one of these; they are behavior contracts, not style
 
 The public surface is `Squishling.configure`/`config`, the `include Squishling` DSL (`squishling` — including its
 `model:`/`escalation:` (steps with `model:`, `attempts:`, `priority:`, `rotate:`, `provider:`, `params:`,
-`forward_rejected:`)/`provider:`/`params:`/
+`forward_rejected:`, `include_when:`)/`provider:`/`params:`/
 `harness:` (`type:`, `compare:`, `judge:` (a step, plus `type: :chat | :judgment` and `min_confidence:`),
 `judge_instructions:`)/`append_to_purpose:`/`squawk:` options — `purpose`, `append_to_purpose`, `output_schema`,
 `squish_when`, `squish_context`, `squish` (including `validate:`/`harness:`/`squawk:`), `squish_validate`,

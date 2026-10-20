@@ -65,6 +65,7 @@ Each step is a model name, or a Hash with:
 | `attempts:` | `1` | How many attempts this step gets before escalating to the next one. |
 | `priority:` | position | An Integer; steps run lowest first. Give every step a `priority:` or none. Steps with the same priority are one tier (see [Rotating models](#rotating-models-within-a-priority)). Gaps are fine. `order:` is the deprecated name for it. |
 | `rotate:` | `true` | Set `false` on a step to keep its tier in the order written instead of rotating it. |
+| `include_when:` | always | A Proc that leaves this step out of any call where it returns falsy (see [Excluding a model per call](#excluding-a-model-per-call)). |
 | `provider:` | the level's `provider:` | See [Providers](#providers-and-newly-released-models). |
 | `forward_rejected:` | `true` | Set `false` to start this step from the original input alone, without the previous step's rejected output and its errors (see below). |
 | `params:` | `{}` | [Generation params](#generation-params) for this step, merged over the class and method params key by key. |
@@ -106,6 +107,25 @@ squishling escalation: [
   never rotates, and neither does an escalation without `priority:`. `rotate: false` on any step of a tier keeps the
   whole tier in the order written, whatever its other steps say.
 - Rotation also moves which stages the [`:squishsum` and `:judged_squishsum`](harnesses.md) harnesses sample first.
+
+### Excluding a model per call
+
+`include_when:` takes a Proc, called like a `squish_when` predicate: against the instance, with the method's inputs as
+keywords. A step whose Proc returns falsy is left out of that call's escalation, for example a model without a BAA:
+
+```ruby
+squishling escalation: [
+  { model: "gpt-5", include_when: ->(client:, **) { !client.needs_a_baa_model? } },
+  "claude-sonnet-5-5"
+]
+```
+
+- Steps are filtered before rotation, so a tier rotates only between the models still eligible for the call. A step
+  that is excluded takes no part in its tier, so an excluded `rotate: false` step no longer pins it.
+- A call whose steps are all excluded raises `ConfigurationError`. It is never retried or passed to `squish_fallback`.
+- It applies wherever an escalation is declared (class, method, `default_escalation`, or `squish!`), but not to a judge
+  or harness step, which are single steps.
+- The Proc runs on the calling thread. An exception it raises propagates unwrapped.
 
 `params:` on a step let one step switch to a reasoning model that rejects sampling params:
 

@@ -266,9 +266,11 @@ RSpec.describe "Squishling custom harnesses" do
       expect { klass.squishling(harness: { type: :tiebreaker, tiebreaker: 3 }) }
         .to raise_error(Squishling::ConfigurationError, /each step must be a model name or a Hash/)
       expect { klass.squishling(harness: { type: :tiebreaker, tiebreaker: { model: "x", priority: 1 } }) }
-        .to raise_error(Squishling::ConfigurationError, /a harness step takes no priority: or rotate:/)
+        .to raise_error(Squishling::ConfigurationError, /a harness step takes no priority:, rotate:, or include_when:/)
       expect { klass.squishling(harness: { type: :tiebreaker, tiebreaker: { model: "x", rotate: false } }) }
-        .to raise_error(Squishling::ConfigurationError, /a harness step takes no priority: or rotate:/)
+        .to raise_error(Squishling::ConfigurationError, /a harness step takes no priority:, rotate:, or include_when:/)
+      expect { klass.squishling(harness: { type: :tiebreaker, tiebreaker: { model: "x", include_when: -> { true } } }) }
+        .to raise_error(Squishling::ConfigurationError, /a harness step takes no priority:, rotate:, or include_when:/)
       expect { klass.squishling(harness: { type: :tiebreaker, tiebreaker: { model: "x", attempts: 0 } }) }
         .to raise_error(Squishling::ConfigurationError, /attempts: must be a positive Integer/)
       expect { klass.squish(:triage, harness: { type: :tiebreaker }) { string :team } }
@@ -834,7 +836,7 @@ RSpec.describe "Squishling custom harnesses" do
     it "validates a step Hash wherever it comes from, and leaves a stage the caller owns unfrozen" do
       with_harness { |run| run.escalate({ model: "claude-haiku-4-5", priority: 1 }) }
       expect { klass.call(text: "x") }
-        .to raise_error(Squishling::ConfigurationError, /a harness step takes no priority: or rotate:/)
+        .to raise_error(Squishling::ConfigurationError, /a harness step takes no priority:, rotate:, or include_when:/)
 
       Squishling.reset_harnesses!
       mine = []
@@ -978,8 +980,11 @@ RSpec.describe "Squishling custom harnesses" do
         [{ model: "x", type: false }, /judge type: must be one of chat, judgment, got false/],
         [{ model: "x", type: :judgment, min_confidence: 2 }, /judge min_confidence: must be a number from 0 to 1/],
         [{ model: "x", bogus: 1 }, /unknown step option\(s\) bogus/],
-        [{ model: "x", priority: 1 }, /a judge is one step, so it takes no priority: or rotate:/],
-        [{ model: "x", rotate: false }, /a judge is one step, so it takes no priority: or rotate:/],
+        [{ model: "x", priority: 1 }, /a judge is one step, so it takes no priority:, rotate:, or include_when:/],
+        [{ model: "x", rotate: false }, /a judge is one step, so it takes no priority:, rotate:, or include_when:/],
+        [{ model: "x", include_when: lambda {
+          true
+        } }, /a judge is one step, so it takes no priority:, rotate:, or include_when:/],
         [{ model: "x", min_confidence: 0.5 }, /min_confidence: only applies to type: :judgment judges/],
         [false, /each step must be a model name or a Hash/]
       ].each do |declaration, message|

@@ -61,6 +61,9 @@ This is the workflow from [Elastic Software](https://everythingengineer.substack
 
 Callers never change, because both paths return the same result class.
 
+To keep a particular model off certain inputs (a client that needs a BAA, say), give its escalation step an
+`include_when:` Proc; see [Excluding a model per call](configuration.md#excluding-a-model-per-call).
+
 ## Entry points
 
 Squish methods other than `call` with `squish`, optionally overriding the class-level settings per method:
