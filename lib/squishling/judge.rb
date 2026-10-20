@@ -4,10 +4,12 @@ module Squishling
   # Picks between two disagreeing samples, or rejects both (see Run#judge). The judge is the given judge:
   # step, or else the escalation's next stage after the first. A chat judge answers with a strict verdict
   # schema; a :judgment judge (a System One decision model such as Jev) answers one choice question through
-  # RubyLLM.judge, and its pick counts only at or above min_confidence.
+  # the adapter's judgments (RubyLLM's, with the RubyLLM adapter), and its pick counts only at or above
+  # min_confidence.
   class Judge
     # The judge kinds: :chat (a chat model answering VERDICT_SCHEMA) and :judgment (a System One decision model
-    # through RubyLLM.judge). A judge is an escalation step (see ModelPath) plus these keys: type: (default :chat)
+    # through the adapter's judgments). A judge is an escalation step (see ModelPath) plus these keys:
+    # type: (default :chat)
     # and, for :judgment, min_confidence: (the probability the chosen candidate needs).
     TYPES = %i[chat judgment].freeze
     STEP_KEYS = %i[type min_confidence].freeze
@@ -49,6 +51,7 @@ module Squishling
       @judge = judge
       @instructions = instructions
       check!
+      check_judgments!
       @guard = guard
       @harness_type = harness_type
       @purpose = purpose
@@ -93,6 +96,14 @@ module Squishling
       return if @instructions.nil? || @instructions.is_a?(Proc) || non_blank_string?(@instructions)
 
       raise ConfigurationError, "#{label} instructions must be a non-blank String or a Proc"
+    end
+
+    # Raised before any request, like the rest of the judge's checks.
+    def check_judgments!
+      return if !judgment? || @client.judgments?
+
+      raise ConfigurationError, "#{@definition.label}: judge type: :judgment needs an adapter that supports " \
+                                "judgments (the configured adapter doesn't); use type: :chat or the :ruby_llm adapter"
     end
 
     def non_blank_string?(value)

@@ -8,9 +8,9 @@ A failed attempt moves on to the next one; once the last fails, the error is rai
 
 | Failure | What Squishling does |
 |---|---|
-| Rate limit, 5xx, overload, timeout, connection error | RubyLLM retries at the HTTP level first (`RubyLLM.config.max_retries`, default 3). If it still fails, moves to the next attempt in a fresh chat; on the last attempt, raises `Squishling::LLMError` with the original exception as its `cause`. |
+| Rate limit, 5xx, overload, timeout, connection error | The [adapter](adapters.md) retries at the HTTP level first (RubyLLM: `RubyLLM.config.max_retries`, default 3; OpenAI-compatible: `max_retries:`, default 2). If it still fails, moves to the next attempt in a fresh chat; on the last attempt, raises `Squishling::LLMError` with the original exception as its `cause` (when the adapter has one: the RubyLLM adapter always does; the OpenAI-compatible adapter for transport errors, not for HTTP statuses). |
 | Bad API key, unknown model, missing provider config | Raises `Squishling::ConfigurationError`. Never escalated, never sent to the fallback. |
-| Provider rejects the request (400 Bad Request), e.g. an unsupported `temperature` or a schema it won't accept | Raises `ConfigurationError` naming the error class and HTTP status, and the params in use; the provider's own message is on `cause`. Never escalated, never sent to the fallback, so a setup mistake can't be silently covered up on every call. |
+| Provider rejects the request (400 Bad Request), e.g. an unsupported `temperature` or a schema it won't accept | Raises `ConfigurationError` naming the error class and HTTP status, and the params in use; the provider's own message is on `cause` when the adapter has one (RubyLLM's does; the OpenAI-compatible adapter's carries only the status). Never escalated, never sent to the fallback, so a setup mistake can't be silently covered up on every call. |
 | Empty or `nil` response (e.g. a refusal or a max-tokens cutoff) | Moves to the next attempt, then raises `Squishling::InvalidOutputError` |
 | Malformed or truncated JSON | Moves to the next attempt, then raises `InvalidOutputError`. JSON wrapped in a markdown code fence is accepted. |
 | JSON that doesn't match the schema (wrong types, missing or extra keys, `null` in a non-`optional` field, a broken [conditional rule](schemas.md#contracts-beyond-the-schema), root not an object) | Moves to the next attempt with the validation errors, then raises `InvalidOutputError` |
@@ -18,7 +18,7 @@ A failed attempt moves on to the next one; once the last fails, the error is rai
 | With a [squishsum harness](harnesses.md): two valid samples that differ, with no judge or a judge that rejects both | Raises `Squishling::DisagreementError` (an `InvalidOutputError`), carrying both typed `candidates` |
 
 Squishling validates output itself with [json_schemer](https://github.com/davishmcclurg/json_schemer), because
-RubyLLM doesn't, and some providers don't enforce strict mode. When the next attempt is on the same step (same
+adapters don't, and some providers don't enforce strict mode. When the next attempt is on the same step (same
 model, provider, params, and `forward_rejected:`), the re-ask happens in the same conversation, so the model sees
 what it got wrong. A different step gets a fresh chat with the original input plus the rejected output (truncated to
 4,000 characters) and its errors, so that output is sent to the next step's provider, which may not be the one that
@@ -72,7 +72,7 @@ end
 |---|---|
 | `output` | The raw response: a Hash or String, or `nil` when the provider call itself failed |
 | `error` | `nil` for an accepted attempt. Otherwise the `InvalidOutputError` (with `errors` and `raw`) or `LLMError` that ended the attempt |
-| `metadata` | `label` (`"Class#method"`), `attempt`, `attempts` (the escalation's length; under a harness, the sample's or judge's own attempts), `final` (the last attempt), `model`, `provider`, `params`, `input` (the JSON sent: arguments and named context only), `usage` (token counts, when RubyLLM reports them), `role` (`nil` for an escalation attempt, `:sample`, or `:judge`), `sample` (`"a"`, `"b"`, ... for a sample's attempt, else `nil`) |
+| `metadata` | `label` (`"Class#method"`), `attempt`, `attempts` (the escalation's length; under a harness, the sample's or judge's own attempts), `final` (the last attempt), `model`, `provider`, `params`, `input` (the JSON sent: arguments and named context only), `usage` (token counts, when the adapter reports them), `role` (`nil` for an escalation attempt, `:sample`, or `:judge`), `sample` (`"a"`, `"b"`, ... for a sample's attempt, else `nil`) |
 
 - Set it globally with `config.squawk`, per class with `squishling squawk: ...`, or per method with
   `squish :triage, squawk: ...`. The method's hook wins over the class's, which wins over the configured one;
@@ -123,7 +123,7 @@ end
 | `Squishling::ConfigurationError` | Missing purpose or schema, a non-strict schema, invalid or reserved params, an invalid `model:`/`escalation:` declaration, an invalid `append_to_purpose` item or unavailable source, bad credentials, an unknown model, a request the provider rejects (400) |
 | `Squishling::InvalidOutputError` | LLM output still invalid (schema or `squish_validate`) after every attempt in the escalation, or a deterministic/fallback return that doesn't match the schema |
 | `Squishling::DisagreementError` | A subclass of `InvalidOutputError`: a [squishsum harness](harnesses.md#when-the-harness-fails)'s samples disagreed and no judge accepted either. `candidates`, `verdict`, and `reason` describe what happened |
-| `Squishling::LLMError` | The provider call failed on the last attempt in the escalation, after RubyLLM's own retries, including context-length errors (`cause` holds the original) |
+| `Squishling::LLMError` | The provider call failed on the last attempt in the escalation, after the adapter's own retries, including context-length errors (`cause` holds the original, when the adapter has one) |
 
 Errors raised by your own Ruby code are not wrapped.
 

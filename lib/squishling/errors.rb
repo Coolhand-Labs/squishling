@@ -10,7 +10,7 @@ module Squishling
   # Output that didn't match the schema (or a squish_validate check): from the LLM after every attempt in the
   # escalation, or from the deterministic path.
   class InvalidOutputError < Error
-    # models: the model ids tried, one per attempt (nil entries mean RubyLLM's default model).
+    # models: the model ids tried, one per attempt (nil entries mean the adapter's default model).
     attr_reader :errors, :raw, :attempts, :models
 
     def initialize(errors:, raw: nil, source: "LLM", attempts: nil, models: nil)
@@ -44,7 +44,7 @@ module Squishling
     end
   end
 
-  # The LLM call itself failed (rate limit, server error, timeout, connection) after RubyLLM's own
-  # HTTP retries. The original exception is available as #cause.
+  # The LLM call itself failed (rate limit, server error, timeout, connection) after the
+  # adapter's own HTTP retries. The original exception is available as #cause.
   class LLMError < Error; end
 end

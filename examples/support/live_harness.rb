@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
-# Shared harness for the live examples: resolves the provider API key, configures RubyLLM and
-# Squishling for one small model, and runs a set of scenarios that exercise the gem end to end.
+# Shared harness for the live examples: resolves the provider API key, configures an adapter (RubyLLM's by
+# default) and Squishling for one small model, and runs a set of scenarios that exercise the gem end to end.
 
 require "optparse"
 require "bundler/setup"
@@ -17,7 +17,10 @@ module LiveHarness
   # rejected_params: params the model is known to reject, which must fail loudly (used by the shared scenarios).
   # scenarios: the Scenarios to run (the shared ones by default). around: a callable that runs the block it is
   # given inside whatever a script needs set up and torn down for its scenarios (a local server, say).
-  def run(script:, provider:, env_var:, default_model:, params:, rejected_params: {}, scenarios: SCENARIOS, around: nil)
+  # adapter: :ruby_llm (the default; the key is given to RubyLLM) or a callable that takes the API key and returns a
+  # value for config.adapter.
+  def run(script:, provider:, env_var:, default_model:, params:, rejected_params: {}, scenarios: SCENARIOS, around: nil,
+    adapter: :ruby_llm)
     options = parse_options(script, default_model)
     api_key = options[:api_key] || ENV.fetch(env_var, nil)
     if api_key.nil? || api_key.strip.empty?
@@ -25,8 +28,8 @@ module LiveHarness
       exit 1
     end
 
-    RubyLLM.configure { |config| config.public_send(:"#{provider}_api_key=", api_key) }
     Squishling.configure do |config|
+      config.adapter = configure_adapter(adapter, provider, api_key)
       config.default_escalation = [{ model: options[:model], attempts: 2 }]
       config.default_provider = provider
       config.default_params = params
@@ -38,6 +41,14 @@ module LiveHarness
     failures = around ? around.call(&count_failures) : count_failures.call
     puts "\n#{scenarios.size - failures}/#{scenarios.size} passed"
     exit(failures.zero? ? 0 : 1)
+  end
+
+  def configure_adapter(adapter, provider, api_key)
+    return adapter.call(api_key) unless adapter == :ruby_llm
+
+    require "ruby_llm"
+    RubyLLM.configure { |config| config.public_send(:"#{provider}_api_key=", api_key) }
+    :ruby_llm
   end
 
   def parse_options(script, default_model)
@@ -306,7 +317,7 @@ module LiveHarness
       check(result.squished?, "expected an LLM result")
       check(result.sentiment == "positive", "sentiment was #{result.sentiment.inspect}")
       check(calls.size == 2, "expected 2 squawk calls (one per sample), got #{calls.size}")
-      # output is what RubyLLM returned: the JSON String (or a Hash, for providers that parse it themselves).
+      # output is what the adapter returned: the JSON String (or a Hash, for an adapter that parses it itself).
       check(calls.all? { |call| call[:error].nil? && [String, Hash].include?(call[:output].class) },
         "unexpected squawk calls: #{calls.map { |call| call.values_at(:error, :output).map(&:class) }.inspect}")
       metadata = calls.map { |call| call[:metadata].slice(:model, :usage) }

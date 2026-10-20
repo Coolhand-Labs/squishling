@@ -5,20 +5,19 @@ module Squishling
   module Params
     THINKING_KEYS = %i[effort budget display].freeze
 
-    # Request keys Squishling or RubyLLM own. Provider options are merged into the request last,
-    # overriding RubyLLM's defaults, so these would silently replace the model, the conversation,
-    # or the strict output format.
+    # Request keys Squishling or the adapter own. Provider params are merged into the request alongside what the
+    # adapter builds, so these would silently replace the model, the conversation, or the strict output format.
     RESERVED_KEYS = %i[
       model messages input inputs instructions contents system system_instruction systemInstruction cachedContent
       stream stream_options store include response_format text output_config outputConfig tools tool_choice
-      toolConfig tool_config schema
+      toolConfig tool_config schema functions function_call
     ].freeze
 
     # Some protocols carry the structured-output format (or tool selection) inside a container that is
     # itself allowed, because it also holds ordinary settings (Gemini's topK, Mistral's top_p, ...). RubyLLM
     # deep-merges provider options, so these nested keys would override the strict format just like the
     # top-level ones. Re-check each protocol's render_payload (ruby_llm protocols/*/chat.rb) on every
-    # ruby_llm upgrade.
+    # ruby_llm upgrade (the RubyLLM adapter is where they matter).
     GENERATION_CONFIG_RESERVED_KEYS = %i[
       responseMimeType response_mime_type responseSchema response_schema responseJsonSchema response_json_schema
       response_format tools tool_choice toolConfig tool_config
@@ -49,11 +48,11 @@ module Squishling
       return if reserved.empty?
 
       raise ConfigurationError, "#{label}: #{reserved.join(', ')} can't be set through params " \
-                                "(controlled by Squishling/RubyLLM#{hint})"
+                                "(controlled by Squishling and the adapter#{hint})"
     end
 
     # Nested keys are compared as symbols so a string-keyed "responseMimeType" can't slip past the check.
-    # A non-Hash container would replace (not merge into) the one RubyLLM builds, wiping the strict format.
+    # A non-Hash container would replace (not merge into) the one the adapter builds, wiping the strict format.
     # Validated containers are copied and frozen so they can't be mutated after the check.
     def reject_nested_reserved!(params, label)
       nested = NESTED_RESERVED_KEYS.flat_map do |container, reserved|
@@ -74,22 +73,6 @@ module Squishling
     # Later layers override earlier ones key by key; nil removes the key (back to the provider default).
     def resolve(*layers)
       layers.compact.reduce({}) { |merged, layer| merged.merge(layer) }.compact
-    end
-
-    # Portable settings use RubyLLM's dedicated setters, which translate them for each provider;
-    # everything else is merged into the provider request as-is.
-    def apply(chat, params)
-      rest = params.except(:temperature, :thinking, :max_output_tokens)
-      chat.with_temperature(params[:temperature]) if params.key?(:temperature)
-      chat.with_max_output_tokens(params[:max_output_tokens]) if params.key?(:max_output_tokens)
-      apply_thinking(chat, params[:thinking]) if params.key?(:thinking)
-      chat.with_provider_options(rest) if rest.any?
-      chat
-    end
-
-    # true: the model's default thinking; false: off; a Hash: { effort:, budget:, display: }.
-    def apply_thinking(chat, thinking)
-      thinking.is_a?(Hash) ? chat.with_thinking(**thinking) : chat.with_thinking(thinking)
     end
 
     def normalize_thinking(thinking, label)

@@ -75,7 +75,7 @@ RSpec.describe "Squishling squawk" do
     end
 
     it "fires with no output when the provider call fails" do
-      error = RubyLLM::ServerError.new("boom")
+      error = Squishling::LLMError.new("boom")
       stub_llm(error, error)
 
       expect { klass.call(text: "x") }.to raise_error(Squishling::LLMError)
@@ -85,7 +85,7 @@ RSpec.describe "Squishling squawk" do
     end
 
     it "doesn't fire for a configuration error" do
-      stub_llm(RubyLLM::UnauthorizedError.new("bad key"))
+      stub_llm(Squishling::ConfigurationError.new("bad key"))
 
       expect { klass.call(text: "x") }.to raise_error(Squishling::ConfigurationError)
       expect(calls).to be_empty
@@ -98,12 +98,20 @@ RSpec.describe "Squishling squawk" do
       expect(calls.first[:metadata][:input]).not_to include("SECRET_IVAR")
     end
 
-    it "includes the response's model and token usage when RubyLLM reports them" do
-      tokens = instance_double(RubyLLM::Tokens, to_h: { input_tokens: 3, output_tokens: 4 })
+    it "includes the response's model and token usage when the adapter reports them" do
+      tokens = { input_tokens: 3, output_tokens: 4 }
       stub_llm(FakeChat::Response.new({ "label" => "ok" }, "served-model", tokens))
       klass.call(text: "x")
 
       expect(calls.first[:metadata]).to include(model: "served-model", usage: { input_tokens: 3, output_tokens: 4 })
+    end
+
+    it "reports usage as nil when the adapter reported no token counts" do
+      stub_llm({ "label" => "ok" })
+      klass.call(text: "x")
+
+      expect(calls.first[:metadata]).to have_key(:usage)
+      expect(calls.first[:metadata][:usage]).to be_nil
     end
 
     it "lets an exception raised by the hook propagate unchanged" do

@@ -58,8 +58,8 @@ Both samples run on the escalation's first step, with its model, provider, and p
 - **They're independent.** Each sample has its own chat, and the two requests are sent concurrently on separate
   threads. Only the provider requests run on those threads. Parsing, schema validation, `squish_validate`,
   `compare:`, and the judge all run on the calling thread, so your Squishling callbacks never run concurrently.
-  RubyLLM instrumentation subscribers (e.g. `ActiveSupport::Notifications` listeners for `chat.ruby_llm`) do see
-  each sample's request on its worker thread, outside the Rails executor, so keep them thread-safe.
+  With the RubyLLM adapter, instrumentation subscribers (e.g. `ActiveSupport::Notifications` listeners for
+  `chat.ruby_llm`) do see each sample's request on its worker thread, outside the Rails executor, so keep them thread-safe.
 - **Each one is retried like an escalation step.** A sample with invalid output is re-asked in its own chat, up to
   the first step's `attempts:`, while a sample that already passed keeps its result. A failed request gets a fresh
   chat. A sample still failing after its attempts fails the call with `InvalidOutputError` or `LLMError`, as
@@ -108,8 +108,10 @@ valid verdict raises `InvalidOutputError`. A chat judge's params are the method'
 ### System One judgment models (Jev)
 
 A judge can also be a System One decision model, such as TypeSafe's Jev, via
-[RubyLLM judgments](https://rubyllm.com/judgments/) (RubyLLM 2.1+). Decision models return calibrated
-probabilities rather than text, so they are much faster and cheaper than a chat judge.
+[RubyLLM judgments](https://rubyllm.com/judgments/) (RubyLLM 2.1+). This needs an [adapter](adapters.md) that
+supports judgments, which today means the `:ruby_llm` adapter; on any other, a `type: :judgment` judge raises
+`ConfigurationError` before a request is made (a `type: :chat` judge works with every adapter). Decision models return
+calibrated probabilities rather than text, so they are much faster and cheaper than a chat judge.
 
 ```ruby
 squishling harness: {
@@ -122,8 +124,8 @@ Squishling asks one `choice` question (`a`, `b`, or `neither`), with the judge p
 operation's purpose, input, output schema, and candidates as the judgment input. A pick of `a` or `b` is
 accepted only when its probability is at least `min_confidence:` (default `0.8`). Otherwise, as with `neither`,
 `DisagreementError` is raised with the choice and its probability in its `reason`. A judgment judge sends only its own
-`params:` (as RubyLLM `provider_options:`). `attempts:` retries a failed request. Configure the provider's
-credentials in RubyLLM as usual.
+`params:` (as RubyLLM `provider_options:`). `attempts:` retries a failed request. Judgments are a RubyLLM feature, so
+they need the `:ruby_llm` adapter, with the provider's credentials configured in RubyLLM as usual.
 
 ### The default judge prompt
 

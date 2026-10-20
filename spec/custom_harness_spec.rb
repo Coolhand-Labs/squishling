@@ -251,7 +251,7 @@ RSpec.describe "Squishling custom harnesses" do
     end
 
     it "checks the options up front, before any request" do
-      expect(RubyLLM).not_to receive(:chat)
+      expect(fake_adapter).not_to receive(:complete)
 
       expect { klass.squishling(harness: :tiebreaker) }
         .to raise_error(Squishling::ConfigurationError, /harness option\(s\) tiebreaker required/)
@@ -479,9 +479,9 @@ RSpec.describe "Squishling custom harnesses" do
 
       klass.call(text: "x")
 
-      expect(chats.first.generation).to include(temperature: 0.1)
-      expect(chats.last.options).to include(provider: :anthropic)
-      expect(chats.last.generation).to include(temperature: 0.5, provider_options: { top_p: 0.9 })
+      expect(chats.first.params).to eq(temperature: 0.1, top_p: 0.9)
+      expect(chats.last.provider).to eq(:anthropic)
+      expect(chats.last.params).to eq(temperature: 0.5, top_p: 0.9)
     end
 
     it "retries a sample in its own chat up to its stage's attempts, running squish_validate each time" do
@@ -587,7 +587,7 @@ RSpec.describe "Squishling custom harnesses" do
         end
       end
       klass.squishling(escalation: ["claude-haiku-4-5"], harness: :arbiter)
-      expect(RubyLLM).not_to receive(:chat)
+      expect(fake_adapter).not_to receive(:complete)
 
       expect { klass.call(text: "x") }
         .to raise_error(Squishling::ConfigurationError, /the arbiter harness needs a judge: or a second escalation/)
@@ -621,7 +621,7 @@ RSpec.describe "Squishling custom harnesses" do
     end
 
     it "reports every attempt, each sample by name and role, with its usage" do
-      tokens = RubyLLM::Tokens.new(input: 10, output: 5)
+      tokens = { input_tokens: 10, output_tokens: 5 }
       response = ->(content, model) { FakeChat::Response.new(content, model, tokens) }
       stub_llm_chats([response.call(high, "claude-haiku-4-5")], [response.call(low, "claude-sonnet-5-5")],
         [response.call(low, "claude-opus-5-5")])
@@ -732,7 +732,7 @@ RSpec.describe "Squishling custom harnesses" do
     it "raises LLMError from a failed request on the last attempt, to the fallback too" do
       register_unanimous
       klass.squish_fallback { |error, **| { priority: error.class.name, team: "ops" } }
-      stub_llm_chats([high], [Faraday::TimeoutError.new("slow")], [high])
+      stub_llm_chats([high], [Squishling::LLMError.new("slow")], [high])
 
       expect(klass.call(text: "x").priority).to eq("Squishling::LLMError")
     end
@@ -743,7 +743,7 @@ RSpec.describe "Squishling custom harnesses" do
       end
       klass.squishling(harness: :picky)
       klass.squish_fallback { |error, **| { priority: error.errors.first, team: "ops" } }
-      expect(RubyLLM).not_to receive(:chat)
+      expect(fake_adapter).not_to receive(:complete)
 
       expect(klass.call(text: "x").priority).to eq("no")
     end
@@ -1030,15 +1030,11 @@ RSpec.describe "Squishling custom harnesses" do
   describe "threads and fibers" do
     before { Squishling.register_harness(:tiebreaker, tiebreaker) }
 
-    # A chat that answers every request with the call's own text as the priority.
+    # Answers every request with the call's own text as the priority.
     def stub_echo_chat
-      echo = Class.new(FakeChat) do
-        def ask(message)
-          @messages << message
-          FakeChat::Response.new({ "priority" => JSON.parse(message).dig("arguments", "text"), "team" => "api" })
-        end
+      fake_adapter.responder = lambda do |request|
+        { "priority" => JSON.parse(request.messages.last[:content]).dig("arguments", "text"), "team" => "api" }
       end
-      allow(RubyLLM).to receive(:chat) { |model: nil, **options| echo.new(model:, responses: [], **options) }
     end
 
     it "sends only the samples' requests from worker threads, keeping the harness and every callback on the caller's" do
@@ -1070,18 +1066,6 @@ RSpec.describe "Squishling custom harnesses" do
       expect(callbacks.map(&:last).uniq).to eq([Thread.current])
       expect(callbacks.map(&:first)).to include(:harness, :validate)
       expect(Array.new(2) { requested.pop }).to all(satisfy { |thread| thread != Thread.current })
-    end
-
-    it "carries the fiber-local instrumentation workflow to the request threads" do
-      klass.squishling(harness: { type: :tiebreaker, tiebreaker: "claude-opus-5-5" })
-      seen = Queue.new
-      stub_llm_chats([high], [high], on_ask: lambda { |_chat|
-        seen << RubyLLM::Support::Instrumentation.current_workflow
-      })
-
-      RubyLLM::Support::Instrumentation.with_workflow({ name: "triage" }) { klass.call(text: "x") }
-
-      expect([seen.pop, seen.pop]).to eq([{ name: "triage" }] * 2)
     end
 
     it "has no routing frames on the request threads, which only ask" do
@@ -1123,7 +1107,7 @@ RSpec.describe "Squishling custom harnesses" do
         end
       end
       klass.squishling(harness: :threaded)
-      expect(RubyLLM).not_to receive(:chat)
+      expect(fake_adapter).not_to receive(:complete)
 
       expect { klass.call(text: "x") }
         .to raise_error(Squishling::ConfigurationError, /from the thread it runs on/)

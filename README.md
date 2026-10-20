@@ -130,12 +130,17 @@ end
 gem "squishling"
 ```
 
-Requires Ruby 3.3+ and RubyLLM 2.1+. Configure your provider API keys in RubyLLM as usual, then optionally set a
-universal model, or an escalation of models to try in order:
+Requires Ruby 3.3+ and an [adapter](docs/adapters.md) to reach a model: the `ruby_llm` gem (2.1+; Squishling uses it
+automatically when it is in your bundle), or any OpenAI-compatible endpoint, which needs no extra gem. Squishling no
+longer installs or requires `ruby_llm` for you, so add `gem "ruby_llm"` next to it if you use RubyLLM (and
+`require "ruby_llm"` before `RubyLLM.configure` if your app doesn't load its Gemfile with `Bundler.require`). With RubyLLM,
+configure your provider API keys there as usual. Then choose an adapter, and optionally set a universal model, or an
+escalation of models to try in order:
 
 ```ruby
 Squishling.configure do |config|
-  config.default_model = "claude-sonnet-5-5" # falls back to RubyLLM's default when nil
+  config.adapter = :ruby_llm                 # or { type: :openai_compatible, base_url: "http://localhost:11434/v1" }
+  config.default_model = "claude-sonnet-5-5" # falls back to the adapter's default when nil
   # or: config.default_escalation = [{ model: "claude-haiku-4-5", attempts: 2 }, "claude-sonnet-5-5", "claude-opus-5-5"]
 end
 ```
@@ -162,8 +167,11 @@ sees it right where the value goes, and the purpose stays short and about the go
   returned as the same typed `Data` objects. `squished?` tells you which path served a call.
 - **Your code as context**: `append_to_purpose` adds sections to the prompt, including a class's or method's
   own Ruby source.
-- **Any RubyLLM provider and model**: OpenAI, Anthropic Claude, Google Gemini, AWS Bedrock, OpenRouter, and more.
-  Set a universal, per-class, per-method, or per-call model, plus layered generation params (temperature,
+- **[Bring your own adapter](docs/adapters.md)**: Squishling doesn't depend on any one LLM client. Use the
+  [RubyLLM](https://rubyllm.com) adapter (OpenAI, Anthropic Claude, Google Gemini, AWS Bedrock, OpenRouter, and more),
+  the OpenAI-compatible adapter (OpenAI, Ollama, vLLM, LM Studio, Together, Groq, … over plain HTTP), or write your
+  own in one method.
+- **Any provider and model**: set a universal, per-class, per-method, or per-call model, plus layered generation params (temperature,
   reasoning effort, top_p, …).
 - **Model escalation**: declare an `escalation:` instead of a `model:`, with per-step `attempts:`, `priority:` (models tied on priority take turns going first), provider,
   params, `forward_rejected:`, and `include_when:` (leave a model out of calls where a Proc is falsy). Invalid output (with its errors fed back) or a provider failure moves on to the next attempt. Steps can
@@ -211,6 +219,7 @@ sees it right where the value goes, and the purpose stays short and about the go
 - [Explainer site](https://coolhand-labs.github.io/squishling/): interactive walkthrough, spectrum slider, and
   token-cost calculator
 - [Configuration](docs/configuration.md): options, models and escalation, providers, generation params, inheritance
+- [Adapters](docs/adapters.md): the RubyLLM and OpenAI-compatible adapters, and writing your own
 - [Routing](docs/routing.md): when a call goes to the LLM, `squish!`, `append_to_purpose`, hardening a path,
   what the LLM sees
 - [Output schemas](docs/schemas.md): schema forms, strict mode, typed results, optional vs. empty, contracts
@@ -227,7 +236,7 @@ sees it right where the value goes, and the purpose stays short and about the go
 
 ```sh
 bin/setup
-bundle exec rake        # RSpec (offline; RubyLLM is stubbed) + RuboCop
+bundle exec rake        # RSpec (offline; adapters are faked or stubbed) + RuboCop
 ```
 
 See [AGENTS.md](AGENTS.md) for repo conventions, and [SECURITY.md](SECURITY.md) for reporting vulnerabilities.

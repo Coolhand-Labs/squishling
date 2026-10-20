@@ -184,7 +184,7 @@ module Squishling
           squawk(prompt, path, attempt, nil, e)
           raise if last
 
-          # The failed request may be half-recorded in this chat, so the next attempt starts a fresh one.
+          # A failed request starts the next attempt in a fresh chat, as a new step does.
           chat = nil
           log_failure(prompt.role, attempt, path, e.message)
           next
@@ -215,7 +215,7 @@ module Squishling
         attempts = sample.stage.size
         -> { @client.ask(chat, message, step, attempt:, attempts:, role: :sample, sample: sample.name) }
       end
-      outcomes = LLMClient.concurrently(jobs)
+      outcomes = @client.concurrently(jobs)
       # A setup mistake (or anything that isn't a failed request) ends the call, whichever sample hit it.
       fatal = outcomes.map(&:last).find { |error| error && !error.is_a?(LLMError) }
       raise fatal if fatal
@@ -280,7 +280,7 @@ module Squishling
       metadata = {
         label:, attempt:, attempts: path.size, final: attempt == path.size,
         model: response&.model || step.model, provider: step.provider, params: step.params, input: prompt.input,
-        usage: response&.tokens&.to_h, role: sample ? :sample : prompt.role, sample: sample&.name
+        usage: response&.usage, role: sample ? :sample : prompt.role, sample: sample&.name
       }
       Squawk.call(hook, output: response&.content, metadata:, error:)
     end

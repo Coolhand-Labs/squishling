@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 module Squishling
-  # The elastic path: sends a squished method's inputs through RubyLLM with structured output.
+  # The elastic path: sends a squished method's inputs through the configured adapter with structured output.
   class Invoker
     INPUT_NOTE = <<~NOTE
       The input is a JSON object. "arguments" holds the values passed to this operation; "context", when

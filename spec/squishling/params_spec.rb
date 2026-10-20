@@ -13,25 +13,21 @@ RSpec.describe Squishling::Params do
   def generation_for(klass, method = :call)
     chats = stub_llm({ "value" => "v" })
     klass.new.public_send(method)
-    chats.first.generation
+    chats.first.params
   end
 
-  describe "applying params to the chat" do
+  describe "passing params to the adapter" do
     it "sends nothing extra when no params are set" do
       expect(generation_for(base)).to eq({})
     end
 
-    it "maps temperature and thinking to RubyLLM's setters and passes the rest through" do
+    it "sends the portable settings and the provider-specific ones together, for the adapter to translate" do
       base.squishling(params: { temperature: 0.1, thinking: { effort: :low }, top_p: 0.9, max_tokens: 500 })
 
-      expect(generation_for(base)).to eq(
-        temperature: 0.1,
-        thinking: { effort: :low },
-        provider_options: { top_p: 0.9, max_tokens: 500 }
-      )
+      expect(generation_for(base)).to eq(temperature: 0.1, thinking: { effort: :low }, top_p: 0.9, max_tokens: 500)
     end
 
-    it "maps max_output_tokens to RubyLLM's portable setter" do
+    it "sends max_output_tokens as a portable setting" do
       base.squishling(params: { max_output_tokens: 800 })
 
       expect(generation_for(base)).to eq(max_output_tokens: 800)
@@ -63,15 +59,15 @@ RSpec.describe Squishling::Params do
       Squishling.configure { |c| c.default_params = { temperature: 0.2, top_p: 0.5 } }
       base.squishling(params: { temperature: 0 })
 
-      expect(generation_for(base)).to eq(temperature: 0, provider_options: { top_p: 0.5 })
+      expect(generation_for(base)).to eq(temperature: 0, top_p: 0.5)
     end
 
     it "lets a method override the class, key by key" do
       base.squishling(params: { temperature: 0.1, top_p: 0.9 })
       base.squish(:creative, params: { temperature: 0.9 }) { string :value }
 
-      expect(generation_for(base, :creative)).to eq(temperature: 0.9, provider_options: { top_p: 0.9 })
-      expect(generation_for(base)).to eq(temperature: 0.1, provider_options: { top_p: 0.9 })
+      expect(generation_for(base, :creative)).to eq(temperature: 0.9, top_p: 0.9)
+      expect(generation_for(base)).to eq(temperature: 0.1, top_p: 0.9)
     end
 
     it "lets a nil value remove an inherited key, falling back to the provider default" do
@@ -85,8 +81,8 @@ RSpec.describe Squishling::Params do
       base.squishling(params: { temperature: 0.1, top_p: 0.9 })
       child = Class.new(base) { squishling params: { top_p: 0.5 } }
 
-      expect(generation_for(child)).to eq(temperature: 0.1, provider_options: { top_p: 0.5 })
-      expect(generation_for(base)).to eq(temperature: 0.1, provider_options: { top_p: 0.9 })
+      expect(generation_for(child)).to eq(temperature: 0.1, top_p: 0.5)
+      expect(generation_for(base)).to eq(temperature: 0.1, top_p: 0.9)
     end
   end
 
@@ -107,6 +103,13 @@ RSpec.describe Squishling::Params do
         end
     end
 
+    it "rejects the legacy function-calling keys, which would turn every reply into a function call" do
+      %i[functions function_call].each do |key|
+        expect { base.squishling(params: { key => [] }) }
+          .to raise_error(Squishling::ConfigurationError, /#{key} can't be set through params/)
+      end
+    end
+
     it "rejects the camelCase and plural request keys of the Gemini, Bedrock Converse, and Mistral protocols" do
       %i[systemInstruction cachedContent toolConfig tool_config outputConfig inputs].each do |key|
         expect { base.squishling(params: { key => {} }) }
@@ -117,7 +120,7 @@ RSpec.describe Squishling::Params do
     it "allows provider-specific nested config such as Gemini's generationConfig" do
       base.squishling(params: { generationConfig: { topK: 5 } })
 
-      expect(generation_for(base)).to eq(provider_options: { generationConfig: { topK: 5 } })
+      expect(generation_for(base)).to eq(generationConfig: { topK: 5 })
     end
 
     it "rejects every reserved nested key inside each allowed container, as symbols or strings" do
@@ -161,9 +164,7 @@ RSpec.describe Squishling::Params do
 
     it "still allows other settings in those containers, and nil to unset one" do
       base.squishling(params: { generationConfig: { topK: 5, topP: 0.9 }, completion_args: { top_p: 0.5 } })
-      expect(generation_for(base)).to eq(
-        provider_options: { generationConfig: { topK: 5, topP: 0.9 }, completion_args: { top_p: 0.5 } }
-      )
+      expect(generation_for(base)).to eq(generationConfig: { topK: 5, topP: 0.9 }, completion_args: { top_p: 0.5 })
 
       base.squish(:plain, params: { generationConfig: nil, completion_args: nil }) { string :value }
       expect(generation_for(base, :plain)).to eq({})
@@ -174,54 +175,6 @@ RSpec.describe Squishling::Params do
         expect { base.squishling(params: { thinking: }) }
           .to raise_error(Squishling::ConfigurationError, /thinking must be true, false, or a Hash/)
       end
-    end
-  end
-
-  describe "provider rejections (400 Bad Request)" do
-    let(:rejection) do
-      RubyLLM::BadRequestError.new("Unsupported value: 'temperature' does not support 0.1 with this model.")
-    end
-
-    it "raises a ConfigurationError that points at the params" do
-      base.squishling(params: { temperature: 0.1 })
-      stub_llm(rejection)
-
-      expect { base.call }.to raise_error(Squishling::ConfigurationError) do |e|
-        expect(e.message).to include("provider rejected the request", { temperature: 0.1 }.inspect, "reasoning models")
-        expect(e.cause).to equal(rejection)
-      end
-    end
-
-    it "omits the params hint when no params are set" do
-      stub_llm(RubyLLM::BadRequestError.new("Invalid schema"))
-
-      expect { base.call }.to raise_error(Squishling::ConfigurationError) do |e|
-        expect(e.message).to include("provider rejected the request", "BadRequestError")
-        expect(e.message).not_to include("Check params")
-      end
-    end
-
-    it "is never sent to squish_fallback" do
-      base.squish_fallback { |_error, **| { value: "fallback" } }
-      stub_llm(rejection)
-
-      expect { base.call }.to raise_error(Squishling::ConfigurationError)
-    end
-
-    it "turns RubyLLM's local ArgumentError for unsupported settings into a ConfigurationError" do
-      rejecting_chat = Class.new(FakeChat) do
-        def with_thinking(*, **) = raise(ArgumentError, "budget exceeds the model's maximum")
-      end
-      allow(RubyLLM).to receive(:chat) { rejecting_chat.new(model: nil, responses: []) }
-      base.squishling(params: { thinking: { budget: 999_999 } })
-
-      expect { base.call }.to raise_error(Squishling::ConfigurationError, /invalid params.*budget exceeds/)
-    end
-
-    it "keeps context-length errors as LLMError, since they depend on the input" do
-      stub_llm(RubyLLM::ContextLengthExceededError.new("too long"))
-
-      expect { base.call }.to raise_error(Squishling::LLMError)
     end
   end
 end

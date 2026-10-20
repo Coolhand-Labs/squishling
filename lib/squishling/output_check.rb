@@ -26,7 +26,7 @@ module Squishling
 
     private
 
-    # RubyLLM parses structured output itself and leaves the raw string when that fails, so
+    # An adapter may parse structured output itself (RubyLLM does) and leave the raw string when that fails, so
     # content is a Hash on success, or a String/nil when the model refused, was cut off, or
     # ignored the schema.
     def parse(content)

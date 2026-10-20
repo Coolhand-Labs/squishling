@@ -89,12 +89,22 @@ module Squishling
       response
     end
 
+    # An Adapter::Response carries its token counts in a Hash; a judgment (see Adapter::Base#judge) may carry them in
+    # an object with input and output instead.
     def usage(response)
       tokens = response.respond_to?(:tokens) ? response.tokens : nil
       model = response.respond_to?(:model) ? response.model : nil
-      Usage.new(input_tokens: tokens&.input, output_tokens: tokens&.output,
+      Usage.new(input_tokens: token_count(tokens, :input_tokens, :input),
+        output_tokens: token_count(tokens, :output_tokens, :output),
         model: model.respond_to?(:id) ? model.id : model)
     end
+
+    def token_count(tokens, key, reader)
+      return tokens[key] if tokens.is_a?(Hash)
+
+      tokens.respond_to?(reader) ? tokens.public_send(reader) : nil
+    end
+    private_class_method :token_count
     private_class_method :usage
   end
 end

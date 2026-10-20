@@ -197,98 +197,41 @@ RSpec.describe "Squishling failure handling" do
   describe "LLM call failures" do
     before { klass.squishling(model: "test-model") }
 
-    {
-      "rate limit" => RubyLLM::RateLimitError.new("slow down"),
-      "server error" => RubyLLM::ServerError.new("boom"),
-      "overload" => RubyLLM::OverloadedError.new("busy"),
-      "timeout" => Faraday::TimeoutError.new("timed out"),
-      "connection failure" => Faraday::ConnectionFailed.new("refused")
-    }.each do |label, error|
-      it "wraps a #{label} in LLMError, keeping the cause" do
-        stub_llm(error)
+    it "raises the adapter's LLMError as is" do
+      error = Squishling::LLMError.new("Klass#call: down")
+      stub_llm(error)
 
-        expect { klass.call(text: "x") }.to raise_error(Squishling::LLMError, /#{error.class}/) do |e|
-          expect(e.cause).to equal(error)
-          expect(e).to be_a(Squishling::Error)
-        end
-      end
+      expect { klass.call(text: "x") }.to raise_error(error)
     end
 
-    it "wraps a failure on a retry request too" do
+    it "moves on to the next attempt after an LLMError, and raises the last one" do
       klass.squishling(escalation: [{ model: "test-model", attempts: 2 }])
-      stub_llm({ "label" => 1 }, RubyLLM::ServiceUnavailableError.new("down"))
+      stub_llm({ "label" => 1 }, Squishling::LLMError.new("down"))
 
-      expect { klass.call(text: "x") }.to raise_error(Squishling::LLMError, /ServiceUnavailable/)
+      expect { klass.call(text: "x") }.to raise_error(Squishling::LLMError, "down")
     end
 
-    it "treats bad credentials as a configuration error" do
-      stub_llm(RubyLLM::UnauthorizedError.new("bad key"))
+    it "never moves on after a ConfigurationError" do
+      klass.squishling(escalation: ["test-model", "other-model"])
+      chats = stub_llm(Squishling::ConfigurationError.new("bad key"), { "label" => "ok" })
 
-      expect { klass.call(text: "x") }.to raise_error(Squishling::ConfigurationError, /UnauthorizedError/) { |e| expect(e.cause.message).to eq("bad key") }
+      expect { klass.call(text: "x") }.to raise_error(Squishling::ConfigurationError, "bad key")
+      expect(chats.size).to eq(1)
     end
 
-    describe "a provider's own message" do
-      let(:leaked) { "Incorrect API key provided: sk-proj-abc***xyz; input was: patient Jane Doe" }
+    it "lets any other exception from the adapter propagate unwrapped" do
+      error = Class.new(StandardError)
+      stub_llm(error.new("adapter bug"))
 
-      {
-        "bad credentials" => [RubyLLM::UnauthorizedError, Squishling::ConfigurationError],
-        "a forbidden key" => [RubyLLM::ForbiddenError, Squishling::ConfigurationError],
-        "a rejected request" => [RubyLLM::BadRequestError, Squishling::ConfigurationError],
-        "a server error" => [RubyLLM::ServerError, Squishling::LLMError],
-        "a timeout" => [Faraday::TimeoutError, Squishling::LLMError]
-      }.each do |label, (type, raised)|
-        it "stays out of the message for #{label}, and is left on the cause" do
-          stub_llm(type.new(leaked), type.new(leaked))
-
-          expect { klass.call(text: "x") }.to raise_error(raised) do |e|
-            expect(e.message).to include(type.name)
-            expect(e.message).not_to include("sk-proj", "Jane Doe")
-            expect(e.cause.message).to eq(leaked)
-          end
-        end
-      end
-
-      it "stays out of the logger line when a fallback absorbs the failure" do
-        logger = instance_double(Logger, debug: nil, warn: nil)
-        Squishling.configure { |c| c.logger = logger }
-        klass.squish_fallback { |_error, **| { label: "fallback" } }
-        stub_llm(RubyLLM::ServerError.new(leaked), RubyLLM::ServerError.new(leaked))
-
-        klass.call(text: "x")
-
-        expect(logger).to have_received(:warn).with(/LLM failed, using fallback: .*ServerError/)
-        expect(logger).not_to have_received(:warn).with(/sk-proj|Jane Doe/)
-      end
+      expect { klass.call(text: "x") }.to raise_error(error, "adapter bug")
     end
 
-    it "keeps RubyLLM's own configuration message, which names a missing setting and holds no provider text" do
-      missing = "Missing configuration for OpenAI: openai_api_key"
-      stub_llm(RubyLLM::ConfigurationError.new(missing))
+    it "rejects an adapter that doesn't return an Adapter::Response" do
+      adapter = Class.new(Squishling::Adapter::Base) { def complete(_request) = { "label" => "ok" } }
+      Squishling.configure { |c| c.adapter = adapter.new }
 
       expect { klass.call(text: "x") }
-        .to raise_error(Squishling::ConfigurationError, /#{missing}/)
-    end
-
-    it "reports the HTTP status when the provider sent one" do
-      response = Struct.new(:status).new(429)
-      stub_llm(RubyLLM::RateLimitError.new("slow down", response:), RubyLLM::RateLimitError.new("slow down", response:))
-
-      expect { klass.call(text: "x") }.to raise_error(Squishling::LLMError, /RateLimitError, HTTP 429/)
-    end
-
-    it "reports the HTTP status of a Faraday error, whose response is a Hash" do
-      error = Faraday::ServerError.new("upstream said no", { status: 503 })
-      stub_llm(error, error)
-
-      expect { klass.call(text: "x") }.to raise_error(Squishling::LLMError, /Faraday::ServerError, HTTP 503/) do |e|
-        expect(e.message).not_to include("upstream")
-      end
-    end
-
-    it "treats an unknown model as a configuration error" do
-      allow(RubyLLM).to receive(:chat).and_raise(RubyLLM::ModelNotFoundError, "Unknown model: nope")
-
-      expect { klass.call(text: "x") }.to raise_error(Squishling::ConfigurationError, /Unknown model/)
+        .to raise_error(Squishling::ConfigurationError, /must return a Squishling::Adapter::Response/)
     end
   end
 
@@ -320,7 +263,7 @@ RSpec.describe "Squishling failure handling" do
     end
 
     it "uses the fallback when the LLM call fails on every model" do
-      stub_llm(RubyLLM::RateLimitError.new("slow down"), RubyLLM::RateLimitError.new("still slow"))
+      stub_llm(Squishling::LLMError.new("slow down"), Squishling::LLMError.new("still slow"))
       instance = klass.new
 
       expect(instance.call(text: "hi").label).to eq("fallback")
@@ -328,7 +271,7 @@ RSpec.describe "Squishling failure handling" do
     end
 
     it "is not used for configuration errors" do
-      stub_llm(RubyLLM::UnauthorizedError.new("bad key"))
+      stub_llm(Squishling::ConfigurationError.new("bad key"))
 
       expect { klass.call(text: "hi") }.to raise_error(Squishling::ConfigurationError)
     end

@@ -134,7 +134,7 @@ RSpec.describe "Squishling model rotation" do
 
   it "falls to the sibling, then the next priority, when a provider fails" do
     klass = squished(tied)
-    error = RubyLLM::ServerError.new("overloaded")
+    error = Squishling::LLMError.new("overloaded")
     chats = stub_llm(error, error, { "label" => "ok" })
 
     expect(klass.call(text: "x").label).to eq("ok")

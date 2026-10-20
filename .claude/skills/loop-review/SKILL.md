@@ -194,7 +194,7 @@ elaboration of those priorities.
   user's own Ruby implementation, or that rescues `NotImplementedError`
   more widely than the routing fallback intends.
 - **Strict schemas**: changes to `lib/squishling/schema.rb` must keep
-  every payload sent to RubyLLM strict and keep rejecting `strict: false`.
+  every payload handed to an adapter strict and keep rejecting `strict: false`.
   Changes to `lib/squishling/result.rb` must keep `nil` vs `[]` distinct
   for `optional` fields and keep typing consistent between paths.
 - **Reuse / Ruby idiom / DRY**: semantic, expressive naming; idiomatic use
@@ -230,8 +230,16 @@ elaboration of those priorities.
   runtime-dependency rule: no provider SDK and no new hard dependency in
   `squishling.gemspec` without a clear reason, and dev-only gems stay in
   the `Gemfile`'s development group.
-- **RubyLLM compatibility**: where the diff touches how chats are built
-  or answers are read (`Invoker#chat_options`, `Params.apply`,
+- **Adapter contract**: `lib/squishling/adapter.rb` and the code in
+  `lib/squishling/adapters/` are the only places that talk to a provider.
+  Flag a `RubyLLM` or HTTP-client reference anywhere else, an adapter that
+  puts a provider's message, body, or API key in an error or log, raises
+  anything but `ConfigurationError` (never retried) or `LLMError` for a
+  provider failure, or keeps unsynchronized state (samples call it from
+  worker threads). Changes to `LLMClient` must keep the conversation
+  Squishling-owned and the observer wrapping each request.
+- **RubyLLM compatibility**: where the diff touches how the RubyLLM adapter
+  builds chats or reads answers (`Adapters::RubyLLM#complete`,
   `with_schema`, `ask`, `response.content`), check it against the installed `ruby_llm`
   source (`bundle show ruby_llm`), not memory — e.g. in RubyLLM 2.x
   `response.content` stays a JSON String (Squishling parses it),
@@ -247,9 +255,10 @@ elaboration of those priorities.
 - **Testing**: new or changed behavior lacking corresponding RSpec
   coverage under `spec/`, and existing specs weakened (loosened matchers,
   removed assertions) to make them pass rather than fixing the
-  underlying code. Specs stub `RubyLLM.chat` with `FakeChat`
-  (`spec/spec_helper.rb`) — flag tests that only assert the stub returns
-  what it was stubbed to return. Behavior that only a real provider can
+  underlying code. Specs replay canned responses through `FakeAdapter`
+  (`spec/spec_helper.rb`); the RubyLLM adapter's specs stub `RubyLLM.chat`,
+  and the OpenAI-compatible adapter's use WebMock — flag tests that only
+  assert the stub returns what it was stubbed to return. Behavior that only a real provider can
   show (strict-mode acceptance of a schema shape, nullable handling)
   belongs in an `examples/` live scenario too. Would `bundle exec
   rspec`/`bundle exec rubocop` catch this? If a lint or test gap is

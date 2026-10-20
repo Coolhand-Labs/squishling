@@ -1,5 +1,8 @@
 # frozen_string_literal: true
 
+# The strict-payload checks below run RubyLLM's own schema normalizer on what the RubyLLM adapter is handed.
+require "ruby_llm"
+
 RSpec.describe Squishling do
   let(:invoice_parser) do
     Class.new do
@@ -494,24 +497,10 @@ RSpec.describe Squishling do
       end
     end
 
-    it "assumes a model exists when it's missing from RubyLLM's registry and a provider is given" do
-      base.squishling(model: "gpt-unknown", provider: :openai)
-      chat = chat_for(base)
-
-      expect(chat.model).to eq("gpt-unknown")
-      expect(chat.options).to eq(provider: :openai, assume_model_exists: true)
-    end
-
-    it "keeps registry lookups for known models" do
-      base.squishling(model: "claude-haiku-4-5", provider: :anthropic)
-
-      expect(chat_for(base).options).to eq(provider: :anthropic)
-    end
-
     it "sends no provider when none is declared" do
       base.squishling(model: "claude-haiku-4-5")
 
-      expect(chat_for(base).options).to eq({})
+      expect(chat_for(base).provider).to be_nil
     end
 
     it "uses the configured default provider with the default model" do
@@ -520,7 +509,7 @@ RSpec.describe Squishling do
         c.default_provider = :openai
       end
 
-      expect(chat_for(base).options).to eq(provider: :openai, assume_model_exists: true)
+      expect(chat_for(base).provider).to eq(:openai)
     end
 
     it "keeps a provider paired with the model declared at the same level" do
@@ -529,19 +518,19 @@ RSpec.describe Squishling do
       chat = chat_for(base, :quick)
 
       expect(chat.model).to eq("claude-haiku-4-5")
-      expect(chat.options).to eq({})
+      expect(chat.provider).to be_nil
     end
 
     it "accepts a per-method provider" do
       base.squish(:luna, model: "gpt-unknown", provider: :openai) { string :value }
 
-      expect(chat_for(base, :luna).options).to eq(provider: :openai, assume_model_exists: true)
+      expect(chat_for(base, :luna).provider).to eq(:openai)
     end
 
     it "inherits the class provider in subclasses" do
       base.squishling(model: "gpt-unknown", provider: :openai)
 
-      expect(chat_for(Class.new(base)).options).to include(provider: :openai)
+      expect(chat_for(Class.new(base)).provider).to eq(:openai)
     end
 
     it "inherits the model and provider together when a subclass only changes something else" do
@@ -550,7 +539,7 @@ RSpec.describe Squishling do
       chat = chat_for(child)
 
       expect(chat.model).to eq("gpt-unknown")
-      expect(chat.options).to eq(provider: :openai, assume_model_exists: true)
+      expect(chat.provider).to eq(:openai)
     end
 
     it "doesn't give a subclass's own model its parent's provider" do
@@ -559,28 +548,28 @@ RSpec.describe Squishling do
       chat = chat_for(child)
 
       expect(chat.model).to eq("claude-haiku-4-5")
-      expect(chat.options).to eq({})
+      expect(chat.provider).to be_nil
     end
 
     it "doesn't give a subclass's own escalation its parent's provider" do
       base.squishling(model: "gpt-unknown", provider: :openai)
       child = Class.new(base) { squishling escalation: ["claude-haiku-4-5", "claude-sonnet-5-5"] }
 
-      expect(chat_for(child).options).to eq({})
+      expect(chat_for(child).provider).to be_nil
     end
 
     it "drops the provider when the same class later declares a model without one" do
       base.squishling(model: "gpt-unknown", provider: :openai)
       base.squishling(model: "claude-haiku-4-5")
 
-      expect(chat_for(base).options).to eq({})
+      expect(chat_for(base).provider).to be_nil
     end
 
     it "accepts a provider after the class's own model, in a later call" do
       base.squishling(model: "gpt-unknown")
       base.squishling(provider: :openai)
 
-      expect(chat_for(base).options).to eq(provider: :openai, assume_model_exists: true)
+      expect(chat_for(base).provider).to eq(:openai)
     end
 
     it "raises instead of ignoring a class provider with no model declared on that class" do
@@ -611,8 +600,8 @@ RSpec.describe Squishling do
       base.squishling(escalation: ["gpt-unknown", "gpt-unknown-2"], provider: :openai)
       base.squish(:luna, escalation: ["gpt-unknown"], provider: :openai) { string :value }
 
-      expect(chat_for(base).options).to eq(provider: :openai, assume_model_exists: true)
-      expect(chat_for(base, :luna).options).to eq(provider: :openai, assume_model_exists: true)
+      expect(chat_for(base).provider).to eq(:openai)
+      expect(chat_for(base, :luna).provider).to eq(:openai)
     end
   end
 

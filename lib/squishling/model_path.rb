@@ -18,9 +18,9 @@ module Squishling
     # One attempt: the model, its provider, the fully resolved generation params, and whether the previous
     # step's rejected output is shown to it.
     Step = Data.define(:model, :provider, :params, :forward_rejected) do
-      # The model for logs and messages (nil means RubyLLM's default model).
+      # The model for logs and messages (nil means the adapter's default model).
       def display_name
-        model || "RubyLLM default model"
+        model || "the adapter's default model"
       end
     end
 

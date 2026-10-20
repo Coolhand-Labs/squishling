@@ -110,8 +110,8 @@ RSpec.describe Squishling, "#squish!" do
     klass.call(record: "Ada")
 
     expect(chats.first.model).to eq("gpt-unknown")
-    expect(chats.first.options).to eq(provider: :openai, assume_model_exists: true)
-    expect(chats.first.generation).to eq(temperature: 0.2, provider_options: { top_p: 0.5 })
+    expect(chats.first.provider).to eq(:openai)
+    expect(chats.first.params).to eq(temperature: 0.2, top_p: 0.5)
   end
 
   it "keeps a method-level nil that unsets a class param when adding call params" do
@@ -123,7 +123,7 @@ RSpec.describe Squishling, "#squish!" do
 
     klass.call(record: "Ada")
 
-    expect(chats.first.generation).to eq(provider_options: { top_p: 0.5 })
+    expect(chats.first.params).to eq(top_p: 0.5)
   end
 
   it "can hand off again to a stronger model after a failed attempt" do
@@ -139,7 +139,7 @@ RSpec.describe Squishling, "#squish!" do
         squish!(model: "big-model", provider: :openai, context: { record_length: record.length })
       end
     end
-    chats = stub_llm(RubyLLM::ServiceUnavailableError.new("down"), { "name" => "Ada" })
+    chats = stub_llm(Squishling::LLMError.new("down"), { "name" => "Ada" })
 
     result = klass.call(record: "Ada")
 
@@ -158,12 +158,12 @@ RSpec.describe Squishling, "#squish!" do
 
       def call(**) = squish!(escalation: [{ model: "small-model", attempts: 2 }, "big-model"], provider: :openai)
     end
-    chats = stub_llm(nil, RubyLLM::ServiceUnavailableError.new("down"), { "name" => "Ada" })
+    chats = stub_llm(nil, Squishling::LLMError.new("down"), { "name" => "Ada" })
 
     expect(klass.call(record: "Ada").name).to eq("Ada")
     expect(chats.map(&:model)).to eq(%w[small-model big-model]) # attempts 1-2 share a chat
     expect(chats.first.messages.size).to eq(2)
-    expect(chats.map(&:options)).to all(include(provider: :openai))
+    expect(chats.map(&:provider)).to all(eq(:openai))
   end
 
   it "rejects model: and escalation: together" do
@@ -190,11 +190,10 @@ RSpec.describe Squishling, "#squish!" do
   end
 
   it "raises the LLM failure, caused by the rescued error, when there's no fallback" do
-    stub_llm(RubyLLM::ServiceUnavailableError.new("down"))
+    stub_llm(Squishling::LLMError.new("down"))
 
     expect { parser.call(record: "Ada") }.to raise_error(Squishling::LLMError) { |error|
-      expect(error.cause).to be_a(RubyLLM::ServiceUnavailableError)
-      expect(error.cause.cause).to be_a(ArgumentError)
+      expect(error.cause).to be_a(ArgumentError)
     }
   end
 
