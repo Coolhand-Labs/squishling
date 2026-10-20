@@ -79,7 +79,7 @@ RSpec.describe "Squishling model escalation" do
   describe "LLM call failures" do
     it "escalates to the next model in a fresh chat" do
       klass.squishling(escalation: %w[claude-haiku-4-5 claude-sonnet-5-5])
-      chats = stub_llm(RubyLLM::OverloadedError.new("busy"), { "label" => "ok" })
+      chats = stub_llm(Squishling::LLMError.new("busy"), { "label" => "ok" })
 
       expect(klass.call(text: "x").label).to eq("ok")
       expect(chats.map(&:model)).to eq(%w[claude-haiku-4-5 claude-sonnet-5-5])
@@ -87,14 +87,14 @@ RSpec.describe "Squishling model escalation" do
     end
 
     it "starts a fresh chat even when retrying the same model" do
-      chats = stub_llm(RubyLLM::RateLimitError.new("slow"), { "label" => "ok" })
+      chats = stub_llm(Squishling::LLMError.new("slow"), { "label" => "ok" })
 
       expect(klass.call(text: "x").label).to eq("ok")
       expect(chats.map(&:model)).to eq(%w[claude-haiku-4-5 claude-haiku-4-5])
     end
 
     it "tells the next model about an earlier rejected output" do
-      chats = stub_llm({ "label" => 1 }, RubyLLM::ServerError.new("boom"), { "label" => "ok" })
+      chats = stub_llm({ "label" => 1 }, Squishling::LLMError.new("boom"), { "label" => "ok" })
 
       expect(klass.call(text: "x").label).to eq("ok")
       expect(chats.last.messages.first).to include('{"label":1}', "not a string")
@@ -121,7 +121,7 @@ RSpec.describe "Squishling model escalation" do
 
     it "starts a forward_rejected: false step from the input alone after a provider error" do
       klass.squishling(escalation: ["a", "b", { model: "c", forward_rejected: false }])
-      chats = stub_llm({ "label" => 1 }, RubyLLM::ServerError.new("boom"), { "label" => "ok" })
+      chats = stub_llm({ "label" => 1 }, Squishling::LLMError.new("boom"), { "label" => "ok" })
 
       expect(klass.call(text: "x").label).to eq("ok")
       expect(chats.last.messages).to eq([JSON.generate(arguments: { text: "x" })])
@@ -172,18 +172,18 @@ RSpec.describe "Squishling model escalation" do
     end
 
     it "raises LLMError with its cause when the last model fails" do
-      error = RubyLLM::ServerError.new("boom")
+      error = Squishling::LLMError.new("boom")
       stub_llm(nil, nil, error)
 
-      expect { klass.call(text: "x") }.to raise_error(Squishling::LLMError, /ServerError/) { |e| expect(e.cause).to equal(error) }
+      expect { klass.call(text: "x") }.to raise_error(error)
     end
 
     it "raises LLMError, not InvalidOutputError, when the last step fails after an earlier step's invalid output" do
-      error = RubyLLM::ServerError.new("overloaded")
+      error = Squishling::LLMError.new("overloaded")
       chats = stub_llm({ "label" => 1 }, { "label" => 2 }, error)
 
       expect { klass.call(text: "x") }
-        .to raise_error(Squishling::LLMError, /ServerError/) { |e| expect(e.cause).to equal(error) }
+        .to raise_error(error)
       expect(chats.map(&:model)).to eq(%w[claude-haiku-4-5 claude-sonnet-5-5])
       expect(chats.last.messages.size).to eq(1)
       expect(chats.last.messages.first).to include('{"label":2}', "not a string")
@@ -191,19 +191,19 @@ RSpec.describe "Squishling model escalation" do
 
     it "starts a fresh chat after a mid-path LLMError and still reports the final LLMError" do
       klass.squishling(escalation: [{ model: "claude-haiku-4-5", attempts: 3 }])
-      first = RubyLLM::RateLimitError.new("slow down")
-      last = RubyLLM::ServerError.new("boom")
+      first = Squishling::LLMError.new("slow down")
+      last = Squishling::LLMError.new("boom")
       chats = stub_llm({ "label" => 1 }, first, last)
 
       expect { klass.call(text: "x") }
-        .to raise_error(Squishling::LLMError, /ServerError/) { |e| expect(e.cause).to equal(last) }
+        .to raise_error(last)
       expect(chats.map { |chat| chat.messages.size }).to eq([2, 1])
       expect(chats.last.messages.first).to include('{"label":1}', "not a string")
     end
 
     it "hands the final LLMError to squish_fallback instead of raising" do
       klass.squish_fallback { |error, **| { label: error.class.name } }
-      stub_llm({ "label" => 1 }, { "label" => 2 }, RubyLLM::ServerError.new("overloaded"))
+      stub_llm({ "label" => 1 }, { "label" => 2 }, Squishling::LLMError.new("overloaded"))
 
       result = klass.call(text: "x")
 
@@ -212,23 +212,16 @@ RSpec.describe "Squishling model escalation" do
     end
 
     it "never escalates a configuration error" do
-      chats = stub_llm(RubyLLM::UnauthorizedError.new("bad key"), { "label" => "ok" })
+      chats = stub_llm(Squishling::ConfigurationError.new("bad key"), { "label" => "ok" })
 
-      expect { klass.call(text: "x") }.to raise_error(Squishling::ConfigurationError, /UnauthorizedError/)
+      expect { klass.call(text: "x") }.to raise_error(Squishling::ConfigurationError, /bad key/)
       expect(chats.size).to eq(1)
     end
 
-    it "names the failing step's params when the provider rejects a later step" do
-      klass.squishling(escalation: ["claude-haiku-4-5", { model: "gpt-unknown", params: { temperature: 0.1 } }])
-      stub_llm(nil, RubyLLM::BadRequestError.new("unsupported temperature"))
-
-      expect { klass.call(text: "x") }.to raise_error(Squishling::ConfigurationError, /temperature.*0\.1/)
-    end
-
     it "never escalates a request the provider rejects" do
-      chats = stub_llm(RubyLLM::BadRequestError.new("unsupported temperature"), { "label" => "ok" })
+      chats = stub_llm(Squishling::ConfigurationError.new("unsupported temperature"), { "label" => "ok" })
 
-      expect { klass.call(text: "x") }.to raise_error(Squishling::ConfigurationError, /rejected the request/)
+      expect { klass.call(text: "x") }.to raise_error(Squishling::ConfigurationError, /unsupported temperature/)
       expect(chats.size).to eq(1)
     end
   end
@@ -348,8 +341,7 @@ RSpec.describe "Squishling model escalation" do
 
       base.call
 
-      expect(chats.first.options).to eq(provider: :openai, assume_model_exists: true)
-      expect(chats.last.options).to include(provider: :anthropic)
+      expect(chats.map(&:provider)).to eq(%i[openai anthropic])
     end
 
     it "merges step params over the class params, letting nil unset a key" do
@@ -360,8 +352,8 @@ RSpec.describe "Squishling model escalation" do
 
       base.call
 
-      expect(chats.first.generation).to eq(temperature: 0.2, provider_options: { top_p: 0.9 })
-      expect(chats.last.generation).to eq(thinking: { effort: :high }, provider_options: { top_p: 0.9 })
+      expect(chats.first.params).to eq(temperature: 0.2, top_p: 0.9)
+      expect(chats.last.params).to eq(thinking: { effort: :high }, top_p: 0.9)
     end
 
     it "accepts symbols and string-keyed hashes" do

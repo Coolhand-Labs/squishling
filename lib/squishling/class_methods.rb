@@ -9,7 +9,7 @@ module Squishling
     #   squishling model: "claude-sonnet-5-5", purpose: "...", output_schema: MySchema
     # model: is a single attempt; escalation: is a list of models tried in order (see ModelPath):
     #   squishling escalation: [{ model: "claude-haiku-4-5", attempts: 2 }, "claude-sonnet-5-5", "claude-opus-5-5"]
-    # Pass provider: alongside model: for models missing from RubyLLM's registry, e.g.
+    # Pass provider: alongside model: for models missing from RubyLLM's registry (the RubyLLM adapter), e.g.
     #   squishling model: "gpt-7-preview", provider: :openai
     # provider: needs a model: or escalation: (declared on the class), and a subclass's model never inherits its
     # parent's provider.

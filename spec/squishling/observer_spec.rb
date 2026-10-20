@@ -114,10 +114,7 @@ RSpec.describe Squishling::Observer do
         block.call.tap { order << :exit }
       end
       Squishling.configure { |c| c.observer = observer }
-      stub_llm(high)
-      allow(RubyLLM).to receive(:chat) do |**options|
-        FakeChat.new(**options, responses: [high], on_ask: ->(_) { order << :request })
-      end
+      stub_llm_chats([high], on_ask: ->(_) { order << :request })
 
       klass.call(text: "x")
 
@@ -134,8 +131,8 @@ RSpec.describe Squishling::Observer do
       expect { klass.call(text: "x") }.to raise_error(boom, "observer broke")
     end
 
-    it "doesn't map its own RubyLLM or Faraday errors onto LLMError" do
-      [Faraday::ConnectionFailed.new("exporter down"), RubyLLM::ServerError.new("exporter 500")].each do |error|
+    it "doesn't map its own errors onto LLMError" do
+      [IOError.new("exporter down"), Squishling::LLMError.new("exporter 500")].each do |error|
         observer = Object.new
         observer.define_singleton_method(:around) { |_call, &_block| raise error }
         Squishling.configure { |c| c.observer = observer }
@@ -150,7 +147,7 @@ RSpec.describe Squishling::Observer do
       observer = Object.new
       observer.define_singleton_method(:around) { |_call, &block| seen << block.call }
       Squishling.configure { |c| c.observer = observer }
-      tokens = Struct.new(:input, :output).new(120, 34)
+      tokens = { input_tokens: 120, output_tokens: 34 }
       stub_llm(FakeChat::Response.new(high, "claude-haiku-4-5", tokens))
 
       expect(klass.call(text: "x").priority).to eq("high")
@@ -172,14 +169,17 @@ RSpec.describe Squishling::Observer do
       expect(seen.first).to have_attributes(input_tokens: nil, output_tokens: nil)
     end
 
-    it "reads usage off a real RubyLLM::Message and Judgment" do
-      message = RubyLLM::Message.new(role: :assistant, content: "{}", model: "claude-haiku-4-5",
-        input_tokens: 7, output_tokens: 3)
-      judgment = RubyLLM::Judgment.new(answers: {}, model: "jev-latest")
+    it "reads usage off an Adapter::Response, and off a judgment that carries a token object" do
+      response = Squishling::Adapter::Response.new(content: "{}", model: "claude-haiku-4-5",
+        tokens: { input_tokens: 7, output_tokens: 3 })
+      judgment = Struct.new(:tokens, :model).new(Struct.new(:input, :output).new(5, 2), "jev-latest")
+      bare = Struct.new(:model).new("jev-latest")
 
-      expect(Squishling::Observer.send(:usage, message))
+      expect(Squishling::Observer.send(:usage, response))
         .to eq(Squishling::Observer::Usage.new(input_tokens: 7, output_tokens: 3, model: "claude-haiku-4-5"))
       expect(Squishling::Observer.send(:usage, judgment))
+        .to eq(Squishling::Observer::Usage.new(input_tokens: 5, output_tokens: 2, model: "jev-latest"))
+      expect(Squishling::Observer.send(:usage, bare))
         .to have_attributes(model: "jev-latest", input_tokens: nil, output_tokens: nil)
     end
 
@@ -191,7 +191,7 @@ RSpec.describe Squishling::Observer do
         nil
       end
       Squishling.configure { |c| c.observer = observer }
-      stub_llm(RubyLLM::ServerError.new("down"), RubyLLM::ServerError.new("down"))
+      stub_llm(Squishling::LLMError.new("down"), Squishling::LLMError.new("down"))
 
       expect { klass.call(text: "x") }.to raise_error(Squishling::LLMError)
     end
@@ -248,7 +248,7 @@ RSpec.describe Squishling::Observer do
     end
 
     it "leaves failed requests mapped onto Squishling's errors" do
-      stub_llm(RubyLLM::ServerError.new("provider down"), RubyLLM::ServerError.new("provider down"))
+      stub_llm(Squishling::LLMError.new("provider down"), Squishling::LLMError.new("provider down"))
 
       expect { klass.call(text: "x") }.to raise_error(Squishling::LLMError)
       expect(events.map(&:first)).to eq(%i[before before])

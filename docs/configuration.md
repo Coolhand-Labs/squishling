@@ -1,7 +1,9 @@
 # Configuration
 
-Squishling sends requests through [RubyLLM](https://rubyllm.com), so configure provider API keys there first
-(OpenAI, Anthropic Claude, Google Gemini, AWS Bedrock, OpenRouter, and any other provider RubyLLM supports):
+Squishling sends requests through an [adapter](adapters.md): [RubyLLM](https://rubyllm.com) (OpenAI, Anthropic
+Claude, Google Gemini, AWS Bedrock, OpenRouter, and any other provider RubyLLM supports), any OpenAI-compatible
+endpoint, or your own. With none configured it uses RubyLLM when the `ruby_llm` gem is in your bundle. For RubyLLM,
+configure provider API keys there first (`require "ruby_llm"` first if your app doesn't use `Bundler.require`):
 
 ```ruby
 RubyLLM.configure do |config|
@@ -14,6 +16,7 @@ Then configure Squishling:
 
 ```ruby
 Squishling.configure do |config|
+  config.adapter = :ruby_llm                   # or :openai_compatible, or your own: see Adapters
   config.default_model = "claude-sonnet-5-5"   # or default_escalation, below
   config.default_provider = nil
   config.default_params = { temperature: 0 }
@@ -24,17 +27,18 @@ end
 
 | Option | Default | Description |
 |---|---|---|
-| `default_model` | `nil` | The universal model (a single attempt) for every squishling class that doesn't declare one. `nil` uses RubyLLM's `default_model`. |
+| `adapter` | `nil` (RubyLLM, when its gem is available) | How requests reach a model: `:ruby_llm`, `:openai_compatible`, a [registered](adapters.md#writing-your-own) name, a Hash with `type:` and that adapter's options, or an adapter instance. See [Adapters](adapters.md). |
+| `default_model` | `nil` | The universal model (a single attempt) for every squishling class that doesn't declare one. `nil` uses the adapter's own default (RubyLLM's `default_model`; the OpenAI-compatible adapter's `default_model:` option). |
 | `default_escalation` | `nil` | The universal [escalation](#models-and-escalation): models tried in order. Assigning it clears `default_model`, and vice versa. |
-| `default_provider` | `nil` | The provider for `default_model`/`default_escalation` steps that don't name one. Only needed for models missing from RubyLLM's registry (see below). |
+| `default_provider` | `nil` | The provider for `default_model`/`default_escalation` steps that don't name one. What it means depends on the adapter: RubyLLM needs it only for models missing from its registry (see below); the OpenAI-compatible adapter ignores it. |
 | `default_params` | `{}` | Generation params for every call (temperature, reasoning effort, top_p, …), overridable per class, per method, and per escalation step. See [Generation params](#generation-params). |
 | `squawk` | `nil` | A callable run after every LLM attempt with the raw output, for sending it to an error tracker or tracing tool. Also settable per class and per method. See [Observing every attempt](failures.md#observing-every-attempt-squawk). |
 | `observer` | `nil` | An around-style hook for every provider request: `:coolhand`, any object responding to `around(call)`, or `false` for none. `nil` uses the [Coolhand observer](coolhand.md) when the `coolhand` gem is configured. See [Observers](observers.md). |
 | `default_harness` | `nil` (`:escalation`) | How every squishling class that doesn't declare its own uses its escalation: `:escalation`, `:squishsum`, `:judged_squishsum`, a [registered custom harness](harnesses.md#custom-harnesses), or a Hash with `type:` and options. See [Harnesses](harnesses.md). |
 | `logger` | `nil` | Any `Logger`. Debug lines when a call routes to the LLM, warnings on each escalation and when a fallback is used. Never includes the raw model response; see [what ends up in errors and logs](failures.md#what-ends-up-in-errors-and-logs). |
 
-Transport-level retries (rate limits, 5xx, timeouts) are configured on RubyLLM itself
-(`RubyLLM.config.max_retries`, `request_timeout`).
+Transport-level retries (rate limits, 5xx, timeouts) belong to the adapter: RubyLLM's own
+(`RubyLLM.config.max_retries`, `request_timeout`), or the OpenAI-compatible adapter's `max_retries:` option.
 
 > **`max_retries` was removed.** The escalation now decides how many attempts run, and setting
 > `config.max_retries` raises `ConfigurationError`. The old default (`max_retries = 1`, two attempts on one model) is
@@ -123,7 +127,7 @@ The first level that declares a `model:` or an `escalation:` supplies the whole 
 2. per method: `squish :name, model: ...` or `escalation: ...`
 3. per class: `squishling model: ...` or `escalation: ...` (inherited by subclasses)
 4. universal: `Squishling.config.default_model` or `default_escalation`
-5. RubyLLM's `default_model` (a single attempt)
+5. the adapter's default model (RubyLLM's `default_model`, or the OpenAI-compatible adapter's `default_model:`; a single attempt)
 
 ```ruby
 class InvoiceParser
@@ -148,6 +152,9 @@ characters. If you don't want a step to see it (say, because the next step is a 
 credentials, an unknown model, a request the provider rejects) never move to the next attempt. See [Failure handling](failures.md).
 
 ## Providers and newly released models
+
+This section is about the RubyLLM adapter; the OpenAI-compatible adapter takes model names as given and ignores
+`provider:`.
 
 RubyLLM looks models up in its bundled registry. To use a model that isn't there yet, such as a newly released
 OpenAI or Anthropic model, name its provider next to it. Squishling then tells RubyLLM to assume the model exists:
@@ -189,10 +196,10 @@ end
 
 | Key | Sent as |
 |---|---|
-| `temperature` | RubyLLM's `with_temperature` |
-| `max_output_tokens` | RubyLLM's `with_max_output_tokens` (translated to each provider's own field) |
-| `thinking` | RubyLLM's `with_thinking`: `true` (the model's default), `false` (off), or options such as `{ effort: :low }`, `{ budget: 1024 }`, `{ display: :omitted }` |
-| anything else (`top_p`, `seed`, `service_tier`, Gemini's `generationConfig`, …) | merged into the provider request as-is via `with_provider_options`, in that provider's own field names |
+| `temperature` | RubyLLM's `with_temperature`; `temperature` in the request body for OpenAI-compatible endpoints |
+| `max_output_tokens` | RubyLLM's `with_max_output_tokens` (translated to each provider's own field); `max_completion_tokens` (or `max_tokens`) for OpenAI-compatible endpoints |
+| `thinking` | RubyLLM's `with_thinking`: `true` (the model's default), `false` (off), or options such as `{ effort: :low }`, `{ budget: 1024 }`, `{ display: :omitted }`. OpenAI-compatible endpoints take only `{ effort: }`, as `reasoning_effort`. |
+| anything else (`top_p`, `seed`, `service_tier`, Gemini's `generationConfig`, …) | merged into the provider request as-is (via `with_provider_options` in RubyLLM), in that provider's own field names |
 
 - **No params means provider defaults.** Squishling sends nothing unless you set it. For structured
   extraction on non-reasoning models (e.g. Anthropic Claude Haiku), a low temperature reduces run-to-run
@@ -206,8 +213,8 @@ end
   squish :triage, model: "gpt-6-luna", provider: :openai, params: { temperature: nil, thinking: { effort: :low } }
   ```
 
-- Keys that Squishling or RubyLLM control (`model`, `messages`, `input`, `instructions`, `system`, `stream`,
-  `response_format`, `text`, `output_config`, `tools`, `tool_choice`, `schema`, and the camelCase and plural
+- Keys that Squishling or the adapter control (`model`, `messages`, `input`, `instructions`, `system`, `stream`,
+  `response_format`, `text`, `output_config`, `tools`, `tool_choice`, `functions`, `function_call`, `schema`, and the camelCase and plural
   spellings other providers use, such as `systemInstruction`, `toolConfig`/`tool_config`, `outputConfig`, `inputs`, …)
   raise `ConfigurationError`, because they would override the model, the conversation, or the strict output format.
 - **Nested containers** such as Gemini's `generationConfig` (and `generation_config` for Gemini Interactions) and

@@ -24,12 +24,16 @@ names params its model is known to reject:
 |---|---|---|
 | `anthropic_example.rb` | `{ temperature: 0 }` | `{ thinking: { budget: 1024 }, temperature: 0 }` |
 | `openai_example.rb` | `{ thinking: { effort: :low } }` | `{ temperature: 0.1 }` (reasoning model) |
+| `openai_compatible_example.rb` | `{ thinking: { effort: :low } }` | `{ temperature: 0.1 }` (reasoning model) |
 
-The scripts share `support/live_harness.rb`. The two provider scripts together make about 17 small requests per
-provider, more if a model needs a retry.
+The scripts share `support/live_harness.rb`. `anthropic_example.rb` and `openai_example.rb` go through the RubyLLM
+adapter; `openai_compatible_example.rb` runs the same scenarios through the OpenAI-compatible adapter (plain
+`Net::HTTP`, no RubyLLM), against OpenAI by default or any endpoint via `--base-url` / `OPENAI_BASE_URL`. Each
+script makes about 17 small requests, more if a model needs a retry.
 
 The live scenarios use a chat judge only. A `type: :judgment` judge (a System One decision model such as Jev,
-through `RubyLLM.judge`) needs that provider's key and is covered by the offline specs in `spec/harness_spec.rb`.
+through the RubyLLM adapter's `RubyLLM.judge`) needs that provider's key and is covered by the offline specs in
+`spec/harness_spec.rb` and `spec/squishling/adapters/ruby_llm_spec.rb`.
 
 Failure handling (empty or malformed responses, provider errors, escalation, `squish_fallback`) is covered by the
 offline specs in `spec/failure_handling_spec.rb`, `spec/escalation_spec.rb`, and `spec/contracts_spec.rb`, because a

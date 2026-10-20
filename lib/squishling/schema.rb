@@ -26,7 +26,7 @@ module Squishling
       end
     end
 
-    # The payload handed to RubyLLM's `with_schema`: always strict, without LOCAL_ONLY_KEYWORDS.
+    # The payload handed to the adapter (Adapter::Request#schema): always strict, without LOCAL_ONLY_KEYWORDS.
     attr_reader :llm_schema
     # The full JSON Schema used for validation and result typing.
     attr_reader :json_schema
@@ -36,7 +36,7 @@ module Squishling
       wrapped = wrapped?(hash)
       body = wrapped ? hash["schema"] : hash
 
-      # Same precedence RubyLLM uses: a top-level strict flag wins over one inside the schema.
+      # Same precedence RubyLLM 2.0 uses: a top-level strict flag wins over one inside the schema.
       strict = hash.key?("strict") ? hash["strict"] : body["strict"]
       raise ConfigurationError, "Squishling only supports strict output schemas (got strict: false)" if strict == false
 

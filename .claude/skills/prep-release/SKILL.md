@@ -149,8 +149,9 @@ act on, so hunt specifically for:
 - **Credential/secret leakage**: can an API key, or sensitive input data,
   end up in an exception message (`LLMError`, `ConfigurationError`,
   `InvalidOutputError#message`/`#raw`) or a `config.logger` line? Provider
-  error messages are interpolated into ours — check what RubyLLM puts in
-  them.
+  error messages must never be interpolated into ours — check what each adapter
+  puts in them (the RubyLLM adapter's `describe_failure`, the OpenAI-compatible
+  adapter's status/class-only messages, and that its API key never appears).
 - **Untrusted model output**: LLM output is attacker-influenceable (prompt
   injection through user-supplied inputs). Confirm it is only ever
   `JSON.parse`d (no `Marshal`, `YAML.load`, `create_additions`, `eval`,
@@ -164,9 +165,10 @@ act on, so hunt specifically for:
   non-object root schema, `anyOf` unions left untyped? Does a
   `strict: false` schema slip through any accepted schema form?
 - **Params passthrough**: params other than `temperature`,
-  `max_output_tokens`, and `thinking` go to RubyLLM's
-  `with_provider_options`, which merges them into the request last.
-  Confirm `Params::RESERVED_KEYS` still covers every top-level key
+  `max_output_tokens`, and `thinking` go to the adapter: RubyLLM's
+  `with_provider_options` merges them into the request last, and the
+  OpenAI-compatible adapter builds its body from params first and
+  Squishling's own keys last. Confirm `Params::RESERVED_KEYS` still covers every top-level key
   Squishling/RubyLLM set for each protocol in the installed `ruby_llm`
   version (check each protocol's `render_payload` under
   `lib/ruby_llm/protocols/`),
@@ -181,7 +183,7 @@ act on, so hunt specifically for:
   unsynchronized shared mutable state a concurrent request could race on,
   and for memoization (`@result_class`, `@squishling_fields`) that could
   publish a half-built object.
-- **Model/provider resolution**: `assume_model_exists` is set only when a
+- **Model/provider resolution**: in the RubyLLM adapter, `assume_model_exists` is set only when a
   provider is named and the model is missing from RubyLLM's registry —
   can a config combination route a request to an unintended provider or
   model (e.g. a per-method model inheriting a class-level provider)?
@@ -275,7 +277,7 @@ rule `/loop-review` uses for stuck findings.
   this phase exists because per-PR doc updates miss the cross-cutting
   view.
 - *"The example apps are just smoke tests, I'll skip them since specs
-  passed."* Specs stub `RubyLLM.chat`; the example apps are the only step
+  passed."* Specs fake or stub the adapters; the example apps (including the OpenAI-compatible one) are the only step
   in this skill that sends a real strict schema to a real provider and
   parses what comes back — whether a provider accepts a schema shape, or
   returns `null` vs `[]` correctly, is a different failure mode than a

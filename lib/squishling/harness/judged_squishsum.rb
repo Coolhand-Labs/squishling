@@ -4,10 +4,10 @@ module Squishling
   class Harness
     # Like Squishling::Harness::Squishsum, but samples that disagree go to a judge, which picks one or rejects both.
     # A judge is one step: a model name or a Hash with the escalation step keys (except priority:), plus
-    # type: (:chat, the default, or :judgment for a System One decision model through RubyLLM.judge) and,
+    # type: (:chat, the default, or :judgment for a System One decision model through the adapter's judgments) and,
     # for :judgment, min_confidence: (the probability the chosen candidate needs).
     class JudgedSquishsum < Base
-      # Request keys RubyLLM's judgment protocols own (model and input are already reserved params).
+      # Request keys the RubyLLM adapter's judgment protocols own (model and input are already reserved params).
       JUDGMENT_RESERVED_PARAMS = %i[state questions].freeze
       private_constant :JUDGMENT_RESERVED_PARAMS
 

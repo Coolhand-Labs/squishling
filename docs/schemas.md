@@ -49,8 +49,10 @@ end
 
 ## Strict schemas only
 
-Squishling only supports **strict** output schemas: it always asks RubyLLM for strict structured output, and a
-schema declaring `strict: false` raises `Squishling::ConfigurationError`. RubyLLM 2.0 on its own would send a
+Squishling only supports **strict** output schemas: it always asks the adapter for strict structured output (the
+OpenAI-compatible adapter's `structured_output: :json_object` and `:none` modes are the explicit exception, for servers
+that lack it, where the schema goes into the prompt instead), and a schema declaring `strict: false` raises
+`Squishling::ConfigurationError`. Squishling validates every answer against the schema either way. RubyLLM 2.0 on its own would send a
 schema with optional properties non-strict; Squishling always sets the flag explicitly, so it stays strict.
 
 With raw hashes, follow your provider's strict-mode rules (e.g. list every property in `required` and set

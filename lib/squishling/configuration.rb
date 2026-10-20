@@ -3,7 +3,7 @@
 module Squishling
   class Configuration
     # Model used by every squishling class that doesn't declare its own (a single attempt).
-    # When neither this nor default_escalation is set, RubyLLM's own default model is used.
+    # When neither this nor default_escalation is set, the adapter's own default model is used.
     attr_reader :default_model
 
     # Models tried in order by every squishling class that doesn't declare its own, e.g.
@@ -14,13 +14,14 @@ module Squishling
     # The validated default_model or default_escalation steps (nil when neither is set).
     attr_reader :default_model_path
 
-    # Provider for default_model/default_escalation steps that don't name their own (e.g. :openai). Only
-    # needed for models missing from RubyLLM's registry.
+    # Provider for default_model/default_escalation steps that don't name their own (e.g. :openai). What it means is
+    # up to the adapter: the RubyLLM adapter needs it only for models missing from RubyLLM's registry, and the
+    # OpenAI-compatible adapter ignores it.
     attr_accessor :default_provider
 
     # Generation params applied to every call, overridable per class and per method.
-    # :temperature and :thinking ({ effort:, budget: }) map to RubyLLM's with_temperature and
-    # with_thinking; any other key (top_p, max_tokens, seed, ...) is passed to the provider as-is.
+    # :temperature, :max_output_tokens and :thinking ({ effort:, budget: }) are portable and translated by the
+    # adapter for its provider; any other key (top_p, seed, ...) is passed to the provider as-is.
     attr_reader :default_params
 
     # How every squishling class that doesn't declare its own harness uses its escalation (see Harness):
@@ -40,7 +41,15 @@ module Squishling
     # loaded and configured, and nothing otherwise; false never wraps.
     attr_reader :observer
 
+    # How Squishling reaches a model (see Adapter): :ruby_llm, :openai_compatible, an adapter you registered, a Hash
+    # with type: and that adapter's options, or an adapter instance. nil (the default) uses RubyLLM when the ruby_llm
+    # gem is available. Built when assigned, so a mistake fails at setup rather than on the first request.
+    attr_reader :adapter
+
     def initialize
+      @adapter = nil
+      @detected_adapter = nil
+      @adapter_lock = Mutex.new
       @observer = nil
       @default_model = nil
       @default_escalation = nil
@@ -62,6 +71,20 @@ module Squishling
       @default_model_path = ModelPath.from_escalation(escalation, "default_escalation")
       @default_model = nil
       @default_escalation = escalation
+    end
+
+    def adapter=(adapter)
+      built = adapter.nil? ? nil : Adapter.build(adapter, "Squishling.configure")
+      @adapter_lock.synchronize do
+        @adapter = built
+        @detected_adapter = nil
+      end
+    end
+
+    # The adapter requests go through: the configured one, else RubyLLM's (when its gem is available) built on first
+    # use. Raises ConfigurationError when there is neither.
+    def resolved_adapter
+      @adapter_lock.synchronize { @adapter || (@detected_adapter ||= Adapter.detect) }
     end
 
     def squawk=(hook)

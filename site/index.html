@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark">
 <title>Squishling: write Ruby only where it's cheaper than the tokens</title>
-<meta name="description" content="Don't just use AI to write code. Use AI to not need code. Squishling is a Ruby gem for elastic software: start with an LLM (OpenAI, Anthropic Claude, Google Gemini via RubyLLM), harden the busy paths into Ruby, rescue errors, and measure tech debt in tokens.">
+<meta name="description" content="Don't just use AI to write code. Use AI to not need code. Squishling is a Ruby gem for elastic software: start with an LLM (OpenAI, Anthropic Claude, Google Gemini via RubyLLM or any OpenAI-compatible endpoint), harden the busy paths into Ruby, rescue errors, and measure tech debt in tokens.">
 <meta property="og:type" content="website">
 <meta property="og:title" content="Squishling: write Ruby only where it's cheaper than the tokens">
 <meta property="og:description" content="Start with an LLM, harden the busy paths into Ruby, and put a number on your tech debt.">
@@ -344,7 +344,7 @@ end</code></pre>
   </div>
 <pre><code>Squishling.configure do |config|
   config.default_model = "claude-haiku-4-5-20251001"
-  # falls back to RubyLLM's default when nil
+  # falls back to the adapter's default when nil
 end
 
 class Parser
@@ -721,8 +721,8 @@ SomeHelperMethod.new.call(payload).email
   <h2>Try it, and tell us what breaks</h2>
   <div class="beside">
     <div>
-      <p>Add the gem, configure your provider keys in RubyLLM (OpenAI, Anthropic Claude, Google Gemini and others work),
-      and describe your first class.</p>
+      <p>Add the gem, pick an adapter (RubyLLM, or any OpenAI-compatible endpoint) and configure your provider keys
+      (OpenAI, Anthropic Claude, Google Gemini and others work), and describe your first class.</p>
 <pre><code># Gemfile
 gem "squishling"</code></pre>
     </div>
@@ -735,7 +735,6 @@ gem "squishling"</code></pre>
   <h3>On the roadmap</h3>
   <ul class="plain">
     <li>Framework-specific defaults.</li>
-    <li>Support for non-RubyLLM implementations.</li>
     <li>Output format annotations.</li>
   </ul>
   <p>Squish the star button and leave issues on GitHub.</p>

@@ -2,13 +2,17 @@
 
 require "json"
 require "json_schemer"
-require "ruby_llm"
 require "schematist"
 
 require_relative "squishling/version"
 require_relative "squishling/errors"
 require_relative "squishling/configuration"
 require_relative "squishling/params"
+require_relative "squishling/named_registry"
+require_relative "squishling/adapter"
+require_relative "squishling/adapters/ruby_llm"
+require_relative "squishling/adapters/openai_options"
+require_relative "squishling/adapters/openai_compatible"
 require_relative "squishling/squawk"
 require_relative "squishling/observer"
 require_relative "squishling/observers/coolhand"
@@ -72,6 +76,24 @@ module Squishling
     # The names of the harnesses that can be declared: the built-ins, then those registered.
     def harnesses
       Harness.types
+    end
+
+    # Registers a custom adapter class (see Adapter::Base) under a name, usable as config.adapter = :name, or
+    # config.adapter = { type: :name, option: value } for an adapter whose initialize takes options. To use an adapter
+    # without registering it, assign an instance: config.adapter = MyAdapter.new. Raises ConfigurationError for a name
+    # that is invalid or already taken, including the built-in :ruby_llm and :openai_compatible.
+    def register_adapter(name, klass)
+      Adapter::Registry.register(name, klass)
+    end
+
+    # The names of the adapters that can be configured: the built-ins, then those registered.
+    def adapters
+      Adapter::Registry.names
+    end
+
+    # Forgets the registered adapters (the built-ins stay), e.g. between specs.
+    def reset_adapters!
+      Adapter::Registry.reset!
     end
 
     def included(base)

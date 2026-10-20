@@ -79,7 +79,7 @@ module Squishling
     end
 
     # One ModelPath::Step per attempt, from the first level (method, class, or config) that declares a model
-    # or escalation, or a single attempt on RubyLLM's default model. A provider travels with the model declared
+    # or escalation, or a single attempt on the adapter's default model. A provider travels with the model declared
     # at the same level, so a per-method Anthropic model never inherits a class-level OpenAI provider. Models
     # tied on priority are rotated by this method's call count (see Rotation).
     def escalation_path

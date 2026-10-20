@@ -143,40 +143,20 @@ RSpec.describe "Squishling harnesses" do
       expect(overlapped).to eq([true, true])
     end
 
-    it "carries RubyLLM's instrumentation workflow over to the request threads" do
+    it "carries the adapter's request context over to the request threads" do
       seen = Queue.new
       stub_llm_chats([high], [high], on_ask: lambda { |_chat|
-        seen << [Thread.current, RubyLLM::Support::Instrumentation.current_workflow]
+        seen << [Thread.current, Thread.current[:fake_adapter_context]]
       })
 
-      RubyLLM::Support::Instrumentation.with_workflow({ name: "triage" }) { klass.call(text: "x") }
+      Thread.current[:fake_adapter_context] = { name: "triage" }
+      klass.call(text: "x")
 
       requests = [seen.pop, seen.pop]
       expect(requests.map(&:first)).not_to include(Thread.current)
       expect(requests.map(&:last)).to eq([{ name: "triage" }] * 2)
-    end
-
-    it "carries instrumentation subscribers' context over to the request threads" do
-      subscriber = Object.new
-      subscriber.define_singleton_method(:capture_context) { Thread.current[:squishling_spec_span] }
-      subscriber.define_singleton_method(:with_context) do |span, &block|
-        Thread.current[:squishling_spec_span] = span
-        block.call
-      ensure
-        Thread.current[:squishling_spec_span] = nil
-      end
-      subscriber.define_singleton_method(:instrument) { |_name, _payload, &block| block.call }
-      seen = Queue.new
-      stub_llm_chats([high], [high], on_ask: ->(_chat) { seen << Thread.current[:squishling_spec_span] })
-      RubyLLM::Support::Instrumentation.subscribe(subscriber)
-      Thread.current[:squishling_spec_span] = "span-1"
-
-      klass.call(text: "x")
-
-      expect([seen.pop, seen.pop]).to eq(%w[span-1 span-1])
     ensure
-      Thread.current[:squishling_spec_span] = nil
-      RubyLLM::Support::Instrumentation.unsubscribe(subscriber)
+      Thread.current[:fake_adapter_context] = nil
     end
 
     it "stops the requests still running when the caller is interrupted" do
@@ -263,7 +243,7 @@ RSpec.describe "Squishling harnesses" do
     end
 
     it "starts a fresh chat for a sample after a failed request" do
-      chats = stub_llm_chats([RubyLLM::ServerError.new("boom")], [high], [high])
+      chats = stub_llm_chats([Squishling::LLMError.new("boom")], [high], [high])
 
       expect(klass.call(text: "x").priority).to eq("high")
       expect(chats.size).to eq(3)
@@ -282,17 +262,17 @@ RSpec.describe "Squishling harnesses" do
     end
 
     it "raises LLMError when a sample's last attempt fails" do
-      stub_llm_chats([high], [RubyLLM::ServerError.new("boom")], [RubyLLM::ServerError.new("again")])
+      stub_llm_chats([high], [Squishling::LLMError.new("boom")], [Squishling::LLMError.new("again")])
 
-      expect { klass.call(text: "x") }.to raise_error(Squishling::LLMError, /ServerError/) { |e| expect(e.cause.message).to eq("again") }
+      expect { klass.call(text: "x") }.to raise_error(Squishling::LLMError, "again")
     end
 
     it "raises a provider 400 as a ConfigurationError, never handing it to the fallback" do
       fallback = []
       klass.squish_fallback { |error, **| fallback << error }
-      stub_llm_chats([high], [RubyLLM::BadRequestError.new("bad temperature")])
+      stub_llm_chats([high], [Squishling::ConfigurationError.new("bad temperature")])
 
-      expect { klass.call(text: "x") }.to raise_error(Squishling::ConfigurationError, /BadRequestError/) { |e| expect(e.cause.message).to eq("bad temperature") }
+      expect { klass.call(text: "x") }.to raise_error(Squishling::ConfigurationError, "bad temperature")
       expect(fallback).to be_empty
     end
 
@@ -331,7 +311,7 @@ RSpec.describe "Squishling harnesses" do
     it "calls squawk with the LLMError when a sample's request fails, then with the retry's output" do
       calls = []
       klass.squishling(squawk: ->(output:, error:, **) { calls << [output, error&.class] })
-      stub_llm_chats([RubyLLM::ServerError.new("boom")], [high], [high])
+      stub_llm_chats([Squishling::LLMError.new("boom")], [high], [high])
 
       klass.call(text: "x")
 
@@ -340,7 +320,7 @@ RSpec.describe "Squishling harnesses" do
 
     it "starts a sample's fresh chat from the input alone when the step sets forward_rejected: false" do
       invalid = { "priority" => 1, "team" => "api" }
-      responses = [[invalid, RubyLLM::ServerError.new("boom")], [high], [high]]
+      responses = [[invalid, Squishling::LLMError.new("boom")], [high], [high]]
 
       [true, false].each do |forward|
         klass.squishling(escalation: [{ model: "claude-haiku-4-5", attempts: 3, forward_rejected: forward }])
@@ -441,7 +421,7 @@ RSpec.describe "Squishling harnesses" do
 
       expect(klass.call(text: "x").priority).to eq("high")
       expect(chats.last.model).to eq("claude-opus-5-5")
-      expect(chats.last.generation).to include(temperature: 0.1, provider_options: { seed: 9, top_p: 1 })
+      expect(chats.last.params).to eq(temperature: 0.1, seed: 9, top_p: 1)
     end
 
     it "gives a judge: step only its own provider:, never the class's" do
@@ -450,15 +430,15 @@ RSpec.describe "Squishling harnesses" do
 
       klass.call(text: "x")
 
-      expect(chats.first.options).to include(provider: :anthropic)
-      expect(chats.last.options).not_to include(:provider)
+      expect(chats.first.provider).to eq(:anthropic)
+      expect(chats.last.provider).to be_nil
 
       klass.squishling(harness: { type: :judged_squishsum, judge: { model: "gpt-unknown", provider: :openai } })
       chats = stub_llm_chats([high], [low], [{ "verdict" => "a", "reason" => "outage" }])
 
       klass.call(text: "x")
 
-      expect(chats.last.options).to eq(provider: :openai, assume_model_exists: true)
+      expect(chats.last.provider).to eq(:openai)
     end
 
     it "replaces the default judge prompt with judge_instructions:, a String or a Proc against the instance" do
@@ -491,7 +471,7 @@ RSpec.describe "Squishling harnesses" do
 
     it "raises LLMError when the chat judge's last attempt fails, which goes to squish_fallback" do
       klass.squish_fallback { |error, **| error.is_a?(Squishling::LLMError) ? { priority: "medium", team: "api" } : raise }
-      stub_llm_chats([high], [low], [RubyLLM::ServerError.new("judge down")])
+      stub_llm_chats([high], [low], [Squishling::LLMError.new("judge down")])
 
       result = klass.call(text: "x")
 
@@ -523,32 +503,12 @@ RSpec.describe "Squishling harnesses" do
         expect(call[:input]).to include(purpose: "Triage the ticket.", candidates: { a: high, b: low })
       end
 
-      it "builds a judgment RubyLLM's own Judge accepts: one choice question and the judgment input" do
-        klass.squishling(harness: { type: :judged_squishsum, judge: jev.merge(params: { reasoning: "fast" }) })
-        stub_llm_chats([high], [low])
-        received = {}
-        # Stubbed below RubyLLM.judge, so RubyLLM's own question and input validation runs.
-        allow(RubyLLM::Judgment).to receive(:judge) do |input, questions:, **settings|
-          received.merge!(input:, questions:, settings:)
-          choice = RubyLLM::Choice.new(choice: :b, probabilities: { a: 0.1, b: 0.85, neither: 0.05 }, confidence: 0.85)
-          RubyLLM::Judgment.new(answers: { winner: choice }, model: "jev-latest")
-        end
-
-        expect(klass.call(text: "x").priority).to eq("low")
-        winner = received[:questions].fetch("winner")
-        expect(winner.type).to eq(:choice)
-        expect(winner.criteria.keys).to eq(%i[a b neither])
-        expect(winner.instructions).to eq(Squishling::Harness::DEFAULT_JUDGE_INSTRUCTIONS)
-        expect(received[:input]).to include(purpose: "Triage the ticket.", candidates: { a: high, b: low })
-        expect(received[:settings]).to include(model: "jev-latest", provider_options: { reasoning: "fast" })
-      end
-
-      it "raises ConfigurationError, without retrying, for a judgment model RubyLLM doesn't know" do
+      it "raises ConfigurationError, without retrying, when the adapter rejects the judgment" do
         fallback = []
         klass.squish_fallback { |e, **| fallback << e }
         klass.squishling(harness: { type: :judged_squishsum, judge: jev.merge(model: "jev-nonexistent", attempts: 2) })
         stub_llm_chats([high], [low])
-        calls = stub_judgment(RubyLLM::ModelNotFoundError.new("Unknown model: jev-nonexistent"))
+        calls = stub_judgment(Squishling::ConfigurationError.new("Unknown model: jev-nonexistent"))
 
         expect { klass.call(text: "x") }
           .to raise_error(Squishling::ConfigurationError, /Unknown model: jev-nonexistent/)
@@ -582,9 +542,9 @@ RSpec.describe "Squishling harnesses" do
       it "raises LLMError once failed judgment requests use up the judge's attempts" do
         klass.squishling(harness: { type: :judged_squishsum, judge: jev.merge(attempts: 2) })
         stub_llm_chats([high], [low])
-        calls = stub_judgment(RubyLLM::ServerError.new("busy"), RubyLLM::ServerError.new("still busy"))
+        calls = stub_judgment(Squishling::LLMError.new("busy"), Squishling::LLMError.new("still busy"))
 
-        expect { klass.call(text: "x") }.to raise_error(Squishling::LLMError, /ServerError/) { |e| expect(e.cause.message).to eq("still busy") }
+        expect { klass.call(text: "x") }.to raise_error(Squishling::LLMError, "still busy")
         expect(calls.size).to eq(2)
       end
 
@@ -619,39 +579,17 @@ RSpec.describe "Squishling harnesses" do
       it "retries a failed judgment request per the judge's attempts" do
         klass.squishling(harness: { type: :judged_squishsum, judge: jev.merge(attempts: 2) })
         stub_llm_chats([high], [low])
-        stub_judgment(RubyLLM::ServerError.new("busy"), { choice: :a, probabilities: { a: 0.9, b: 0.1 } })
+        stub_judgment(Squishling::LLMError.new("busy"), { choice: :a, probabilities: { a: 0.9, b: 0.1 } })
 
         expect(klass.call(text: "x").priority).to eq("high")
       end
 
-      it "raises ConfigurationError, never handing it to the fallback, when the provider doesn't support judgments" do
-        fallback = []
-        klass.squish_fallback { |error, **| fallback << error }
-        klass.squishling(harness: { type: :judged_squishsum, judge: jev.merge(attempts: 2) })
-        stub_llm_chats([high], [low])
-        calls = stub_judgment(RubyLLM::Error.new("Anthropic doesn't support judgments"))
-
-        expect { klass.call(text: "x") }.to raise_error(Squishling::ConfigurationError, /doesn't support judgments/)
-        expect(calls.size).to eq(1)
-        expect(fallback).to be_empty
-      end
-
       it "raises InvalidOutputError when the judgment has no winner answer" do
         stub_llm_chats([high], [low])
-        allow(RubyLLM).to receive(:judge).and_return(RubyLLM::Judgment.new(answers: {}, model: "jev-latest"))
+        stub_judgment(FakeAdapter::Judgment.new({}))
 
         expect { klass.call(text: "x") }
           .to raise_error(Squishling::InvalidOutputError, /Judge output was invalid: the judgment didn't answer/)
-      end
-
-      it "maps an ArgumentError raised inside RubyLLM (a judgment it can't build) to ConfigurationError" do
-        stub_llm_chats([high], [low])
-        ruby_llm_lib = File.dirname(RubyLLM.method(:judge).source_location.first)
-        error = ArgumentError.new("judge does not accept a model")
-        error.set_backtrace(["#{ruby_llm_lib}/ruby_llm/models.rb:193:in 'resolve'"])
-        stub_judgment(error)
-
-        expect { klass.call(text: "x") }.to raise_error(Squishling::ConfigurationError, /does not accept a model/)
       end
 
       it "lets an ArgumentError from the developer's own code (e.g. a subscriber) propagate unwrapped" do
@@ -661,6 +599,18 @@ RSpec.describe "Squishling harnesses" do
         stub_judgment(ArgumentError.new("subscriber bug"))
 
         expect { klass.call(text: "x") }.to raise_error(ArgumentError, "subscriber bug")
+        expect(fallback).to be_empty
+      end
+
+      it "raises ConfigurationError up front when the adapter doesn't support judgments" do
+        fallback = []
+        klass.squish_fallback { |error, **| fallback << error }
+        chats = stub_llm_chats([high], [low])
+        fake_adapter.judgments_supported = false
+
+        expect { klass.call(text: "x") }
+          .to raise_error(Squishling::ConfigurationError, /type: :judgment needs an adapter that supports judgments/)
+        expect(chats).to be_empty
         expect(fallback).to be_empty
       end
 

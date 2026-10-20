@@ -29,8 +29,8 @@ jobs:
           ruby-version: ${{ matrix.ruby-version }}
           bundler-cache: true
 
-      # Offline: RubyLLM is stubbed, so no provider API keys are needed. Live provider
-      # tests live in examples/ and run during /prep-release.
+      # Offline: adapters are faked or stubbed (WebMock for the OpenAI-compatible one), so no provider API keys are
+      # needed. Live provider tests live in examples/ and run during /prep-release.
       - name: Run RSpec tests
         run: bundle exec rspec --format documentation
 
