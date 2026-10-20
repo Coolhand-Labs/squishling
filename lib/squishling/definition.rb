@@ -7,6 +7,9 @@ module Squishling
     # Matches the keys a squish! context: Hash may use.
     NAME_KEY = ->(key) { key.is_a?(String) || key.is_a?(Symbol) }
 
+    # One attempt on RubyLLM's default model, when no level declares a model.
+    DEFAULT_STEP = { model: nil, attempts: 1, forward_rejected: true }.freeze
+
     attr_reader :klass, :name, :call_context, :handed_off
 
     def initialize(klass:, name:, purpose: nil, append_to_purpose: nil, output_schema: nil, model: nil,
@@ -81,14 +84,18 @@ module Squishling
     # One ModelPath::Step per attempt, from the first level (method, class, or config) that declares a model
     # or escalation, or a single attempt on RubyLLM's default model. A provider travels with the model declared
     # at the same level, so a per-method Anthropic model never inherits a class-level OpenAI provider. Models
-    # tied on priority are rotated by this method's call count (see Rotation).
-    def escalation_path
+    # tied on priority are rotated by this method's call count (see Rotation). Steps whose include_when: is falsy
+    # for this call's inputs are left out, so a tier rotates only between its eligible models.
+    def escalation_path(receiver, inputs)
       config = Squishling.config
       entries, provider = [[@model, @provider], [klass.squishling_model_path, klass.squishling_provider],
                            [config.default_model_path, config.default_provider]].find(&:first)
-      entries ||= [{ model: nil, attempts: 1, forward_rejected: true }]
-      turn = ModelPath.rotating?(entries) ? Rotation.advance(klass, name) : 0
-      ModelPath.steps(entries, provider:, params:, turn:)
+      declared = entries || [DEFAULT_STEP]
+      eligible = ModelPath.eligible(declared, receiver, inputs, label)
+      # Counted when the declared path rotates (so a call that excludes some models doesn't skew the others'
+      # rotation) or when this call's eligible steps do (an excluded rotate: false step no longer pins its tier).
+      turn = ModelPath.rotating?(declared) || ModelPath.rotating?(eligible) ? Rotation.advance(klass, name) : 0
+      ModelPath.steps(eligible, provider:, params:, turn:)
     end
 
     # How the escalation is used (see Harness): the method's, the class's, the configured default, or :escalation.

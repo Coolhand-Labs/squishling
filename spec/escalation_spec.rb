@@ -274,6 +274,140 @@ RSpec.describe "Squishling model escalation" do
     end
   end
 
+  describe "excluding a step per call with include_when:" do
+    let(:gated) do
+      Class.new do
+        include Squishling
+
+        squishling escalation: [
+          { model: "gpt", include_when: ->(client:, **) { !client.fetch(:baa) } },
+          { model: "claude", include_when: ->(**) { chosen } },
+          "plain"
+        ]
+        purpose "Classify."
+        output_schema { string :label }
+
+        def chosen = true
+      end
+    end
+
+    def models_tried(klass, **inputs)
+      stub_llm(nil, nil, nil)
+      klass.new.call(**inputs)
+    rescue Squishling::InvalidOutputError => e
+      e.models
+    end
+
+    it "drops a step whose proc is falsy and keeps one whose proc is truthy, in order" do
+      expect(models_tried(gated, client: { baa: false })).to eq(%w[gpt claude plain])
+      expect(models_tried(gated, client: { baa: true })).to eq(%w[claude plain])
+    end
+
+    it "evaluates the proc against the instance, with the inputs as keywords" do
+      gated.define_method(:chosen) { false }
+
+      expect(models_tried(gated, client: { baa: false })).to eq(%w[gpt plain])
+    end
+
+    it "keeps priority order after filtering" do
+      gated.squishling(escalation: [
+        { model: "b", priority: 2 },
+        { model: "gone", priority: 1, include_when: ->(**) { false } },
+        { model: "a", priority: 1 }
+      ])
+
+      expect(models_tried(gated, client: {})).to eq(%w[a b])
+    end
+
+    it "rotates only the models still eligible in a tier" do
+      gated.squishling(escalation: [
+        { model: "a", priority: 1 },
+        { model: "gone", priority: 1, include_when: ->(**) { false } },
+        { model: "b", priority: 1 }
+      ])
+
+      expect(Array.new(3) { models_tried(gated, client: {}) }).to eq([%w[a b], %w[b a], %w[a b]])
+    end
+
+    it "applies to a squish! call's escalation" do
+      gated.define_method(:call) do |client:|
+        squish!(escalation: ["x", { model: "y", include_when: ->(**) { client[:baa] } }])
+      end
+
+      expect(models_tried(gated, client: { baa: false })).to eq(%w[x])
+    end
+
+    it "raises ConfigurationError, not the fallback, when every step is excluded" do
+      gated.squishling(escalation: [{ model: "a", include_when: ->(**) { false } }])
+      gated.squish_fallback { |_error, **| { label: "fallback" } }
+      stub_llm
+
+      expect { gated.new.call(client: {}) }
+        .to raise_error(Squishling::ConfigurationError, /include_when: excluded every escalation step/)
+    end
+
+    it "propagates an exception raised by the proc, without the fallback" do
+      gated.squishling(escalation: [{ model: "a", include_when: ->(**) { raise ArgumentError, "boom" } }])
+      gated.squish_fallback { |_error, **| { label: "fallback" } }
+      stub_llm
+
+      expect { gated.new.call(client: {}) }.to raise_error(ArgumentError, "boom")
+    end
+
+    it "applies to a default_escalation and a class-level escalation" do
+      Squishling.configure do |c|
+        c.default_escalation = ["a", { model: "b", include_when: ->(**) { false } }]
+      end
+      plain = Class.new do
+        include Squishling
+
+        squishling
+        purpose "Classify."
+        output_schema { string :label }
+      end
+      expect(models_tried(plain, client: {})).to eq(%w[a])
+
+      plain.squishling(escalation: ["c", { model: "d", include_when: ->(**) { false } }])
+      expect(models_tried(plain, client: {})).to eq(%w[c])
+    end
+
+    it "does not let an excluded model skew the rotation of the others" do
+      gated.squishling(escalation: [
+        { model: "a", priority: 1 },
+        { model: "b", priority: 1 },
+        { model: "c", priority: 1, include_when: ->(client:, **) { client[:c] } }
+      ])
+
+      tried = [{ c: true }, { c: false }, { c: false }, { c: true }].map { |client| models_tried(gated, client:) }
+      expect(tried).to eq([%w[a b c], %w[b a], %w[a b], %w[a b c]])
+    end
+
+    it "lets an excluded rotate: false step stop pinning its tier" do
+      gated.squishling(escalation: [
+        { model: "a", priority: 1 },
+        { model: "b", priority: 1 },
+        { model: "pin", priority: 1, rotate: false, include_when: ->(client:, **) { client[:pin] } }
+      ])
+
+      tried = [{ pin: true }, { pin: true }, { pin: false }, { pin: false }].map do |client|
+        models_tried(gated, client:)
+      end
+      expect(tried).to eq([%w[a b pin], %w[a b pin], %w[a b], %w[b a]])
+    end
+
+    it "rejects an include_when: that is not a Proc" do
+      expect { gated.squishling(escalation: [{ model: "a", include_when: true }]) }
+        .to raise_error(Squishling::ConfigurationError, /include_when: must be a Proc/)
+    end
+
+    it "rejects include_when: on a harness step and a judge" do
+      gate = ->(**) { true }
+
+      expect { gated.squishling(harness: { type: :judged_squishsum, judge: { model: "x", include_when: gate } }) }
+        .to raise_error(Squishling::ConfigurationError, /a judge is one step, so it takes no .*include_when:/)
+    end
+  end
+
   describe "path resolution" do
     let(:base) do
       Class.new do
