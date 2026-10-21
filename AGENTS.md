@@ -112,6 +112,14 @@ Flag any change that breaks one of these; they are behavior contracts, not style
   `Harness::Registry`. A harness's return value must be a typed result its `Run` produced (`Invoker#accepted`), so
   validation can't be skipped. Options are validated when the harness is declared, before any request. Don't give the
   built-ins a private path that custom harnesses can't use.
+- **Test support is opt-in and framework-free.** `squishling/testing` is never required by `lib/squishling.rb`, adds no
+  runtime dependency, and needs no test framework or mocking library (the Minitest and RSpec mixins only call the
+  host's `flunk` / raise RSpec's failure). It is a real `Adapter::Base` installed through `config.adapter` (and a
+  `Testing::Observer` that tells it the role/sample/attempt), so it follows the adapter contract rather than patching
+  any provider SDK. Its stand-ins must stay honest: `stub_result` builds results through the method's schema, and the
+  re-ask/escalation parsing reads `Run::Messages`, the one source of those texts. Its errors (`UnscriptedRequestError`,
+  `ProviderCallError`, `SetupError`) are not `Squishling::Error`s, so a `squish_fallback` can't absorb them.
+  `Testing.reset!` restores only what the helpers changed.
 
 ## Public API
 
@@ -133,7 +141,11 @@ plugin point is public too:
 `Squishling.register_harness`/`harnesses`/`reset_harnesses!`, `Squishling::Harness::Base` (`option` and its types,
 `call(run, **options)`, `validate_options!`), the `Squishling::Run` primitives a harness gets (`receiver`, `inputs`,
 `label`, `steps`, `stages`, `stage`, `escalate`, `samples`, `judge`, `agree?`, `log`) with
-`Squishling::Judge::Verdict`, and the squawk `metadata` keys `role:`/`sample:`. Don't break it without a clear
+`Squishling::Judge::Verdict`, and the squawk `metadata` keys `role:`/`sample:`. The opt-in test support is public
+too: `Squishling::Testing` (`install`, `forbid_provider_calls!`, `no_llm_call`, `reset!`, `stub_result`/`stub_error`,
+`validate`/`fallback_for`/`preview`, `valid_reply_for`/`invalid_reply_for`, `capture_squawk`/`with_squawk`), its
+script DSL (`step`/`sample`/`judge`, `reply`/`fail`/`once`, `Reply`), `Testing::Adapter#requests`/`conversations` with
+`Testing::Request`, and the `Testing::Minitest` / `Testing::RSpec` mixins. Don't break it without a clear
 migration path in the changelog.
 
 ## Changelog and versioning

@@ -162,7 +162,8 @@ state (a per-request HTTP connection, as the OpenAI-compatible adapter does, is 
 
 ### Testing against your adapter
 
-Squishling's own specs use a fake adapter that replays canned responses; you can do the same in yours:
+To test your *application* (not an adapter), use [`squishling/testing`](testing.md): a scripted adapter with request
+inspection, call assertions, and stubs. To unit-test an adapter you wrote, a canned one is enough:
 
 ```ruby
 class CannedAdapter < Squishling::Adapter::Base

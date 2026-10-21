@@ -230,6 +230,8 @@ sees it right where the value goes, and the purpose stays short and about the go
   the `squawk` hook, your own observer, or OpenTelemetry
 - [Observers](docs/observers.md): wrap every provider request, and the built-in [Coolhand Labs](docs/coolhand.md) observer
   that files each call under its workload and template
+- [Testing](docs/testing.md): `require "squishling/testing"`: a scripted adapter, call assertions, result and error
+  stubs, and schema-driven fixtures, for Minitest and RSpec
 - [Live examples](examples/README.md): end-to-end tests against Anthropic Claude Haiku and OpenAI GPT-6 Luna
 
 ## Development

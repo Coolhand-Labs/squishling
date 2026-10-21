@@ -12,6 +12,11 @@ module Squishling
     private_constant :COUNTS, :COUNTS_LOCK
 
     class << self
+      # The turn the next call will get, without counting it.
+      def peek(klass, name)
+        COUNTS_LOCK.synchronize { (COUNTS[klass] || {}).fetch(name, 0) }
+      end
+
       # This call's turn, counting from 0, and counts it.
       def advance(klass, name)
         COUNTS_LOCK.synchronize do
