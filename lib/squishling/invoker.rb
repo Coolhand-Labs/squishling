@@ -21,24 +21,36 @@ module Squishling
       @inputs = inputs
     end
 
+    # Everything a Run needs of the call: the prompt, the payload it was built from, and the purpose text.
+    Built = Data.define(:prompt, :payload, :purpose)
+
     # Runs the harness (Definition#harness) over a Run of the call: the harness decides how the escalation is
     # used, and what it returns is checked against the output schema's type.
     def call
+      built = build
+      harness = @definition.harness
+      run = Run.new(definition: @definition, receiver: @receiver, inputs: @inputs, prompt: built.prompt,
+        payload: built.payload, purpose: built.purpose, harness:)
+      accepted(harness.klass.new.call(run, **harness.options), run, harness)
+    end
+
+    # The first request the call would make (system prompt, output schema, user message), without making it.
+    def prompt
+      build.prompt
+    end
+
+    private
+
+    def build
       purpose = @definition.purpose(@receiver)
       schema = @definition.schema
       raise ConfigurationError, "#{@definition.label} has no purpose" if purpose.nil? || purpose.empty?
       raise ConfigurationError, "#{@definition.label} has no output_schema" unless schema
 
-      harness = @definition.harness
       body = payload
-      prompt = Prompt.new(instructions: "#{purpose}\n\n#{INPUT_NOTE}", schema:,
-        input: JSON.generate(body), role: nil)
-      run = Run.new(definition: @definition, receiver: @receiver, inputs: @inputs, prompt:, payload: body, purpose:,
-        harness:)
-      accepted(harness.klass.new.call(run, **harness.options), run, harness)
+      prompt = Prompt.new(instructions: "#{purpose}\n\n#{INPUT_NOTE}", schema:, input: JSON.generate(body), role: nil)
+      Built.new(prompt:, payload: body, purpose:)
     end
-
-    private
 
     # What a harness returns must be a result its run produced: validated output, typed like the deterministic
     # path's. One built by hand, or a hash, would skip the schema and squish_validate.
