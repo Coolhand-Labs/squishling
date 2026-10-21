@@ -75,6 +75,13 @@ r.to_h                           # deep Hash with symbol keys
 r.squished?                      # => true when it came from the LLM
 ```
 
+A property can't share a name with a method the result depends on, because the `Data` member would replace it.
+Squishling raises `ConfigurationError` when the schema is built (before any request), naming the clashing
+fields; rename them (`class` to `ticket_class`). The reserved names are `class`, `is_a?`, `kind_of?`, `hash`, `inspect`, `to_s`,
+`to_h`, `members`, `with`, `dup`, `send`, `public_send`, `eql?`, `==`, `[]`, `squished?`, `object_id`,
+`deconstruct_keys`, and a few Ruby and Squishling internals (`initialize*`, `__send__`, `squishling_squished`).
+Other names, such as `method`, `format`, or `type`, work as usual. This applies to nested objects and array items too.
+
 On the deterministic path, return a `Hash` or build the result with `result(...)`. Either way it's validated
 against the schema, and so is anything else you return (`nil`, a string, another schema's result), which raises
 `Squishling::InvalidOutputError` unless it matches.

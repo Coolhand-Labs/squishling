@@ -30,6 +30,8 @@ module Squishling
     attr_reader :llm_schema
     # The full JSON Schema used for validation and result typing.
     attr_reader :json_schema
+    # The Data class results are built as, or nil when the schema isn't an object with properties.
+    attr_reader :result_class
 
     def initialize(raw)
       hash = self.class.jsonify(to_hash(raw))
@@ -48,6 +50,8 @@ module Squishling
         "strict" => true
       }.compact
       @validator = JSONSchemer.schema(@json_schema)
+      # Built now so a property name the result can't take fails here, not on the first response.
+      @result_class = Result.build(@json_schema)
     end
 
     def validate(data)
@@ -56,12 +60,6 @@ module Squishling
 
     def build(data, squished:)
       result_class ? result_class.from_h(data, squished:) : data
-    end
-
-    def result_class
-      return @result_class if defined?(@result_class)
-
-      @result_class = Result.build(@json_schema)
     end
 
     private
