@@ -256,10 +256,11 @@ rule `/loop-review` uses for stuck findings.
   `main` only via the Phase 5 PR, which the user reviews and merges
   themselves.
 - Never create or push a git tag, never run `rake release` or `gem push`,
-  and never merge the Phase 5 PR yourself. Tagging and publishing are the
-  user's action once they've reviewed and merged this skill's PR, not
-  something this skill does. `/finish-release` is that follow-up: the user
-  invokes it after merging, and it tags and publishes the GitHub release.
+  and never merge the Phase 5 PR yourself. Merging, tagging and publishing are
+  the user's action once they've reviewed this skill's PR, not something this
+  skill does. `/finish-release` is that follow-up: the user invokes it after
+  reviewing the release PR, and it then merges the PR, tags, and publishes the
+  GitHub release.
 
 ## Rationalizations to resist
 
