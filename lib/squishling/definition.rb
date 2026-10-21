@@ -88,13 +88,19 @@ module Squishling
     # or escalation, or a single attempt on the adapter's default model. A provider travels with the model declared
     # at the same level, so a per-method Anthropic model never inherits a class-level OpenAI provider. Models
     # tied on priority are rotated by this method's call count (see Rotation). Steps whose include_when: is falsy
-    # for this call's inputs are left out, so a tier rotates only between its eligible models.
-    def escalation_path(receiver, inputs)
+    # for this call's inputs are left out, so a tier rotates only between its eligible models. advance: false looks
+    # at the turn the next call will get without counting this one (a prompt preview).
+    def escalation_path(receiver, inputs, advance: true)
       declared, provider = declared_path
       eligible = ModelPath.eligible(declared, receiver, inputs, label)
       # Counted when the declared path rotates (so a call that excludes some models doesn't skew the others'
       # rotation) or when this call's eligible steps do (an excluded rotate: false step no longer pins its tier).
-      turn = ModelPath.rotating?(declared) || ModelPath.rotating?(eligible) ? Rotation.advance(klass, name) : 0
+      rotates = ModelPath.rotating?(declared) || ModelPath.rotating?(eligible)
+      turn = if rotates
+        advance ? Rotation.advance(klass, name) : Rotation.peek(klass, name)
+      else
+        0
+      end
       ModelPath.steps(eligible, provider:, params:, turn:)
     end
 
@@ -144,6 +150,11 @@ module Squishling
       @validator || klass.squishling_validator
     end
 
+    # The squish_fallback handler: the method's, else the class's (nil when there is none).
+    def fallback
+      @fallback || klass.squishling_fallback
+    end
+
     # The observability hook: the method's, else the class's, else the configured one. `false` at a level
     # silences the levels above it.
     def squawk
@@ -180,7 +191,7 @@ module Squishling
     def invoke_llm(receiver, inputs)
       Invoker.new(self, receiver, inputs).call
     rescue InvalidOutputError, LLMError => e
-      handler = @fallback || klass.squishling_fallback
+      handler = fallback
       raise unless handler
 
       Squishling.config.logger&.warn("[Squishling] #{label} LLM failed, using fallback: #{e.message}")
