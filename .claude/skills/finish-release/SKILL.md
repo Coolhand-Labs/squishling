@@ -63,9 +63,9 @@ deploys from `site/**` changes on `main`, not tags, so it is not part of this.
 
 1. Save the PR's current description outside the repo:
    `gh pr view <n> --json body --jq .body > "$TMPDIR/squishling-release-pr-<n>.md"`.
-2. `gh pr merge <n> --squash --delete-branch --subject "chore: release vX.Y.Z (#<n>)"
-   --body-file "$TMPDIR/squishling-release-pr-<n>.md"`. That is the repo's
-   squash style (PR title plus `(#N)`; `--subject` is used verbatim, so keep the
+2. `gh pr merge <n> --squash --delete-branch --subject "release vX.Y.Z (#<n>)"
+   --body-file "$TMPDIR/squishling-release-pr-<n>.md"`. The commit title drops
+   the PR's `chore:` prefix (`--subject` is used verbatim, so keep the `(#N)`
    suffix), with the PR body as the commit body verbatim. Add no AI attribution
    (`AGENTS.md`). Never `--admin`, never bypass a check. If the merge is
    refused, stop and report.
