@@ -227,22 +227,74 @@ RSpec.describe Squishling::Adapters::RubyLLM do
         .to raise_error(Squishling::LLMError, /Faraday::ServerError, HTTP 503/) { |e| expect(e.message).not_to include("upstream") }
     end
 
-    it "points a rejected request at the params" do
-      stub_chat(RubyLLM::BadRequestError.new("Unsupported value: 'temperature' does not support 0.1"))
+    def rejection_response(body)
+      Struct.new(:status, :body).new(400, body)
+    end
 
-      expect { adapter.complete(adapter_request(params: { temperature: 0.1 })) }
-        .to raise_error(Squishling::ConfigurationError) do |e|
-          expect(e.message).to include("provider rejected the request", { temperature: 0.1 }.inspect,
-            "reasoning models")
+    def reject_with(body, params: {})
+      stub_chat(RubyLLM::BadRequestError.new(leaked, response: rejection_response(body)))
+      adapter.complete(adapter_request(params:))
+    end
+
+    it "points a rejected request at the one param the provider named" do
+      body = { "error" => { "message" => leaked, "type" => "invalid_request_error", "param" => "temperature" } }
+
+      expect { reject_with(body, params: { temperature: 0.1, max_output_tokens: 10 }) }
+        .to raise_error(Squishling::RequestRejectedError) do |e|
+          expect(e.message).to include("provider rejected the request", "invalid_request_error", ":temperature")
+          expect(e.message).not_to include("max_output_tokens", "sk-proj", "Jane Doe")
+          expect(e.provider_status).to eq("invalid_request_error")
+          expect(e).to be_a(Squishling::ConfigurationError)
         end
     end
 
-    it "omits the params hint when no params are set" do
+    it "keeps a Gemini-style status and drops a code that only repeats the HTTP status" do
+      body = [{ "error" => { "code" => 400, "message" => leaked, "status" => "INVALID_ARGUMENT" } }]
+
+      expect { reject_with(body, params: { temperature: 0.1 }) }.to raise_error(Squishling::RequestRejectedError) do |e|
+        expect(e.message).to include("BadRequestError, HTTP 400, INVALID_ARGUMENT")
+        expect(e.message).to include("may be invalid")
+        expect(e.message).not_to include("temperature", "sk-proj", "Jane Doe")
+        expect([e.provider_status, e.provider_code]).to eq(["INVALID_ARGUMENT", nil])
+        expect(e.cause).to be_a(RubyLLM::BadRequestError)
+      end
+    end
+
+    it "keeps a provider code, and leaves out a status or code that isn't a plain token" do
+      body = { "error" => { "code" => "unsupported_value", "status" => leaked, "type" => "Jane Doe, sk-proj" } }
+
+      expect { reject_with(body) }.to raise_error(Squishling::RequestRejectedError) do |e|
+        expect(e.message).to include("unsupported_value")
+        expect(e.message).not_to include("sk-proj", "Jane Doe")
+        expect([e.provider_status, e.provider_code]).to eq([nil, "unsupported_value"])
+      end
+    end
+
+    it "reads the status and body of a Faraday error, whose response is a Hash" do
+      body = { "error" => { "code" => 400, "status" => "INVALID_ARGUMENT", "message" => leaked } }
+      stub_chat(RubyLLM::BadRequestError.new(leaked, response: { status: 400, body: }))
+
+      expect { adapter.complete(adapter_request) }.to raise_error(Squishling::RequestRejectedError) do |e|
+        expect(e.message).to include("BadRequestError, HTTP 400, INVALID_ARGUMENT")
+        expect([e.provider_status, e.provider_code]).to eq(["INVALID_ARGUMENT", nil])
+      end
+    end
+
+    it "has no status or code when the provider's body carries none" do
+      expect { reject_with("<html>bad</html>") }.to raise_error(Squishling::RequestRejectedError) do |e|
+        expect(e.message).to include("(RubyLLM::BadRequestError, HTTP 400). The output schema or input")
+        expect([e.provider_status, e.provider_code]).to eq([nil, nil])
+      end
+    end
+
+    it "has no status or code when the error has no response" do
       stub_chat(RubyLLM::BadRequestError.new("Invalid schema"))
 
-      expect { adapter.complete(adapter_request) }.to raise_error(Squishling::ConfigurationError) do |e|
-        expect(e.message).to include("provider rejected the request", "BadRequestError")
-        expect(e.message).not_to include("Check params")
+      expect { adapter.complete(adapter_request) }.to raise_error(Squishling::RequestRejectedError) do |e|
+        expect(e.message).to include("provider rejected the request", "BadRequestError",
+          "The output schema or input may be invalid")
+        expect(e.message).not_to include("params")
+        expect(e.provider_status).to be_nil
       end
     end
 

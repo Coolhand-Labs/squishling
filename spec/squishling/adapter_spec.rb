@@ -65,6 +65,46 @@ RSpec.describe Squishling::Adapter do
         .to raise_error(Squishling::ConfigurationError, /doesn't support judgments/)
     end
 
+    it "gives a custom adapter rejected_request_error, which repeats only the body's status and code" do
+      request = Squishling::Adapter::Request.new(label: "K#m", model: nil, provider: nil, instructions: nil,
+        messages: [], schema: nil, params: { top_p: 1 })
+      body = JSON.generate(error: { message: "echoed secret", status: "INVALID_ARGUMENT", param: "top_p" })
+
+      error = base.send(:rejected_request_error, request, via: "MyClient, HTTP 400", body:)
+
+      expect(error).to be_a(Squishling::ConfigurationError)
+      expect(error.message).to eq("K#m: the provider rejected the request (MyClient, HTTP 400, INVALID_ARGUMENT). " \
+                                  "The provider named the :top_p param; check its value.")
+      expect(error.provider_status).to eq("INVALID_ARGUMENT")
+    end
+
+    it "points at a param only when the provider's field is that param or inside it" do
+      request = lambda do |params|
+        Squishling::Adapter::Request.new(label: "K#m", model: nil, provider: nil, instructions: nil, messages: [],
+          schema: nil, params:)
+      end
+      hint = lambda do |params, field|
+        body = JSON.generate(error: { param: field })
+        base.send(:rejected_request_error, request.call(params), via: "Acme", body:).message
+      end
+
+      expect(hint.call({ thinking: { budget: 1 } }, "thinking.budget_tokens")).to include(":thinking param")
+      expect(hint.call({ "stop" => ["x"] }, "stop[0]")).to include('"stop" param')
+      expect(hint.call({ thinking_x: 1 }, "thinking")).to include("may be invalid")
+      expect(hint.call({ temperature: 1 }, nil)).to include("may be invalid")
+    end
+
+    it "drops a code that repeats the http_status it was given, whatever via says" do
+      request = Squishling::Adapter::Request.new(label: "K#m", model: nil, provider: nil, instructions: nil,
+        messages: [], schema: nil, params: {})
+      body = JSON.generate(error: { code: 400, status: "INVALID_ARGUMENT" })
+
+      error = base.send(:rejected_request_error, request, via: "Acme", body:, http_status: 400)
+
+      expect(error.provider_code).to be_nil
+      expect(error.message).to include("(Acme, INVALID_ARGUMENT)")
+    end
+
     it "carries no context by default" do
       expect(base.capture_context).to be_nil
       expect(base.with_context(nil) { :ran }).to eq(:ran)
