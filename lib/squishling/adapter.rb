@@ -118,11 +118,34 @@ module Squishling
         LLMError.new("#{request.label}: #{message}")
       end
 
-      # Appended to the message for a request the provider rejected: a params mistake is the usual cause.
-      def params_hint(params)
-        return "" if params.empty?
+      # A RequestRejectedError for a request the provider rejected (a 400). via names how it failed (the error class,
+      # the HTTP status); body is the provider's error body (a JSON String, or a Hash with String keys), of which only
+      # the status and code tokens are repeated, never its message. http_status, when given, drops a code that only
+      # repeats it. The params are pointed at only when the provider named one of them.
+      def rejected_request_error(request, via:, body:, http_status: nil)
+        found = ErrorBody.read(body, http_status:)
+        tokens = found.values_at(:status, :code).compact
+        RequestRejectedError.new(
+          "#{request.label}: the provider rejected the request (#{[via, *tokens].join(', ')}). " \
+          "#{rejection_hint(request.params, found[:param])}",
+          provider_status: found[:status], provider_code: found[:code]
+        )
+      end
 
-        ". Check params #{params.inspect}; reasoning models often reject sampling params such as temperature and top_p"
+      def rejection_hint(params, field)
+        named = params.keys.find { |key| names?(field, key.to_s) }
+        return "The #{suspects(params)} may be invalid." unless named
+
+        "The provider named the #{named.inspect} param; check its value."
+      end
+
+      def suspects(params)
+        params.empty? ? "output schema or input" : "params, output schema, or input"
+      end
+
+      # Whether the provider's field is the param or inside it (thinking.budget_tokens, stop[0]).
+      def names?(field, name)
+        !field.nil? && (field == name || field.start_with?("#{name}.", "#{name}["))
       end
     end
 

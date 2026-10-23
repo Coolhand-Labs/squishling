@@ -381,11 +381,46 @@ RSpec.describe Squishling::Adapters::OpenAICompatible do # rubocop:disable RSpec
       expect { adapter.complete(adapter_request) }.to raise_error(Squishling::LLMError, /HTTP 400/)
     end
 
-    it "points a rejected request at the params" do
-      stub_post.to_return(reply(error_body, status: 400))
+    it "points a rejected request at the one param the server named" do
+      stub_post.to_return(reply(error_body(param: "temperature"), status: 400))
+
+      expect { adapter.complete(adapter_request(params: { temperature: 0.1, top_p: 0.5 })) }
+        .to raise_error(Squishling::RequestRejectedError,
+          /rejected the request \(HTTP 400, invalid_request_error\).*:temperature/) do |e|
+          expect(e.message).not_to include("top_p", "Jane Doe")
+          expect(e.provider_status).to eq("invalid_request_error")
+        end
+    end
+
+    it "keeps an overlong-context 400 as an LLMError when the server wraps the error in an Array" do
+      stub_post.to_return(reply(JSON.generate([{ error: { code: "context_length_exceeded" } }]), status: 400))
+
+      expect { adapter.complete(adapter_request) }.to raise_error(Squishling::LLMError, /HTTP 400/)
+    end
+
+    it "treats a 400 whose body isn't valid UTF-8 as a rejected request" do
+      stub_post.to_return(reply("\xFF\xFE bad".b, status: 400))
+
+      expect { adapter.complete(adapter_request) }.to raise_error(Squishling::RequestRejectedError, /HTTP 400/)
+    end
+
+    it "words the hint neutrally when the server named no configured param, and exposes the code" do
+      stub_post.to_return(reply(error_body(code: "unsupported_value", param: "messages[0].content"), status: 400))
 
       expect { adapter.complete(adapter_request(params: { temperature: 0.1 })) }
-        .to raise_error(Squishling::ConfigurationError, /rejected the request \(HTTP 400\).*temperature/)
+        .to raise_error(Squishling::RequestRejectedError) do |e|
+          expect(e.message).to include("HTTP 400, invalid_request_error, unsupported_value", "may be invalid")
+          expect(e.message).not_to include("temperature", "messages[0]")
+          expect([e.provider_status, e.provider_code]).to eq(%w[invalid_request_error unsupported_value])
+        end
+    end
+
+    it "has no status or code for a 400 whose body isn't an error object" do
+      stub_post.to_return(reply("<html>bad request</html>", status: 400))
+
+      expect { adapter.complete(adapter_request) }.to raise_error(Squishling::RequestRejectedError) do |e|
+        expect([e.provider_status, e.provider_code]).to eq([nil, nil])
+      end
     end
 
     it "does not follow redirects, so the key goes nowhere else" do

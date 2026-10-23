@@ -70,12 +70,13 @@ end
 the request body as given. Squishling's own keys (`model`, `messages`, `response_format`, `n`, `stream`) always win.
 `provider:` has no meaning here and is ignored.
 
-**Failures.** Every HTTP status of 300 or above except 408, 429, and 5xx (401, 403, 404, 400, 422, a redirect, …) raises `ConfigurationError` (never retried or escalated; a 400 that
+**Failures.** Every HTTP status of 300 or above except 408, 429, and 5xx (401, 403, 404, 400, 422, a redirect, …) raises `ConfigurationError`, a `RequestRejectedError` for a 400 or other rejected request (never retried or escalated; a 400 that
 reports an overlong context, and a 413, are `LLMError`s, since they depend on the input; a 400 counts as an overlong
 context when its error code is `context_length_exceeded` or its message uses the usual wording ("context length", "too many
 tokens", …), which the message is only matched against, never repeated). 408, 429, 5xx, timeouts, and
 connection errors raise `LLMError` once the adapter's own retries are used up. Messages carry the status or error
-class only; the server's message, the response body, and the API key never appear in an error or log. Redirects
+class only; a rejected request (400) also carries the server's error status and code when they are plain tokens (as
+`provider_status` and `provider_code`). The server's message, the response body, and the API key never appear in an error or log. Redirects
 aren't followed, so the key can't be sent to another host.
 
 ## Writing your own
@@ -104,6 +105,9 @@ class AcmeAdapter < Squishling::Adapter::Base
     )
   rescue Acme::AuthError
     raise configuration_error(request, "Acme rejected the credentials")
+  rescue Acme::BadRequest => e
+    # a 400: repeats only the body's status and code, and points at a param only if the provider named one
+    raise rejected_request_error(request, via: "Acme, HTTP 400", body: e.response_body, http_status: 400)
   rescue Acme::Error => e
     raise llm_error(request, "Acme failed (#{e.class})")
   end
@@ -120,7 +124,7 @@ Squishling.register_adapter(:acme, AcmeAdapter)
 
 | Field | |
 |---|---|
-| `label` | `"Class#method"`, to prefix your error messages (the `configuration_error` / `llm_error` helpers do). |
+| `label` | `"Class#method"`, to prefix your error messages (the `configuration_error` / `llm_error` helpers do; `rejected_request_error(request, via:, body:, http_status:)` builds the error for a rejected request, from a JSON String or String-keyed Hash body). |
 | `model`, `provider` | The escalation step's, or `nil` when it names none (use your own default). What `provider:` means is up to you. |
 | `instructions` | The system prompt. |
 | `messages` | The conversation so far, ending with the user message to answer. After invalid output, Squishling appends your previous answer and a retry message; you never keep history. |

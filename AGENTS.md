@@ -68,15 +68,16 @@ Flag any change that breaks one of these; they are behavior contracts, not style
   drops it from a call before rotation; a call left with no steps raises `ConfigurationError`.
   Invalid output and `LLMError` move on to the next attempt; `ConfigurationError` never does.
 - **Error taxonomy.** Everything Squishling raises inherits `Squishling::Error`: `ConfigurationError`
-  (setup mistakes; never retried, escalated, or passed to fallbacks), `InvalidOutputError` (bad output after every
-  attempt in the escalation),
-  `LLMError` (provider/transport failure after the adapter's HTTP retries, original as `cause`). Never wrap or
-  swallow exceptions raised by the user's own Ruby code.
+  (setup mistakes; never retried, escalated, or passed to fallbacks; a provider 400 is its `RequestRejectedError`
+  subclass), `InvalidOutputError` (bad output after every attempt in the escalation), `LLMError` (provider/transport
+  failure after the adapter's HTTP retries, original as `cause`). Never wrap or swallow exceptions raised by the
+  user's own Ruby code.
 - **Model output leaves the process only through `InvalidOutputError#raw` and the opt-in `squawk` hook.** Error
   messages and `config.logger` lines carry parse positions and schema paths, never the response itself (the
   documented exceptions are model-chosen extra key names and the developer's own `squish_validate` messages).
-  A provider's or transport's own message is the same: ours carry the error class and HTTP status, and the
-  original stays on `cause`.
+  A provider's or transport's own message is the same: ours carry the error class and HTTP status (a 400's
+  `RequestRejectedError` adds the body's status and code when they are plain tokens, as `provider_status` and
+  `provider_code`), and the original stays on `cause`.
 - **Only named context leaves the process.** The LLM sees method arguments, `squish_context` values, a
   `squish!` call's `context:`, and source the developer explicitly passes to `append_to_purpose` — never
   instance variables wholesale. Exceptions in context are sent as class and message only. The one model-generated
@@ -128,7 +129,8 @@ The public surface is `Squishling.configure`/`config`, the adapter plugin point 
 `Squishling::Configuration` options (including `default_harness`, `observer`, and `squawk`, whose
 `output:`/`metadata:`/`error:` keywords are public), `Squishling::Observer::Call`/`Usage`,
 `Squishling::Harness::DEFAULT_JUDGE_INSTRUCTIONS`, result objects (`squished?`, `to_h`, `[]`), and the error classes
-(including `InvalidOutputError#models` and `DisagreementError#candidates`/`verdict`/`reason`). The custom-harness
+(including `InvalidOutputError#models`, `DisagreementError#candidates`/`verdict`/`reason`, and
+`RequestRejectedError#provider_status`/`provider_code`). The custom-harness
 plugin point is public too:
 `Squishling.register_harness`/`harnesses`/`reset_harnesses!`, `Squishling::Harness::Base` (`option` and its types,
 `call(run, **options)`, `validate_options!`), the `Squishling::Run` primitives a harness gets (`receiver`, `inputs`,

@@ -7,6 +7,20 @@ module Squishling
   # missing API key). Never retried and never passed to squish_fallback.
   class ConfigurationError < Error; end
 
+  # The provider answered a request with HTTP 400 (or another 4xx that isn't a credentials, model, or redirect
+  # problem). Still a ConfigurationError: never retried, escalated, or passed to a fallback. The provider's message is
+  # never repeated; the machine-readable status and code its error body carries are, when they are plain tokens
+  # (e.g. "INVALID_ARGUMENT", "invalid_request_error"). Both are nil when the body has none.
+  class RequestRejectedError < ConfigurationError
+    attr_reader :provider_status, :provider_code
+
+    def initialize(message, provider_status: nil, provider_code: nil)
+      @provider_status = provider_status
+      @provider_code = provider_code
+      super(message)
+    end
+  end
+
   # Output that didn't match the schema (or a squish_validate check): from the LLM after every attempt in the
   # escalation, or from the deterministic path.
   class InvalidOutputError < Error
