@@ -76,7 +76,8 @@ Flag any change that breaks one of these; they are behavior contracts, not style
   user's own Ruby code.
 - **Model output leaves the process only through `InvalidOutputError#raw` and the opt-in `squawk` hook.** Error
   messages and `config.logger` lines carry parse positions and schema paths, never the response itself (the
-  documented exceptions are model-chosen extra key names and the developer's own `squish_validate` messages).
+  documented exceptions are model-chosen extra key names, which `InvalidOutputError#error_details` tags
+  `model_derived?`, and the developer's own `squish_validate` messages).
   A provider's or transport's own message is the same: ours carry the error class and HTTP status (a 400's
   `RequestRejectedError` adds the body's status and code when they are plain tokens, as `provider_status` and
   `provider_code`), and the original stays on `cause`.
@@ -131,9 +132,9 @@ The public surface is `Squishling.configure`/`config`, the adapter plugin point 
 `Squishling::Configuration` options (including `default_harness`, `observer`, and `squawk`, whose
 `output:`/`metadata:`/`error:` keywords are public), `Squishling::Observer::Call`/`Usage`,
 `Squishling::Harness::DEFAULT_JUDGE_INSTRUCTIONS`, result objects (`squished?`, `to_h`, `[]`), and the error classes
-(including `InvalidOutputError#models`, `DisagreementError#candidates`/`verdict`/`reason`, and
-`RequestRejectedError#provider_status`/`provider_code`). The custom-harness
-plugin point is public too:
+(including `InvalidOutputError#error_details` (`InvalidOutputError::Detail`: `message`, `source`,
+`model_derived?`), `InvalidOutputError#models`, `DisagreementError#candidates`/`verdict`/`reason`, and
+`RequestRejectedError#provider_status`/`provider_code`). The custom-harness plugin point is public too:
 `Squishling.register_harness`/`harnesses`/`reset_harnesses!`, `Squishling::Harness::Base` (`option` and its types,
 `call(run, **options)`, `validate_options!`), the `Squishling::Run` primitives a harness gets (`receiver`, `inputs`,
 `label`, `steps`, `stages`, `stage`, `escalate`, `samples`, `judge`, `agree?`, `log`) with

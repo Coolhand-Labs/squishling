@@ -210,8 +210,8 @@ module Squishling
         squawk(prompt, path, attempt, response, error, reask:, repeated:, final: following.nil?)
         raise error unless following
 
-        rejected = [response.content, errors]
-        log_failure(prompt.role, attempt, path, rejection_reason(errors, response), following:, repeated:)
+        rejected = [response.content, error.errors]
+        log_failure(prompt.role, attempt, path, rejection_reason(error.errors, response), following:, repeated:)
         attempt = following
       end
     end
@@ -268,8 +268,8 @@ module Squishling
         final: last || repeated)
       raise invalid if last || repeated
 
-      sample.rejected = [response.content, errors]
-      log_failure(role, attempt, stage, rejection_reason(errors, response))
+      sample.rejected = [response.content, invalid.errors]
+      log_failure(role, attempt, stage, rejection_reason(invalid.errors, response))
     end
 
     # Remembers a result of the method's own output (a judge's verdict isn't one), so a harness can only return

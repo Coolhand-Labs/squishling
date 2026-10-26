@@ -304,8 +304,10 @@ A harness fails the way the built-ins do, so `squish_fallback` and the error cla
 - **Attempts run out.** `run.escalate` and `run.samples` raise `InvalidOutputError` (invalid output after the last
   attempt) or `LLMError` (a failed request on the last attempt) themselves, with the same attributes as always.
 - **Your rule rejects.** Raise one of those errors yourself. `Squishling::DisagreementError.new(candidates:,
-  models:)` is the one for samples that don't agree, and `Squishling::InvalidOutputError.new(errors: [...], source: "Harness")` for
-  anything else. Both go to [`squish_fallback`](failures.md#fallbacks).
+  models:)` is the one for samples that don't agree, and `Squishling::InvalidOutputError.new(errors: [...],
+  source: "Harness")` for anything else. Both go to [`squish_fallback`](failures.md#fallbacks). A String error is
+  tagged `:squishling` in [`error_details`](failures.md#telling-the-entries-apart); pass a
+  `Squishling::InvalidOutputError::Detail` to tag it yourself.
 - **Setup mistakes** raise `ConfigurationError`, which is never retried and never sent to the fallback.
 - **Your own exceptions** (from `call`, `compare:`, or `squish_validate`) propagate unchanged. Squishling doesn't wrap or
   swallow them.

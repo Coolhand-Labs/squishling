@@ -220,6 +220,101 @@ RSpec.describe "Squishling failure handling" do
     end
   end
 
+  describe "error origins (InvalidOutputError#error_details)" do
+    def failure_from(*responses)
+      stub_llm(*responses)
+      klass.call(text: "x")
+    rescue Squishling::InvalidOutputError => e
+      e
+    end
+
+    it "marks a schema error that names a model-chosen key as model-derived" do
+      error = failure_from({ "label" => "a", "@channel" => 1 }, { "label" => "a", "@channel" => 1 })
+
+      expect(error.error_details.map(&:source)).to eq([:schema])
+      expect(error.error_details).to all(be_model_derived)
+      expect(error.error_details.first.message).to include("@channel")
+      expect(error.errors).to eq(error.error_details.map(&:message))
+    end
+
+    it "marks parse failures as Squishling's own text" do
+      error = failure_from('{"label": SECRET_TOKEN oops}', nil)
+
+      expect(error.error_details.map(&:source)).to eq([:parse])
+      expect(error.error_details).not_to include(be_model_derived)
+    end
+
+    {
+      "an Array" => [%w[first second], %w[first second]],
+      "a String" => ["first", %w[first]],
+      "false" => [false, ["the output was rejected by squish_validate"]],
+      "a validation result" => [Struct.new(:errors) { def success? = false }.new({ label: ["bad"] }), ["label bad"]]
+    }.each do |label, (value, messages)|
+      it "marks squish_validate messages returned as #{label} as the caller's" do
+        klass.squish_validate { |_result, **| value }
+        error = failure_from({ "label" => "a" }, { "label" => "a" })
+
+        expect(error.error_details.map(&:to_h)).to eq(messages.map { |message| { message:, source: :validator } })
+        expect(error.error_details).not_to include(be_model_derived)
+      end
+    end
+
+    it "marks an empty response and an unrepresentable value as parse failures" do
+      empty = Squishling::InvalidOutputError::Detail.new("response was empty", :parse)
+      expect(failure_from("", "").error_details).to eq([empty])
+      expect(failure_from(%({"label": "x\xFFy"}), %({"label": "x\xFFy"})).error_details.map(&:source)).to eq([:parse])
+    end
+
+    it "marks a deterministic return JSON can't represent as a parse failure" do
+      klass.squish_fallback { |_error, **| { label: Float::NAN } }
+      error = failure_from(nil, nil)
+
+      expect(error.message).to include("Deterministic")
+      expect(error.error_details.map(&:source)).to eq([:parse])
+    end
+
+    it "keeps errors and error_details stable and frozen" do
+      error = failure_from(nil, nil)
+
+      expect(error.errors).to equal(error.errors)
+      expect(error.errors).to be_frozen
+      expect(error.error_details).to be_frozen
+    end
+
+    it "only flags schema errors as model-derived, and rejects an unknown source" do
+      detail = Squishling::InvalidOutputError::Detail
+      flagged = detail::SOURCES.select { |source| detail.new("m", source).model_derived? }
+
+      expect(flagged).to eq([:schema])
+      expect { detail.new("m", :schma) }.to raise_error(ArgumentError, /unknown error source :schma/)
+    end
+
+    it "marks the notice about errors beyond the cap as Squishling's own text" do
+      klass.output_schema { array :scores, of: :integer }
+      error = failure_from({ "scores" => Array.new(30, "x") }, { "scores" => Array.new(30, "x") })
+
+      expect(error.error_details.map(&:source).tally).to eq(schema: 20, squishling: 1)
+    end
+
+    it "marks a deterministic return's schema errors" do
+      klass.squish_fallback { |_error, **| { label: 1 } }
+      error = failure_from(nil, nil)
+
+      expect(error.message).to include("Deterministic")
+      expect(error.error_details.map(&:source)).to eq([:schema])
+    end
+
+    it "treats a String error from a harness as Squishling's own text, and keeps a Detail as given" do
+      error = Squishling::InvalidOutputError.new(
+        errors: ["no", Squishling::InvalidOutputError::Detail.new("bad key", :schema)], source: "Harness"
+      )
+
+      expect(error.error_details.map(&:source)).to eq(%i[squishling schema])
+      expect(error.message).to eq("Harness output was invalid: no; bad key")
+      expect(Squishling::InvalidOutputError.new(errors: [:oops]).errors).to eq(["oops"])
+    end
+  end
+
   describe "LLM call failures" do
     before { klass.squishling(model: "test-model") }
 

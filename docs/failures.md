@@ -25,7 +25,8 @@ step's remaining attempts: it moves straight to the next step (or raises `Invali
 last), so size `attempts:` for replies that can differ. Set `retry_temperature:` on a step to vary the temperature
 of its same-chat retries. A different step gets a fresh chat with the original input plus the rejected output
 (truncated to 4,000 characters) and its errors, so that output is sent to the next step's provider, which may not be the one that
-produced it. Set `forward_rejected: false` on a step to leave both out. `InvalidOutputError` exposes `errors`, `raw`
+produced it. Set `forward_rejected: false` on a step to leave both out. `InvalidOutputError` exposes `errors`,
+`error_details` (the same messages, each tagged with where it came from; see below), `raw`
 (the last response), `attempts`, `models` (the model tried on each attempt), and `finish_reason` (why the provider
 stopped on the last one). For a [`DisagreementError`](harnesses.md#when-the-harness-fails), `raw` holds both
 candidates, `attempts` and `finish_reason` are `nil`, and `models` has one entry per role (sample a, sample b, then
@@ -57,7 +58,8 @@ Model output can echo sensitive input, so the raw response is kept in one place:
   snippet of the response.
 - JSON Schema errors, which name the schema path and the rule that failed. They never contain the rejected value, but
   they do name an extra key the model added (`object property at /foo is a disallowed additional property`), and
-  that key name is chosen by the model.
+  that key name is chosen by the model. These are the only entries Squishling itself fills with model-chosen text; see
+  [telling the entries apart](#telling-the-entries-apart).
 - Your own `squish_validate` messages, verbatim. If you interpolate result values into them, those values reach
   the message, the logger, and the next attempt's prompt.
 - A fixed message when a response contains a value JSON can't represent (`1e400` parses to `Infinity`, or a string
@@ -70,6 +72,27 @@ Model output can echo sensitive input, so the raw response is kept in one place:
 - For a [`DisagreementError`](harnesses.md#when-the-harness-fails), only what Squishling wrote: a `:judgment` judge's
   choice and probability. A chat judge's `reason` is model-written, so it is available as `#reason` but never in the
   message or logs.
+
+#### Telling the entries apart
+
+`InvalidOutputError#errors` is an Array of Strings. `#error_details` is the same list as
+`Squishling::InvalidOutputError::Detail` values (`message`, `source`), so a sink with its own control syntax (a chat
+webhook, HTML, a markdown renderer) can escape only what needs it:
+
+| `source` | Where the message came from | `model_derived?` |
+|---|---|---|
+| `:schema` | A JSON Schema error. It can name a key the model chose. | `true` |
+| `:validator` | Your own [`squish_validate`](#output-checks-squish_validate) message, verbatim. Never flagged, so escape it too if you interpolate result values into it. | `false` |
+| `:parse` | A message about a response or return value that didn't parse (not valid JSON, empty, a value JSON can't represent). | `false` |
+| `:squishling` | Other text Squishling or a [custom harness](harnesses.md#when-the-harness-fails) wrote, such as the "... and N more errors" notice. | `false` |
+
+```ruby
+squish_fallback do |error, **|
+  trusted = error.error_details.reject(&:model_derived?).map(&:message)
+  notify_channel("squishling rejected output: #{trusted.first(2).join('; ')}")
+  # ...
+end
+```
 
 The same applies to anything you log yourself, such as `error.message` in a [fallback](#fallbacks). Use `error.raw`
 only where you are willing to store model output. To send the output of every attempt somewhere on purpose, use
