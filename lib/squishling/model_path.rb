@@ -14,17 +14,29 @@ module Squishling
   # order: is the deprecated name of priority:. forward_rejected: false starts a step from the original input
   # alone, without the previous step's rejected output. include_when: (a Proc, called like squish_when with the
   # method's inputs as keywords, on the instance) drops the step from any call where it is falsy.
+  # retry_temperature: (a Numeric) is the temperature for the step's same-chat retries after the first attempt.
   module ModelPath
-    # One attempt: the model, its provider, the fully resolved generation params, and whether the previous
-    # step's rejected output is shown to it.
-    Step = Data.define(:model, :provider, :params, :forward_rejected) do
+    # One attempt: the model, its provider, the fully resolved generation params, whether the previous
+    # step's rejected output is shown to it, and the temperature its retries in the same chat use, if any.
+    Step = Data.define(:model, :provider, :params, :forward_rejected, :retry_temperature) do
+      def initialize(model:, provider:, params:, forward_rejected:, retry_temperature: nil)
+        super
+      end
+
+      # The params for a request: on a retry in the same chat (reask), the step's retry_temperature replaces the
+      # temperature, if it sets one.
+      def request_params(reask)
+        reask && retry_temperature ? Params.resolve(params, temperature: retry_temperature) : params
+      end
+
       # The model for logs and messages (nil means the adapter's default model).
       def display_name
         model || "the adapter's default model"
       end
     end
 
-    STEP_KEYS = %i[model provider params attempts priority order rotate forward_rejected include_when].freeze
+    STEP_KEYS = %i[model provider params attempts priority order rotate forward_rejected include_when
+                   retry_temperature].freeze
 
     module_function
 
@@ -65,7 +77,8 @@ module Squishling
     def steps(path, provider:, params:, turn: 0)
       rotated(path, turn).flat_map do |step|
         attempt = Step.new(model: step[:model], provider: step[:provider] || provider,
-          params: Params.resolve(params, step[:params]), forward_rejected: step[:forward_rejected])
+          params: Params.resolve(params, step[:params]), forward_rejected: step[:forward_rejected],
+          retry_temperature: step[:retry_temperature])
         [attempt] * step[:attempts]
       end
     end
@@ -148,6 +161,7 @@ module Squishling
       end
 
       check_include_when!(step, label, model)
+      check_retry_temperature!(step, label, model)
       forward_rejected = step.fetch(:forward_rejected, true)
       unless [true, false].include?(forward_rejected)
         raise ConfigurationError,
@@ -156,7 +170,7 @@ module Squishling
 
       params = step[:params] && Params.normalize(step[:params], "#{label} (#{model}) params")
       normalized = { model:, provider: step[:provider], params:, attempts:, forward_rejected: }
-      normalized.merge(step.slice(:priority, :rotate, :include_when, *extras))
+      normalized.merge(step.slice(:priority, :rotate, :include_when, :retry_temperature, *extras))
     end
 
     def check_include_when!(step, label, model)
@@ -164,6 +178,18 @@ module Squishling
 
       raise ConfigurationError,
         "#{label} (#{model}): include_when: must be a Proc, got #{step[:include_when].inspect}"
+    end
+
+    def valid_temperature?(temperature)
+      temperature.is_a?(Numeric) && temperature.real? && temperature.finite? && !temperature.negative?
+    end
+
+    def check_retry_temperature!(step, label, model)
+      temperature = step[:retry_temperature]
+      return if !step.key?(:retry_temperature) || valid_temperature?(temperature)
+
+      raise ConfigurationError,
+        "#{label} (#{model}): retry_temperature: must be a finite Numeric of 0 or more, got #{temperature.inspect}"
     end
 
     # A step used on its own (a judge, a harness's step) can't take part in a tier or be left out of a call, so it

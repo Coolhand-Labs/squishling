@@ -19,9 +19,12 @@ A failed attempt moves on to the next one; once the last fails, the error is rai
 
 Squishling validates output itself with [json_schemer](https://github.com/davishmcclurg/json_schemer), because
 adapters don't, and some providers don't enforce strict mode. When the next attempt is on the same step (same
-model, provider, params, and `forward_rejected:`), the re-ask happens in the same conversation, so the model sees
-what it got wrong. A different step gets a fresh chat with the original input plus the rejected output (truncated to
-4,000 characters) and its errors, so that output is sent to the next step's provider, which may not be the one that
+model, provider, params, `forward_rejected:`, and `retry_temperature:`), the re-ask happens in the same conversation, so the model sees
+what it got wrong. If that re-ask returns the same reply it was just told was invalid, Squishling doesn't spend the
+step's remaining attempts: it moves straight to the next step (or raises `InvalidOutputError`, when this was the
+last), so size `attempts:` for replies that can differ. Set `retry_temperature:` on a step to vary the temperature
+of its same-chat retries. A different step gets a fresh chat with the original input plus the rejected output
+(truncated to 4,000 characters) and its errors, so that output is sent to the next step's provider, which may not be the one that
 produced it. Set `forward_rejected: false` on a step to leave both out. `InvalidOutputError` exposes `errors`, `raw`
 (the last response), `attempts`, and `models` (the model tried on each attempt); for a
 [`DisagreementError`](harnesses.md#when-the-harness-fails), `raw` holds both candidates, `attempts` is `nil`, and
@@ -72,7 +75,7 @@ end
 |---|---|
 | `output` | The raw response: a Hash or String, or `nil` when the provider call itself failed |
 | `error` | `nil` for an accepted attempt. Otherwise the `InvalidOutputError` (with `errors` and `raw`) or `LLMError` that ended the attempt |
-| `metadata` | `label` (`"Class#method"`), `attempt`, `attempts` (the escalation's length; under a harness, the sample's or judge's own attempts), `final` (the last attempt), `model`, `provider`, `params`, `input` (the JSON sent: arguments and named context only), `usage` (token counts, when the adapter reports them), `role` (`nil` for an escalation attempt, `:sample`, or `:judge`), `sample` (`"a"`, `"b"`, ... for a sample's attempt, else `nil`) |
+| `metadata` | `label` (`"Class#method"`), `attempt`, `attempts` (the escalation's length; `attempt` jumps past the attempts a repeated reply skips; under a harness, the sample's or judge's own attempts), `final` (the last attempt, or a rejection after which none follows), `repeated` (`true` when the attempt returned the same reply as the one before it, in the same chat, which skips the step's remaining attempts), `model`, `provider`, `params`, `input` (the JSON sent: arguments and named context only), `usage` (token counts, when the adapter reports them), `role` (`nil` for an escalation attempt, `:sample`, or `:judge`), `sample` (`"a"`, `"b"`, ... for a sample's attempt, else `nil`) |
 
 - Set it globally with `config.squawk`, per class with `squishling squawk: ...`, or per method with
   `squish :triage, squawk: ...`. The method's hook wins over the class's, which wins over the configured one;

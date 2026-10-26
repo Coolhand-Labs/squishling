@@ -318,6 +318,34 @@ RSpec.describe "Squishling harnesses" do
       expect(calls).to contain_exactly([nil, Squishling::LLMError], [high, nil], [high, nil])
     end
 
+    it "ends a sample that repeats its rejected reply instead of spending its remaining attempts" do
+      calls = []
+      klass.squishling(escalation: [{ model: "claude-haiku-4-5", attempts: 3 }],
+        squawk: ->(metadata:, **) { calls << metadata.values_at(:sample, :attempt, :final, :repeated) })
+      invalid = { "priority" => 1, "team" => "api" }
+      stub_llm_chats([invalid, invalid, high], [high, high, high])
+
+      expect { klass.call(text: "x") }.to raise_error(Squishling::InvalidOutputError) do |e|
+        expect(e.attempts).to eq(2)
+      end
+      expect(calls).to include(["a", 2, true, true])
+    end
+
+    it "applies retry_temperature: to a sample's retry, not to its first attempt" do
+      klass.squishling(escalation: [{ model: "claude-haiku-4-5", attempts: 2, retry_temperature: 0.9,
+                                      params: { temperature: 0 } }])
+      temperatures = []
+      replies = [{ "priority" => 1, "team" => "api" }, high, high]
+      install_fake_adapter.responder = lambda { |request|
+        temperatures << request.params[:temperature]
+        replies.shift
+      }
+
+      klass.call(text: "x")
+
+      expect(temperatures).to contain_exactly(0, 0, 0.9)
+    end
+
     it "starts a sample's fresh chat from the input alone when the step sets forward_rejected: false" do
       invalid = { "priority" => 1, "team" => "api" }
       responses = [[invalid, Squishling::LLMError.new("boom")], [high], [high]]

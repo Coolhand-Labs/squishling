@@ -47,9 +47,10 @@ module Squishling
     # attempt, which moves on to the next attempt of the escalation (or propagates from the last one).
     # The request runs inside the configured observer (see Observer), on this thread: for samples, the worker's.
     # role is nil for an escalation attempt, :sample (with its name) or :judge; attempt counts in attempts.
-    def ask(chat, message, step, attempt:, attempts:, role: nil, sample: nil)
+    # reask is whether this message is a retry in the same chat (see ModelPath::Step#request_params).
+    def ask(chat, message, step, attempt:, attempts:, role: nil, sample: nil, reask: false)
       call = call_info(step, :chat, role:, sample:, attempt:, attempts:)
-      Observer.around(call) { complete(chat, message, step) }
+      Observer.around(call) { complete(chat, message, step, reask) }
     end
 
     # Whether the adapter can make System One judgments (judges with type: :judgment).
@@ -77,10 +78,10 @@ module Squishling
       [nil, e]
     end
 
-    def complete(chat, message, step)
+    def complete(chat, message, step, reask)
       messages = chat.messages + [{ role: :user, content: message }]
       request = Adapter::Request.new(label: @label, model: step.model, provider: step.provider,
-        instructions: chat.instructions, messages:, schema: chat.schema, params: step.params)
+        instructions: chat.instructions, messages:, schema: chat.schema, params: step.request_params(reask))
       response = @adapter.complete(request)
       unless response.is_a?(Adapter::Response)
         raise ConfigurationError, "#{@label}: the #{@adapter.class} adapter must return a " \

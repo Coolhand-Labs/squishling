@@ -174,7 +174,7 @@ sees it right where the value goes, and the purpose stays short and about the go
 - **Any provider and model**: set a universal, per-class, per-method, or per-call model, plus layered generation params (temperature,
   reasoning effort, top_p, …).
 - **Model escalation**: declare an `escalation:` instead of a `model:`, with per-step `attempts:`, `priority:` (models tied on priority take turns going first), provider,
-  params, `forward_rejected:`, and `include_when:` (leave a model out of calls where a Proc is falsy). Invalid output (with its errors fed back) or a provider failure moves on to the next attempt. Steps can
+  params, `forward_rejected:`, `retry_temperature:`, and `include_when:` (leave a model out of calls where a Proc is falsy). Invalid output (with its errors fed back) or a provider failure moves on to the next attempt. Steps can
   cross providers, e.g. a local Qwen model on Ollama, then Anthropic Claude Haiku on AWS Bedrock, then Claude Opus:
 
   ```ruby

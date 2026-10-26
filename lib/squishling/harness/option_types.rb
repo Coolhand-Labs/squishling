@@ -4,7 +4,8 @@ module Squishling
   class Harness
     # The types a harness option can declare (see Base.option). Each checks a given value and returns it
     # normalized, or raises ConfigurationError, so a bad option fails before any request is made.
-    #   :step         a model name or a step Hash (model:, provider:, params:, attempts:, forward_rejected:)
+    #   :step         a model name or a step Hash (model:, provider:, params:, attempts:, forward_rejected:,
+    #                 retry_temperature:)
     #   :proc, :string, :symbol, :integer, :boolean
     # A harness with a shape of its own declares the type as a callable instead, which gets the value, the
     # declaration site, and the option's name, and returns the normalized value (or raises ConfigurationError).
