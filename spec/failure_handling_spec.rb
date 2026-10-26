@@ -19,6 +19,25 @@ RSpec.describe "Squishling failure handling" do
       expect(chats.first.messages.last).to include("response was empty")
     end
 
+    it "tells a max-token cutoff from a bad answer by the finish reason" do
+      stub_llm(FakeChat::Response.new("", nil, nil, :max_tokens), FakeChat::Response.new("", nil, nil, :max_tokens))
+
+      expect { klass.call(text: "x") }
+        .to raise_error(Squishling::InvalidOutputError, /response was empty.*cut off at the output token limit/) do |e|
+          expect(e).to have_attributes(finish_reason: :max_tokens, truncated?: true)
+        end
+    end
+
+    it "does not call a rejected answer truncated" do
+      stub_llm({ "label" => 1 }, FakeChat::Response.new({ "label" => 2 }, nil, nil, :stop))
+
+      expect { klass.call(text: "x") }
+        .to raise_error(Squishling::InvalidOutputError) do |e|
+          expect(e).to have_attributes(finish_reason: :stop, truncated?: false)
+          expect(e.message).not_to include("cut off")
+        end
+    end
+
     it "treats a blank string as empty" do
       stub_llm("  \n", "")
 
@@ -109,6 +128,13 @@ RSpec.describe "Squishling failure handling" do
       let(:log) { StringIO.new }
 
       before { Squishling.configure { |c| c.logger = Logger.new(log) } }
+
+      it "notes a max-token cutoff in the log line" do
+        stub_llm(FakeChat::Response.new("", nil, nil, :max_tokens), { "label" => "ok" })
+        klass.call(text: "x")
+
+        expect(log.string).to include("response was empty (cut off at the output token limit)")
+      end
 
       it "keeps unparseable output out of the error, the log, and the retry message" do
         chats = stub_llm('{"label": SECRET_TOKEN oops}', '{"label": SECRET_TOKEN oops}')

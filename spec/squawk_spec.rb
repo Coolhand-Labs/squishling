@@ -126,6 +126,17 @@ RSpec.describe "Squishling squawk" do
       expect(calls.first[:metadata]).to include(model: "served-model", usage: { input_tokens: 3, output_tokens: 4 })
     end
 
+    it "includes the finish reason, nil when the adapter reported none" do
+      stub_llm(FakeChat::Response.new("", nil, nil, :max_tokens), { "label" => "ok" })
+      klass.call(text: "x")
+
+      cut_off, accepted = calls
+      expect(cut_off[:metadata]).to include(finish_reason: :max_tokens)
+      expect(cut_off[:error]).to have_attributes(truncated?: true)
+      expect(accepted[:metadata]).to have_key(:finish_reason)
+      expect(accepted[:metadata][:finish_reason]).to be_nil
+    end
+
     it "reports usage as nil when the adapter reported no token counts" do
       stub_llm({ "label" => "ok" })
       klass.call(text: "x")

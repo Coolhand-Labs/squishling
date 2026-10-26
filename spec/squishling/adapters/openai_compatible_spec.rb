@@ -26,6 +26,15 @@ RSpec.describe Squishling::Adapters::OpenAICompatible do # rubocop:disable RSpec
     JSON.parse(WebMock::RequestRegistry.instance.requested_signatures.hash.keys.last.body)
   end
 
+  it "reports the first choice's finish reason, with \"length\" as :max_tokens" do
+    stub_post.to_return(reply(completion("", choices: [{ message: { content: "" }, finish_reason: "length" }])),
+      reply(completion), reply(completion("{}", choices: [{ message: { content: "{}" } }])))
+
+    reasons = Array.new(3) { adapter.complete(adapter_request).finish_reason }
+
+    expect(reasons).to eq([:max_tokens, :stop, nil])
+  end
+
   it "is registered as :openai_compatible, built from a Hash of options" do
     built = Squishling::Adapter.build({ type: :openai_compatible, base_url: "http://localhost:11434/v1" }, "test")
 

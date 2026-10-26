@@ -226,6 +226,9 @@ end
 - **No params means provider defaults.** Squishling sends nothing unless you set it. For structured
   extraction on non-reasoning models (e.g. Anthropic Claude Haiku), a low temperature reduces run-to-run
   variance.
+- **Thinking counts against `max_output_tokens`** on providers that bill it as output: leave room for the thinking
+  budget plus the answer. With `thinking: { budget: 8192 }` and `max_output_tokens: 8192`, a reply that uses its full
+  budget is cut off before any JSON, which shows as [`InvalidOutputError#truncated?`](failures.md#a-cutoff-or-a-wrong-answer).
 - **Reasoning models** (e.g. OpenAI GPT-6 Luna) usually reject sampling params like `temperature` and `top_p`;
   tune `thinking: { effort: }` instead. Anthropic requires `temperature` to be 1 (or unset) when `thinking` is on.
 - **Unsetting an inherited key:** set it to `nil` to send nothing for that key, so the provider default applies.

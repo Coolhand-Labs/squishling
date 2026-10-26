@@ -75,7 +75,7 @@ module Squishling
 
         data = post(request, JSON.generate(body(request, model)), request_headers(request))
         Adapter::Response.new(content: content_of(data), model: data["model"] || model,
-          tokens: tokens_of(data["usage"]))
+          tokens: tokens_of(data["usage"]), finish_reason: finish_reason_of(data))
       end
 
       private
@@ -271,6 +271,15 @@ module Squishling
         message = message["message"] if message.is_a?(Hash)
         content = message.is_a?(Hash) ? message["content"] : nil
         content.is_a?(Array) ? content.filter_map { |part| part["text"] if part.is_a?(Hash) }.join : content
+      end
+
+      # The first choice's finish_reason, in the vocabulary of Adapter::Response ("length" is the output cap).
+      def finish_reason_of(data)
+        choice = Array(data["choices"]).first
+        reason = choice["finish_reason"] if choice.is_a?(Hash)
+        return unless reason.is_a?(String)
+
+        reason == "length" ? :max_tokens : reason
       end
 
       def tokens_of(usage)

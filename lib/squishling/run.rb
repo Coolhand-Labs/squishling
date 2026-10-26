@@ -205,13 +205,12 @@ module Squishling
 
         repeated = reask && response.content == rejected.first
         following = next_attempt(path, attempt, repeated)
-        error = InvalidOutputError.new(errors:, raw: response.content, attempts: models.size, models: models.dup,
-          source: prompt.role == :judge ? "Judge" : "LLM")
+        error = invalid_output(response, errors, models.size, models.dup, prompt.role == :judge ? "Judge" : "LLM")
         squawk(prompt, path, attempt, response, error, reask:, repeated:, final: following.nil?)
         raise error unless following
 
         rejected = [response.content, errors]
-        log_failure(prompt.role, attempt, path, errors.join("; "), following:, repeated:)
+        log_failure(prompt.role, attempt, path, rejection_reason(errors, response), following:, repeated:)
         attempt = following
       end
     end
@@ -263,14 +262,24 @@ module Squishling
 
       # A sample is one step (#samples refuses a stage that mixes them), so a repeat leaves nothing to move on to.
       repeated = sample.reask && response.content == sample.rejected.first
-      invalid = InvalidOutputError.new(errors:, raw: response.content, attempts: attempt,
-        models: stage.first(attempt).map(&:model))
+      invalid = invalid_output(response, errors, attempt, stage.first(attempt).map(&:model))
       squawk(@prompt, stage, attempt, response, invalid, sample:, reask: sample.reask, repeated:,
         final: last || repeated)
       raise invalid if last || repeated
 
       sample.rejected = [response.content, errors]
-      log_failure(role, attempt, stage, errors.join("; "))
+      log_failure(role, attempt, stage, rejection_reason(errors, response))
+    end
+
+    def invalid_output(response, errors, attempt, models, source = "LLM")
+      InvalidOutputError.new(errors:, raw: response.content, attempts: attempt, models:, source:,
+        finish_reason: response.finish_reason)
+    end
+
+    # Why an attempt was rejected, for the log: the output check's errors, plus a note when the reply was cut off.
+    def rejection_reason(errors, response)
+      reason = errors.join("; ")
+      response.truncated? ? "#{reason} (#{InvalidOutputError::CUTOFF_NOTE})" : reason
     end
 
     # Remembers a result of the method's own output (a judge's verdict isn't one), so a harness can only return
@@ -298,7 +307,8 @@ module Squishling
       metadata = {
         label:, attempt:, attempts: path.size, final:, repeated:,
         model: response&.model || step.model, provider: step.provider, params: step.request_params(reask),
-        input: prompt.input, usage: response&.usage, role: sample ? :sample : prompt.role, sample: sample&.name
+        input: prompt.input, usage: response&.usage, finish_reason: response&.finish_reason,
+        role: sample ? :sample : prompt.role, sample: sample&.name
       }
       Squawk.call(hook, output: response&.content, metadata:, error:)
     end
