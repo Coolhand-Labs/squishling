@@ -151,7 +151,9 @@ rewritten from the final, user-approved set of merged PRs anyway. Leave `CHANGEL
 in your PR.
 
 Releases publish to RubyGems via Trusted Publishing when a `vX.Y.Z` tag is pushed. Agents never create or push
-tags, run `rake release`, or `gem push`.
+tags, run `rake release`, or `gem push`. The one exception: `/finish-release`, invoked by the user, is the
+sanctioned path for merging the release PR and pushing the release tag (it still never runs `rake release` or
+`gem push`).
 
 ## Commits and PRs
 
