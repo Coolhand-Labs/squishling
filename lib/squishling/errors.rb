@@ -21,6 +21,20 @@ module Squishling
     end
   end
 
+  # Squishling.verify! found problems in the squished classes' setup. report holds them all (see Verification::Report).
+  class VerificationError < ConfigurationError
+    attr_reader :report
+
+    def initialize(report)
+      @report = report
+      super(report.to_s)
+    end
+
+    def problems
+      report.problems
+    end
+  end
+
   # Output that didn't match the schema (or a squish_validate check): from the LLM after every attempt in the
   # escalation, or from the deterministic path.
   class InvalidOutputError < Error

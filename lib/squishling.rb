@@ -43,6 +43,10 @@ require_relative "squishling/router"
 require_relative "squishling/wrapper"
 require_relative "squishling/class_methods"
 require_relative "squishling/collisions"
+require_relative "squishling/class_registry"
+require_relative "squishling/verification"
+require_relative "squishling/verifier"
+require_relative "squishling/railtie" if defined?(Rails::Railtie)
 
 # Include Squishling in a class to make it elastic: its squished methods either run their
 # Ruby implementation or send their inputs through an LLM and return schema-validated results.
@@ -97,6 +101,29 @@ module Squishling
     # Forgets the registered adapters (the built-ins stay), e.g. between specs.
     def reset_adapters!
       Adapter::Registry.reset!
+    end
+
+    # Every class that includes Squishling, and each subclass of one, that is loaded and hasn't been replaced by a
+    # reload. Classes are held weakly, so listing them doesn't keep reloaded ones alive. In Rails, eager load first
+    # (Rails.application.eager_load!) to include classes not yet autoloaded.
+    def squished_classes
+      ClassRegistry.classes
+    end
+
+    # Checks squished classes without making a request: each method's output schema and typed result, its resolved
+    # escalation, params, squawk and harness, and the keywords its include_when: and squish_when procs take. Checks
+    # the given classes, or every squished_classes when none are given. Returns a Verification::Report listing every
+    # problem found (ok? when none).
+    def verify(*classes)
+      Verifier.new(classes.empty? ? squished_classes : classes.flatten).call
+    end
+
+    # Like verify, but raises a VerificationError (a ConfigurationError) naming every problem. For CI and boot checks.
+    def verify!(*classes)
+      report = verify(*classes)
+      raise VerificationError, report unless report.ok?
+
+      report
     end
 
     def included(base)

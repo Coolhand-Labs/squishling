@@ -98,6 +98,11 @@ Flag any change that breaks one of these; they are behavior contracts, not style
   provider 400 is a `ConfigurationError`, never something a fallback absorbs.
 - **No silent shadowing.** `include Squishling` raises `ConfigurationError` if the class inherits a method it would
   override (`Collisions`), and only adds the `result` alias when the class has no `result`. Classes' own methods win.
+- **Verification makes no request and holds classes weakly.** Every class that does `include Squishling` (and each
+  subclass) is recorded in `ClassRegistry`, a mutex-guarded `ObjectSpace::WeakMap`, so reloaded classes can be
+  collected; a named class replaced by a reload is left out of `Squishling.squished_classes`. `Squishling.verify`
+  builds schemas and checks resolved settings and callable keywords, collecting every problem; it never calls an
+  adapter's `complete`/`judge` or runs the developer's own code. Add new ahead-of-runtime checks to `Verifier`.
 - **Thread/fiber safety.** Routing state is fiber-local; shared caches and `Rotation`'s call counts are mutex-guarded.
   Don't add unsynchronized class-level mutable state. `Run#samples` (every harness's samples, the squishsum ones
   included) sends the sample requests on worker threads (`LLMClient#concurrently`), and only the requests: parsing, validation,
@@ -143,8 +148,10 @@ The public surface is `Squishling.configure`/`config`, the adapter plugin point 
 `Squishling::Harness::DEFAULT_JUDGE_INSTRUCTIONS`, result objects (`squished?`, `to_h`, `[]`), and the error classes
 (including `InvalidOutputError#error_details` (`InvalidOutputError::Detail`: `message`, `source`,
 `model_derived?`), `InvalidOutputError#models`, `DisagreementError#candidates`/`verdict`/`reason`,
-`RequestRejectedError#provider_status`/`provider_code`, and `BudgetExhaustedError#limit`/`max`/`used`). The
-custom-harness plugin point is public too:
+`RequestRejectedError#provider_status`/`provider_code`, `BudgetExhaustedError#limit`/`max`/`used`, and
+`VerificationError#report`/`problems`). The verification surface is public too: `Squishling.verify`/`verify!`/
+`squished_classes`, `Squishling::Verification::Report`/`Problem`, the `squishling:verify` rake task, and the
+`be_squishling_valid` matcher (`require "squishling/rspec"`). The custom-harness plugin point is public too:
 `Squishling.register_harness`/`harnesses`/`reset_harnesses!`, `Squishling::Harness::Base` (`option` and its types,
 `call(run, **options)`, `validate_options!`), the `Squishling::Run` primitives a harness gets (`receiver`, `inputs`,
 `label`, `steps`, `stages`, `stage`, `escalate`, `samples`, `judge`, `agree?`, `log`) with
