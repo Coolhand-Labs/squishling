@@ -66,7 +66,9 @@ Flag any change that breaks one of these; they are behavior contracts, not style
   (`Rotation`, counted per class and method): the first model alternates, and the tier's other models are tried before
   the next priority. `rotate: false` pins a tier. A step's `include_when:` Proc (inputs as keywords, on the instance)
   drops it from a call before rotation; a call left with no steps raises `ConfigurationError`.
-  Invalid output and `LLMError` move on to the next attempt; `ConfigurationError` never does.
+  Invalid output and `LLMError` move on to the next attempt (a same-chat retry that returns the reply it was just
+  rejected for skips the rest of its step's attempts, reported as `repeated:` in `squawk` metadata);
+  `ConfigurationError` never does.
 - **Error taxonomy.** Everything Squishling raises inherits `Squishling::Error`: `ConfigurationError`
   (setup mistakes; never retried, escalated, or passed to fallbacks; a provider 400 is its `RequestRejectedError`
   subclass), `InvalidOutputError` (bad output after every attempt in the escalation), `LLMError` (provider/transport
@@ -121,7 +123,7 @@ The public surface is `Squishling.configure`/`config`, the adapter plugin point 
 `judgments?`/`judge`/`capture_context`/`with_context`), `Adapter::Request`, `Adapter::Response`, and the built-in
 `Adapters::RubyLLM` and `Adapters::OpenAICompatible` with their options), the `include Squishling` DSL (`squishling` — including its
 `model:`/`escalation:` (steps with `model:`, `attempts:`, `priority:`, `rotate:`, `provider:`, `params:`,
-`forward_rejected:`, `include_when:`)/`provider:`/`params:`/
+`forward_rejected:`, `retry_temperature:`, `include_when:`)/`provider:`/`params:`/
 `harness:` (`type:`, `compare:`, `judge:` (a step, plus `type: :chat | :judgment` and `min_confidence:`),
 `judge_instructions:`)/`append_to_purpose:`/`squawk:` options — `purpose`, `append_to_purpose`, `output_schema`,
 `squish_when`, `squish_context`, `squish` (including `validate:`/`harness:`/`squawk:`), `squish_validate`,
@@ -135,7 +137,7 @@ plugin point is public too:
 `Squishling.register_harness`/`harnesses`/`reset_harnesses!`, `Squishling::Harness::Base` (`option` and its types,
 `call(run, **options)`, `validate_options!`), the `Squishling::Run` primitives a harness gets (`receiver`, `inputs`,
 `label`, `steps`, `stages`, `stage`, `escalate`, `samples`, `judge`, `agree?`, `log`) with
-`Squishling::Judge::Verdict`, and the squawk `metadata` keys `role:`/`sample:`. Don't break it without a clear
+`Squishling::Judge::Verdict`, and the squawk `metadata` keys `role:`/`sample:`/`repeated:`. Don't break it without a clear
 migration path in the changelog.
 
 ## Changelog and versioning

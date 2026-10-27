@@ -13,11 +13,12 @@ module Squishling
   # on other threads; parsing, validation, and every callback (squish_validate, compare:, procs) stay on this one.
   class Run
     include Messages
+    include Repeats
 
-    private_constant :Messages
+    private_constant :Messages, :Repeats
 
     # One of #samples' outputs, between rounds.
-    Sample = Struct.new(:name, :stage, :chat, :rejected, :result)
+    Sample = Struct.new(:name, :stage, :chat, :rejected, :result, :reask)
 
     SAMPLE_NAMES = ("a".."z").to_a.freeze
     private_constant :Sample, :SAMPLE_NAMES
@@ -54,8 +55,9 @@ module Squishling
       @stages ||= steps.slice_when { |before, after| before != after }.map(&:freeze).freeze
     end
 
-    # A stage from a model name or a step Hash (model:, provider:, params:, attempts:, forward_rejected:), the
-    # way a judge step is resolved: it keeps its own provider, and its params merge over the method's.
+    # A stage from a model name or a step Hash (model:, provider:, params:, attempts:, forward_rejected:,
+    # retry_temperature:), the way a judge step is resolved: it keeps its own provider, and its params merge over
+    # the method's.
     # A stage (an Array of steps) is returned as is, and a single step is a stage of one attempt.
     def stage(declaration)
       return checked_stage([declaration]) if declaration.is_a?(ModelPath::Step)
@@ -73,7 +75,8 @@ module Squishling
     # Makes each attempt of the stages in order (the escalation's steps when none are given) until an output
     # passes the schema and squish_validate. Consecutive attempts on the same step continue the same chat, so the
     # model sees what it got wrong; a new step starts a fresh chat told about the last rejected output (unless
-    # the step sets forward_rejected: false). Raises InvalidOutputError, or LLMError, when the last attempt fails.
+    # the step sets forward_rejected: false). A retry that repeats the rejected output it was just told about gives
+    # up on the rest of its step's attempts. Raises InvalidOutputError, or LLMError, when the last attempt fails.
     def escalate(*stages)
       owner!
       path = stages.empty? ? steps : stages.flat_map { |declared| stage(declared) }
@@ -167,42 +170,49 @@ module Squishling
       chat = nil
       rejected = nil # [raw content, errors] of the last invalid output
       models = []
+      attempt = 1
 
-      path.each.with_index(1) do |step, attempt|
+      while attempt <= path.size
+        step = path[attempt - 1]
         models << step.model
         last = attempt == path.size
-        if chat && step == path[attempt - 2]
+        reask = !chat.nil? && step == path[attempt - 2]
+        if reask
           message = retry_message(rejected.last)
         else
           chat = start_chat(step, prompt)
-          message = rejected && step.forward_rejected ? escalation_message(prompt.input, *rejected) : prompt.input
+          message = fresh_message(step, prompt.input, rejected)
         end
 
         begin
-          response = @client.ask(chat, message, step, attempt:, attempts: path.size, role: prompt.role)
+          response = @client.ask(chat, message, step, attempt:, attempts: path.size, role: prompt.role, reask:)
         rescue LLMError => e
-          squawk(prompt, path, attempt, nil, e)
+          squawk(prompt, path, attempt, nil, e, reask:)
           raise if last
 
           # A failed request starts the next attempt in a fresh chat, as a new step does.
           chat = nil
           log_failure(prompt.role, attempt, path, e.message)
+          attempt += 1
           next
         end
 
         result, errors = @output_check.call(response.content, prompt)
         if errors.empty?
-          squawk(prompt, path, attempt, response, nil)
+          squawk(prompt, path, attempt, response, nil, reask:)
           return produce(result, prompt)
         end
 
-        error = InvalidOutputError.new(errors:, raw: response.content, attempts: attempt, models: models.dup,
+        repeated = reask && response.content == rejected.first
+        following = next_attempt(path, attempt, repeated)
+        error = InvalidOutputError.new(errors:, raw: response.content, attempts: models.size, models: models.dup,
           source: prompt.role == :judge ? "Judge" : "LLM")
-        squawk(prompt, path, attempt, response, error)
-        raise error if last
+        squawk(prompt, path, attempt, response, error, reask:, repeated:, final: following.nil?)
+        raise error unless following
 
         rejected = [response.content, errors]
-        log_failure(prompt.role, attempt, path, errors.join("; "))
+        log_failure(prompt.role, attempt, path, errors.join("; "), following:, repeated:)
+        attempt = following
       end
     end
 
@@ -213,7 +223,8 @@ module Squishling
         message = sample_message(sample, step)
         chat = sample.chat
         attempts = sample.stage.size
-        -> { @client.ask(chat, message, step, attempt:, attempts:, role: :sample, sample: sample.name) }
+        reask = sample.reask
+        -> { @client.ask(chat, message, step, attempt:, attempts:, role: :sample, sample: sample.name, reask:) }
       end
       outcomes = @client.concurrently(jobs)
       # A setup mistake (or anything that isn't a failed request) ends the call, whichever sample hit it.
@@ -225,10 +236,11 @@ module Squishling
 
     # The next message for a sample: a retry in its chat after invalid output, otherwise a fresh chat.
     def sample_message(sample, step)
-      return retry_message(sample.rejected.last) if sample.chat
+      sample.reask = !sample.chat.nil?
+      return retry_message(sample.rejected.last) if sample.reask
 
       sample.chat = start_chat(step, @prompt)
-      sample.rejected && step.forward_rejected ? escalation_message(@prompt.input, *sample.rejected) : @prompt.input
+      fresh_message(step, @prompt.input, sample.rejected)
     end
 
     def record(sample, (response, error), attempt)
@@ -236,7 +248,7 @@ module Squishling
       last = attempt == stage.size
       role = "sample #{sample.name}"
       if error
-        squawk(@prompt, stage, attempt, nil, error, sample:)
+        squawk(@prompt, stage, attempt, nil, error, sample:, reask: sample.reask)
         raise error if last
 
         sample.chat = nil
@@ -245,14 +257,17 @@ module Squishling
 
       result, errors = @output_check.call(response.content, @prompt)
       if errors.empty?
-        squawk(@prompt, stage, attempt, response, nil, sample:)
+        squawk(@prompt, stage, attempt, response, nil, sample:, reask: sample.reask)
         return sample.result = produce(result, @prompt)
       end
 
+      # A sample is one step (#samples refuses a stage that mixes them), so a repeat leaves nothing to move on to.
+      repeated = sample.reask && response.content == sample.rejected.first
       invalid = InvalidOutputError.new(errors:, raw: response.content, attempts: attempt,
         models: stage.first(attempt).map(&:model))
-      squawk(@prompt, stage, attempt, response, invalid, sample:)
-      raise invalid if last
+      squawk(@prompt, stage, attempt, response, invalid, sample:, reask: sample.reask, repeated:,
+        final: last || repeated)
+      raise invalid if last || repeated
 
       sample.rejected = [response.content, errors]
       log_failure(role, attempt, stage, errors.join("; "))
@@ -271,25 +286,30 @@ module Squishling
 
     # Runs the observability hook, if any, with this attempt's raw output (nil when the call itself failed),
     # the error that ended it (nil when it was accepted), and what was asked. role is nil for escalation
-    # attempts, :sample (with the sample's name) or :judge.
-    def squawk(prompt, path, attempt, response, error, sample: nil)
+    # attempts, :sample (with the sample's name) or :judge. reask is whether the attempt retried in the same chat,
+    # repeated whether it sent back the reply the attempt before it was rejected for, and final whether no attempt
+    # follows it.
+    def squawk(prompt, path, attempt, response, error, sample: nil, reask: false, repeated: false,
+      final: attempt == path.size)
       hook = @definition.squawk
       return unless hook
 
       step = path[attempt - 1]
       metadata = {
-        label:, attempt:, attempts: path.size, final: attempt == path.size,
-        model: response&.model || step.model, provider: step.provider, params: step.params, input: prompt.input,
-        usage: response&.usage, role: sample ? :sample : prompt.role, sample: sample&.name
+        label:, attempt:, attempts: path.size, final:, repeated:,
+        model: response&.model || step.model, provider: step.provider, params: step.request_params(reask),
+        input: prompt.input, usage: response&.usage, role: sample ? :sample : prompt.role, sample: sample&.name
       }
       Squawk.call(hook, output: response&.content, metadata:, error:)
     end
 
-    def log_failure(role, attempt, path, reason)
+    # following is the attempt that comes next, which is not the next one when a repeated reply skips ahead.
+    def log_failure(role, attempt, path, reason, following: attempt + 1, repeated: false)
       step = path[attempt - 1]
-      next_step = path[attempt]
+      next_step = path[following - 1]
       action = next_step == step ? "retrying" : "escalating to #{next_step.display_name}"
       who = role ? "#{role} attempt" : "attempt"
+      reason = "it repeated the rejected reply: #{reason}" if repeated
       log("#{who} #{attempt} of #{path.size} (#{step.display_name}) failed, #{action}: #{reason}")
     end
   end

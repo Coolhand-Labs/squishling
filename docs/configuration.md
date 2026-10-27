@@ -71,6 +71,7 @@ Each step is a model name, or a Hash with:
 | `rotate:` | `true` | Set `false` on a step to keep its tier in the order written instead of rotating it. |
 | `include_when:` | always | A Proc that leaves this step out of any call where it returns falsy (see [Excluding a model per call](#excluding-a-model-per-call)). |
 | `provider:` | the level's `provider:` | See [Providers](#providers-and-newly-released-models). |
+| `retry_temperature:` | none | A Numeric `temperature` for this step's retries in the same chat (not its first attempt), to nudge a model that keeps sending the same rejected reply. Don't use it on a step that sets `thinking`, since reasoning models reject `temperature`. |
 | `forward_rejected:` | `true` | Set `false` to start this step from the original input alone, without the previous step's rejected output and its errors (see below). |
 | `params:` | `{}` | [Generation params](#generation-params) for this step, merged over the class and method params key by key. |
 
@@ -163,13 +164,14 @@ end
 Passing both `model:` and `escalation:` in one declaration raises `ConfigurationError`, and so does a list passed as
 `model:`. Across separate declarations (a reopened class, or two config assignments), the latest one wins.
 
-Consecutive attempts of the same step (same model, provider, params, and `forward_rejected:`, e.g. `attempts: 2`)
+Consecutive attempts of the same step (same model, provider, params, `forward_rejected:`, and `retry_temperature:`, e.g. `attempts: 2`)
 continue one conversation. Moving to a different step starts a fresh chat with the original input plus the previous
 output and why it was rejected, so no provider-specific history crosses providers. That rejected output is
 model-generated and is sent to the next step's provider, even when it is a different one, truncated to 4,000
 characters. If you don't want a step to see it (say, because the next step is a different provider), set
 `forward_rejected: false` on that step and it starts from the original input only. Configuration errors (bad
-credentials, an unknown model, a request the provider rejects) never move to the next attempt. See [Failure handling](failures.md).
+credentials, an unknown model, a request the provider rejects) never move to the next attempt. A retry that returns
+exactly the reply the step was just told was invalid skips the step's remaining attempts and moves to the next step. See [Failure handling](failures.md).
 
 ## Providers and newly released models
 

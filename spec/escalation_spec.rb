@@ -76,6 +76,104 @@ RSpec.describe "Squishling model escalation" do
     end
   end
 
+  describe "a repeated rejected reply" do
+    let(:bad) { { "label" => 1 } }
+
+    before { klass.squishling(escalation: [{ model: "claude-haiku-4-5", attempts: 3 }, "claude-sonnet-5-5"]) }
+
+    it "skips the step's remaining attempts and moves to the next step" do
+      chats = stub_llm(bad, bad, { "label" => "ok" })
+
+      expect(klass.call(text: "x").label).to eq("ok")
+      expect(chats.map(&:model)).to eq(%w[claude-haiku-4-5 claude-sonnet-5-5])
+      expect(chats.first.messages.size).to eq(2)
+      expect(chats.last.messages.first).to include('{"label":1}', "not a string")
+    end
+
+    it "keeps retrying while the replies differ" do
+      chats = stub_llm(bad, { "label" => 2 }, { "label" => "ok" })
+
+      expect(klass.call(text: "x").label).to eq("ok")
+      expect(chats.map(&:model)).to eq(%w[claude-haiku-4-5])
+      expect(chats.first.messages.size).to eq(3)
+    end
+
+    it "notices a repeated empty reply" do
+      chats = stub_llm(nil, nil, { "label" => "ok" })
+
+      expect(klass.call(text: "x").label).to eq("ok")
+      expect(chats.map(&:model)).to eq(%w[claude-haiku-4-5 claude-sonnet-5-5])
+    end
+
+    it "doesn't count a reply repeated across a failed request, which started a fresh chat" do
+      chats = stub_llm(bad, Squishling::LLMError.new("boom"), bad, { "label" => "ok" })
+
+      expect(klass.call(text: "x").label).to eq("ok")
+      expect(chats.map(&:model)).to eq(%w[claude-haiku-4-5 claude-haiku-4-5 claude-sonnet-5-5])
+      expect(chats[1].messages.first).to include("A previous attempt")
+    end
+
+    it "raises right away when the repeat is on the last step" do
+      klass.squishling(escalation: [{ model: "claude-haiku-4-5", attempts: 2 },
+                                    { model: "claude-sonnet-5-5", attempts: 3 }])
+      stub_llm(bad, { "label" => 2 }, { "label" => 3 }, { "label" => 3 })
+
+      expect { klass.call(text: "x") }.to raise_error(Squishling::InvalidOutputError) do |e|
+        expect(e.attempts).to eq(4)
+        expect(e.models).to eq(%w[claude-haiku-4-5 claude-haiku-4-5 claude-sonnet-5-5 claude-sonnet-5-5])
+      end
+    end
+
+    it "counts the requests made in the error's attempts when a later step fails after a skip" do
+      stub_llm(bad, bad, { "label" => 2 })
+
+      expect { klass.call(text: "x") }.to raise_error(Squishling::InvalidOutputError, /after 3 attempts/) do |e|
+        expect(e.attempts).to eq(3)
+        expect(e.models).to eq(%w[claude-haiku-4-5 claude-haiku-4-5 claude-sonnet-5-5])
+      end
+    end
+
+    it "logs that the reply repeated" do
+      log = StringIO.new
+      Squishling.configure { |c| c.logger = Logger.new(log) }
+      stub_llm(bad, bad, { "label" => "ok" })
+
+      klass.call(text: "x")
+
+      expect(log.string).to include("attempt 2 of 4 (claude-haiku-4-5) failed, escalating to claude-sonnet-5-5: " \
+                                    "it repeated the rejected reply")
+    end
+  end
+
+  describe "retry_temperature:" do
+    let(:temperatures) { [] }
+
+    before do
+      klass.squishling(escalation: [{ model: "claude-haiku-4-5", attempts: 3, retry_temperature: 0.8,
+                                      params: { temperature: 0 } }, "claude-sonnet-5-5"])
+      adapter = install_fake_adapter
+      replies = [{ "label" => 1 }, { "label" => 2 }, { "label" => 3 }, { "label" => "ok" }]
+      adapter.responder = lambda { |request|
+        temperatures << request.params[:temperature]
+        replies.shift
+      }
+    end
+
+    it "applies to retries in the same chat, not to the step's first attempt or a new step" do
+      expect(klass.call(text: "x").label).to eq("ok")
+      expect(temperatures).to eq([0, 0.8, 0.8, nil])
+    end
+
+    it "is reported in squawk's params for the retry" do
+      calls = []
+      klass.squishling(squawk: ->(metadata:, **) { calls << metadata[:params] })
+
+      klass.call(text: "x")
+
+      expect(calls.map { |params| params[:temperature] }).to eq([0, 0.8, 0.8, nil])
+    end
+  end
+
   describe "LLM call failures" do
     it "escalates to the next model in a fresh chat" do
       klass.squishling(escalation: %w[claude-haiku-4-5 claude-sonnet-5-5])
@@ -229,7 +327,7 @@ RSpec.describe "Squishling model escalation" do
   describe "declaring the order" do
     it "repeats a step for its attempts" do
       klass.squishling(escalation: [{ model: "a", attempts: 3 }, "b"])
-      stub_llm(nil, nil, nil, nil)
+      stub_llm({ "label" => 1 }, { "label" => 2 }, { "label" => 3 }, { "label" => 4 })
 
       expect { klass.call(text: "x") }
         .to raise_error(Squishling::InvalidOutputError) { |e| expect(e.models).to eq(%w[a a a b]) }
@@ -515,7 +613,11 @@ RSpec.describe "Squishling model escalation" do
       [[{ model: "a", priority: 1, order: 1 }], /give priority: or order:, not both/],
       [[{ model: "a", rotate: "yes" }], /rotate: must be true or false/],
       [[{ model: "a", forward_rejected: "no" }], /forward_rejected: must be true or false/],
-      [[{ model: "a", forward_rejected: nil }], /forward_rejected: must be true or false/]
+      [[{ model: "a", forward_rejected: nil }], /forward_rejected: must be true or false/],
+      [[{ model: "a", retry_temperature: "hot" }], /retry_temperature: must be a finite Numeric of 0 or more/],
+      [[{ model: "a", retry_temperature: Float::NAN }], /retry_temperature: must be a finite Numeric/],
+      [[{ model: "a", retry_temperature: -0.1 }], /retry_temperature: must be a finite Numeric of 0 or more/],
+      [[{ model: "a", retry_temperature: nil }], /retry_temperature: must be a finite Numeric of 0 or more/]
     ].each do |escalation, message|
       it "rejects escalation #{escalation.inspect} at declaration time" do
         expect { base.squishling(escalation:) }.to raise_error(Squishling::ConfigurationError, message)

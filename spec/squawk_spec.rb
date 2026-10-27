@@ -28,6 +28,26 @@ RSpec.describe "Squishling squawk" do
   describe "what the hook receives" do
     before { Squishling.configure { |c| c.squawk = recorder } }
 
+    it "marks the attempt that repeated a rejected reply, and numbers the next step's attempts past the skipped ones" do
+      klass.squishling(escalation: [{ model: "test-model", attempts: 3 }, "other-model"])
+      bad = { "label" => 1 }
+      stub_llm(bad, bad, { "label" => "ok" })
+      klass.call(text: "x")
+
+      expect(calls.map { |call| call[:metadata].values_at(:attempt, :final, :repeated) })
+        .to eq([[1, false, false], [2, false, true], [4, true, false]])
+      expect(calls.map { |call| call[:metadata][:model] }).to eq(%w[test-model test-model other-model])
+    end
+
+    it "is final when the repeat leaves no step to move to" do
+      bad = { "label" => 1 }
+      stub_llm(bad, bad)
+
+      expect { klass.call(text: "x") }.to raise_error(Squishling::InvalidOutputError)
+      expect(calls.map { |call| call[:metadata].values_at(:attempt, :final, :repeated) })
+        .to eq([[1, false, false], [2, true, true]])
+    end
+
     it "gets the raw output, no error, and metadata for an accepted attempt" do
       stub_llm({ "label" => "ok" })
       klass.call(text: "x")

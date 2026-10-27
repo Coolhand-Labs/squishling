@@ -258,7 +258,7 @@ the harness is declared, before any request is made, and an unknown, missing, or
 
 | Type | Accepts | `call` receives |
 |---|---|---|
-| `:step` | A model name, or a Hash with `model:`, `provider:`, `params:`, `attempts:`, `forward_rejected:` | A normalized, frozen step; pass it to `run.escalate`, or in the Array given to `run.samples` |
+| `:step` | A model name, or a Hash with `model:`, `provider:`, `params:`, `attempts:`, `forward_rejected:`, `retry_temperature:` | A normalized, frozen step; pass it to `run.escalate`, or in the Array given to `run.samples` |
 | `:proc` | A Proc | The Proc |
 | `:string`, `:symbol`, `:integer`, `:boolean` | A String, a Symbol (or String, converted), an Integer, `true` or `false` | The value |
 
@@ -318,7 +318,9 @@ available to your code as the results and in `InvalidOutputError#raw`, and to `s
 Every attempt a primitive makes is reported to the [`squawk`](failures.md#observing-every-attempt-squawk) hook, with
 usage, so [token measuring](measuring-tokens.md) works unchanged. `metadata[:role]` says what the attempt was for:
 `nil` for an escalation attempt, `:sample` (with `metadata[:sample]` set to `"a"`, `"b"`, ...), or `:judge`. `attempt`
-and `attempts` count within that sample, judge, or escalation.
+and `attempts` count within that sample, judge, or escalation. `metadata[:repeated]` is `true` for an attempt that
+sent back the reply it was just rejected for; the primitive then skips the rest of that step's attempts (the next
+step's `attempt` jumps past them, and a sample ends with its `InvalidOutputError`).
 
 ### Threads
 

@@ -10,6 +10,12 @@ module Squishling
         "Your previous response was rejected:\n- #{errors.join("\n- ")}\nRespond again with corrected JSON only."
       end
 
+      # The first message to a chat: the input, along with the output rejected before it (if any) unless the step
+      # opts out of seeing it.
+      def fresh_message(step, input, rejected)
+        rejected && step.forward_rejected ? escalation_message(input, *rejected) : input
+      end
+
       # The first message to a fresh chat after an earlier model's output was rejected. The rejected output is
       # model-generated and may cross providers, so it is capped at Invoker::MAX_FORWARDED_CHARS.
       def escalation_message(input, raw, errors)
