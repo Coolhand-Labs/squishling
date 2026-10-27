@@ -4,6 +4,17 @@ module Squishling
   # Builds Data classes from a JSON Schema so both the LLM and deterministic paths return
   # the same typed object.
   module Result
+    # Property names a generated class can't take: a Data member of the same name replaces the method, which the
+    # result (or Squishling) needs. result_spec.rb probes every Object, Kernel, and Data method, so a method a newer
+    # Ruby adds can't slip through unreserved.
+    RESERVED_NAMES = %i[
+      squished? squishling_squished []
+      class is_a? kind_of? inspect to_s to_h hash == eql? members deconstruct_keys with dup
+      send public_send
+      __send__ object_id __id__
+      initialize initialize_copy initialize_dup initialize_clone respond_to_missing?
+    ].freeze
+
     # Mixed into every generated result class.
     module Instance
       def initialize(squishling_squished: false, **attrs)
@@ -28,14 +39,8 @@ module Squishling
     module ClassMethods
       def from_h(hash, squished: false)
         hash = hash.transform_keys(&:to_sym)
-        attrs = members.to_h { |member| [member, squishling_fields[member].call(hash[member], squished)] }
+        attrs = members.to_h { |member| [member, @squishling_fields[member].call(hash[member], squished)] }
         new(squishling_squished: squished, **attrs)
-      end
-
-      private
-
-      def squishling_fields
-        @squishling_fields ||= @squishling_builder.fields_for(@squishling_schema)
       end
     end
 
@@ -67,21 +72,37 @@ module Squishling
         schema = resolve(schema)
         return nil unless schema.is_a?(Hash) && schema["properties"].is_a?(Hash)
 
-        @classes[schema] ||= begin
-          klass = Data.define(*schema["properties"].keys.map(&:to_sym))
-          klass.include(Instance)
-          klass.extend(ClassMethods)
-          klass.instance_variable_set(:@squishling_builder, self)
-          klass.instance_variable_set(:@squishling_schema, schema)
-          klass
-        end
+        return @classes[schema] if @classes.key?(schema)
+
+        klass = @classes[schema] = define_class(schema)
+        # Memoized first so recursive schemas stop; typing the fields builds nested classes now, so a bad
+        # property name in any object the result types (nested, array items, resolved $refs) raises at schema build.
+        klass.instance_variable_set(:@squishling_fields, fields_for(schema))
+        klass
       end
+
+      private
 
       def fields_for(schema)
         schema["properties"].to_h { |key, property| [key.to_sym, converter_for(property)] }
       end
 
-      private
+      def define_class(schema)
+        klass = Data.define(*property_names(schema))
+        klass.include(Instance)
+        klass.extend(ClassMethods)
+        klass
+      end
+
+      def property_names(schema)
+        names = schema["properties"].keys.map(&:to_sym)
+        clashes = names & RESERVED_NAMES
+        return names if clashes.empty?
+
+        raise ConfigurationError,
+          "output_schema property names clash with methods the result needs: #{clashes.join(', ')}. " \
+          "Rename the field(s) (e.g. `class` to `ticket_class`)"
+      end
 
       def converter_for(property)
         property = resolve(property)
