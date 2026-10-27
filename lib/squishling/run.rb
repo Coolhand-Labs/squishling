@@ -291,7 +291,7 @@ module Squishling
     def squawk(prompt, path, attempt, response, error, sample: nil, reask: false, repeated: false,
       final: attempt == path.size)
       hook = @definition.squawk
-      return unless hook
+      return unless hook && Squawk.report?(@definition.squawk_on, attempt, error, final)
 
       step = path[attempt - 1]
       metadata = {

@@ -32,9 +32,14 @@ module Squishling
     # Optional Logger for routing and escalation decisions.
     attr_accessor :logger
 
-    # Optional callable run after every LLM attempt with the raw output (see Squawk), e.g.
+    # Optional callable run after each LLM attempt (narrowed by squawk_on) with the raw output (see Squawk), e.g.
     #   ->(output:, metadata:, error:) { Tracer.record(output, metadata, error) }
     attr_reader :squawk
+
+    # Which attempts reach the squawk hook: :all (the default), :rejections (attempts that errored), :retries (those
+    # plus any accepted attempt after the first), :final (the last attempt the escalation allows), or a list of
+    # them. Also settable per class and per method.
+    attr_reader :squawk_on
 
     # Optional around-style hook wrapped around every provider request (see Observer): an object responding to
     # around(call) { ... }, or :coolhand. nil (the default) uses the Coolhand observer when the coolhand gem is
@@ -59,6 +64,7 @@ module Squishling
       @default_harness = nil
       @logger = nil
       @squawk = nil
+      @squawk_on = :all
     end
 
     def default_model=(model)
@@ -89,6 +95,10 @@ module Squishling
 
     def squawk=(hook)
       @squawk = Squawk.validate(hook, "Squishling.configure")
+    end
+
+    def squawk_on=(on)
+      @squawk_on = Squawk.validate_on(on, "Squishling.configure") || :all
     end
 
     def observer=(observer)

@@ -122,14 +122,15 @@ Flag any change that breaks one of these; they are behavior contracts, not style
 The public surface is `Squishling.configure`/`config`, the adapter plugin point (`config.adapter`,
 `Squishling.register_adapter`/`adapters`/`reset_adapters!`, `Squishling::Adapter::Base` (`complete`, and the optional
 `judgments?`/`judge`/`capture_context`/`with_context`), `Adapter::Request`, `Adapter::Response`, and the built-in
-`Adapters::RubyLLM` and `Adapters::OpenAICompatible` with their options), the `include Squishling` DSL (`squishling` — including its
+`Adapters::RubyLLM` and `Adapters::OpenAICompatible` with their options), the `include Squishling` DSL
+(`squishling` — including its
 `model:`/`escalation:` (steps with `model:`, `attempts:`, `priority:`, `rotate:`, `provider:`, `params:`,
 `forward_rejected:`, `retry_temperature:`, `include_when:`)/`provider:`/`params:`/
 `harness:` (`type:`, `compare:`, `judge:` (a step, plus `type: :chat | :judgment` and `min_confidence:`),
-`judge_instructions:`)/`append_to_purpose:`/`squawk:` options — `purpose`, `append_to_purpose`, `output_schema`,
-`squish_when`, `squish_context`, `squish` (including `validate:`/`harness:`/`squawk:`), `squish_validate`,
+`judge_instructions:`)/`append_to_purpose:`/`squawk:`/`squawk_on:` options — `purpose`, `append_to_purpose`, `output_schema`,
+`squish_when`, `squish_context`, `squish` (including `validate:`/`harness:`/`squawk:`/`squawk_on:`), `squish_validate`,
 `squish_fallback`, `result`/`squishling_result`, `squish!` (including `model:`/`escalation:`/`harness:`)),
-`Squishling::Configuration` options (including `default_harness`, `observer`, and `squawk`, whose
+`Squishling::Configuration` options (including `default_harness`, `observer`, `squawk_on`, and `squawk`, whose
 `output:`/`metadata:`/`error:` keywords are public), `Squishling::Observer::Call`/`Usage`,
 `Squishling::Harness::DEFAULT_JUDGE_INSTRUCTIONS`, result objects (`squished?`, `to_h`, `[]`), and the error classes
 (including `InvalidOutputError#error_details` (`InvalidOutputError::Detail`: `message`, `source`,

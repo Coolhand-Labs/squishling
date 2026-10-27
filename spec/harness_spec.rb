@@ -356,6 +356,30 @@ RSpec.describe "Squishling harnesses" do
       expect(temperatures).to contain_exactly(0, 0, 0.9)
     end
 
+    it "counts squawk_on: :retries per sample, so only the sample that retried is reported" do
+      calls = []
+      hook = ->(output:, metadata:, **) { calls << [output, metadata[:attempt]] }
+      klass.squishling(squawk: hook, squawk_on: :retries)
+      invalid = { "priority" => 1, "team" => "api" }
+      stub_llm_chats([invalid, high], [high])
+
+      klass.call(text: "x")
+
+      expect(calls).to contain_exactly([invalid, 1], [high, 2])
+    end
+
+    it "reports squawk_on: :final once for each sample's last attempt" do
+      calls = []
+      hook = ->(metadata:, **) { calls << [metadata[:sample], metadata[:attempt]] }
+      klass.squishling(squawk: hook, squawk_on: :final)
+      invalid = { "priority" => 1, "team" => "api" }
+      stub_llm_chats([invalid, high], [high, high])
+
+      klass.call(text: "x")
+
+      expect(calls).to contain_exactly(["a", 2])
+    end
+
     it "starts a sample's fresh chat from the input alone when the step sets forward_rejected: false" do
       invalid = { "priority" => 1, "team" => "api" }
       responses = [[invalid, Squishling::LLMError.new("boom")], [high], [high]]
@@ -385,6 +409,17 @@ RSpec.describe "Squishling harnesses" do
       expect(calls.size).to eq(3)
       expect(calls.last).to include(model: "claude-sonnet-5-5", final: true)
       expect(JSON.parse(calls.last[:input])).to include("candidates")
+    end
+
+    it "reports only the judge's retry under squawk_on: :retries" do
+      calls = []
+      klass.squishling(escalation: ["claude-haiku-4-5", { model: "claude-sonnet-5-5", attempts: 2 }],
+        squawk: ->(metadata:, **) { calls << metadata }, squawk_on: :retries)
+      stub_llm_chats([high], [low], [{ "verdict" => "nope" }, { "verdict" => "a", "reason" => "more urgent" }])
+
+      klass.call(text: "x")
+
+      expect(calls.map { |metadata| metadata.values_at(:role, :attempt) }).to eq([[:judge, 1], [:judge, 2]])
     end
 
     it "doesn't call the judge when the samples agree" do

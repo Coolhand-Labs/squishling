@@ -317,8 +317,8 @@ available to your code as the results and in `InvalidOutputError#raw`, and to `s
 
 ### Reporting to `squawk`
 
-Every attempt a primitive makes is reported to the [`squawk`](failures.md#observing-every-attempt-squawk) hook, with
-usage, so [token measuring](measuring-tokens.md) works unchanged. `metadata[:role]` says what the attempt was for:
+Every attempt a primitive makes is reported to the [`squawk`](failures.md#observing-every-attempt-squawk) hook
+(unless narrowed with `squawk_on:`), with usage, so [token measuring](measuring-tokens.md) works unchanged. `metadata[:role]` says what the attempt was for:
 `nil` for an escalation attempt, `:sample` (with `metadata[:sample]` set to `"a"`, `"b"`, ...), or `:judge`. `attempt`
 and `attempts` count within that sample, judge, or escalation. `metadata[:repeated]` is `true` for an attempt that
 sent back the reply it was just rejected for; the primitive then skips the rest of that step's attempts (the next

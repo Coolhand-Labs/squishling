@@ -287,6 +287,212 @@ RSpec.describe "Squishling squawk" do
     end
   end
 
+  describe "squawk_on" do
+    let(:attempts) { -> { calls.map { |call| [call[:metadata][:attempt], call[:error].class] } } }
+
+    before { Squishling.configure { |c| c.squawk = recorder } }
+
+    it "reports every attempt by default and with :all" do
+      Squishling.configure { |c| c.squawk_on = :all }
+      stub_llm({ "label" => 1 }, { "label" => "ok" })
+      klass.call(text: "x")
+
+      expect(attempts.call).to eq([[1, Squishling::InvalidOutputError], [2, NilClass]])
+    end
+
+    describe ":rejections" do
+      before { Squishling.configure { |c| c.squawk_on = :rejections } }
+
+      it "skips an accepted first attempt" do
+        stub_llm({ "label" => "ok" })
+        klass.call(text: "x")
+
+        expect(calls).to be_empty
+      end
+
+      it "reports a rejection but not the accepted retry" do
+        stub_llm({ "label" => 1 }, { "label" => "ok" })
+        klass.call(text: "x")
+
+        expect(attempts.call).to eq([[1, Squishling::InvalidOutputError]])
+      end
+
+      it "reports a failed request" do
+        stub_llm(Squishling::LLMError.new("boom"), { "label" => "ok" })
+        klass.call(text: "x")
+
+        expect(attempts.call).to eq([[1, Squishling::LLMError]])
+      end
+    end
+
+    describe ":retries" do
+      before { Squishling.configure { |c| c.squawk_on = :retries } }
+
+      it "skips an accepted first attempt" do
+        stub_llm({ "label" => "ok" })
+        klass.call(text: "x")
+
+        expect(calls).to be_empty
+      end
+
+      it "reports a rejection and the accepted attempt after it" do
+        stub_llm({ "label" => 1 }, { "label" => "ok" })
+        klass.call(text: "x")
+
+        expect(attempts.call).to eq([[1, Squishling::InvalidOutputError], [2, NilClass]])
+      end
+    end
+
+    describe ":final" do
+      before { Squishling.configure { |c| c.squawk_on = :final } }
+
+      it "reports only the last attempt, whether it was accepted" do
+        stub_llm({ "label" => 1 }, { "label" => "ok" })
+        klass.call(text: "x")
+
+        expect(attempts.call).to eq([[2, NilClass]])
+      end
+
+      it "or rejected" do
+        stub_llm({ "label" => 1 }, { "label" => 2 })
+
+        expect { klass.call(text: "x") }.to raise_error(Squishling::InvalidOutputError)
+        expect(attempts.call).to eq([[2, Squishling::InvalidOutputError]])
+      end
+    end
+
+    describe "a list" do
+      it "reports an attempt when any condition holds" do
+        Squishling.configure { |c| c.squawk_on = %i[rejections final] }
+        stub_llm({ "label" => 1 }, { "label" => "ok" })
+        klass.call(text: "x")
+
+        expect(attempts.call).to eq([[1, Squishling::InvalidOutputError], [2, NilClass]])
+      end
+
+      it "skips an attempt that matches none" do
+        Squishling.configure { |c| c.squawk_on = %i[rejections final] }
+        klass.squishling(escalation: [{ model: "test-model", attempts: 3 }])
+        stub_llm({ "label" => 1 }, { "label" => "ok" })
+        klass.call(text: "x")
+
+        expect(attempts.call).to eq([[1, Squishling::InvalidOutputError]])
+      end
+
+      it "replaces the level above instead of merging with it" do
+        Squishling.configure { |c| c.squawk_on = %i[rejections final] }
+        klass.squishling(squawk_on: [:final])
+        stub_llm({ "label" => 1 }, { "label" => "ok" })
+        klass.call(text: "x")
+
+        expect(attempts.call).to eq([[2, NilClass]])
+      end
+
+      it "treats :all in a list as every attempt, and accepts duplicates" do
+        Squishling.configure { |c| c.squawk_on = %i[all rejections rejections] }
+        stub_llm({ "label" => "ok" })
+        klass.call(text: "x")
+
+        expect(attempts.call).to eq([[1, NilClass]])
+      end
+
+      it "doesn't report an accepted earlier attempt as :final" do
+        klass.squishling(squawk_on: :final)
+        stub_llm({ "label" => "ok" })
+        klass.call(text: "x")
+
+        expect(calls).to be_empty
+      end
+
+      it "is frozen, so a later change to the caller's array can't alter the setting" do
+        conditions = [:rejections]
+        klass.squishling(squawk_on: conditions)
+        conditions << :all
+        stub_llm({ "label" => "ok" })
+        klass.call(text: "x")
+
+        expect(calls).to be_empty
+      end
+    end
+
+    describe "precedence" do
+      it "prefers the method's value over the class's, and the class's over the configured one" do
+        Squishling.configure { |c| c.squawk_on = :all }
+        klass.squishling(squawk_on: :rejections)
+        klass.squish(:other, squawk_on: :all) { string :label }
+        klass.define_method(:other) { |text:| raise NotImplementedError, text }
+        stub_llm({ "label" => "ok" }, { "label" => "ok" })
+        klass.call(text: "x")
+        expect(calls).to be_empty
+
+        klass.new.other(text: "x")
+        expect(calls.size).to eq(1)
+      end
+
+      it "is inherited by a subclass" do
+        klass.squishling(squawk_on: :rejections)
+        stub_llm({ "label" => "ok" })
+        Class.new(klass).call(text: "x")
+
+        expect(calls).to be_empty
+      end
+
+      it "filters a class's own hook when only the configuration sets it" do
+        Squishling.configure { |c| c.squawk_on = :rejections }
+        klass.squishling(squawk: recorder)
+        stub_llm({ "label" => "ok" })
+        klass.call(text: "x")
+
+        expect(calls).to be_empty
+      end
+
+      it "carries through squish!" do
+        klass.squishling(squawk_on: :rejections)
+        klass.define_method(:call) { |text:| squish! if text }
+        stub_llm({ "label" => "ok" })
+        klass.call(text: "x")
+
+        expect(calls).to be_empty
+      end
+
+      it "resets to :all when the configured value is set to nil" do
+        Squishling.configure { |c| c.squawk_on = :rejections }
+        Squishling.configure { |c| c.squawk_on = nil }
+
+        expect(Squishling.config.squawk_on).to eq(:all)
+      end
+    end
+
+    it "is harmless without a hook, and doesn't revive one that was silenced" do
+      Squishling.configure { |c| c.squawk = nil }
+      klass.squishling(squawk_on: :retries)
+      stub_llm({ "label" => "ok" })
+      expect(klass.call(text: "x").label).to eq("ok")
+
+      klass.squishling(squawk: false, squawk_on: :all)
+      Squishling.configure { |c| c.squawk = recorder }
+      stub_llm({ "label" => 1 }, { "label" => "ok" })
+      klass.call(text: "x")
+      expect(calls).to be_empty
+    end
+
+    describe "validation" do
+      it "rejects an unknown value at every level" do
+        expect { Squishling.configure { |c| c.squawk_on = :errors } }
+          .to raise_error(Squishling::ConfigurationError, /squawk_on must be one or a list of :all, .*:final/)
+        expect { klass.squishling(squawk_on: "retries") }.to raise_error(Squishling::ConfigurationError, /squawk_on/)
+        expect { klass.squish(:call, squawk_on: true) }.to raise_error(Squishling::ConfigurationError, /squawk_on/)
+      end
+
+      it "rejects an empty list or one with an unknown member" do
+        expect { klass.squishling(squawk_on: []) }.to raise_error(Squishling::ConfigurationError, /squawk_on/)
+        expect { klass.squishling(squawk_on: Set[:final]) }.to raise_error(Squishling::ConfigurationError, /squawk_on/)
+        expect { klass.squishling(squawk_on: %i[final bogus]) }
+          .to raise_error(Squishling::ConfigurationError, /got \[:final, :bogus\]/)
+      end
+    end
+  end
+
   describe "validation" do
     it "rejects a hook that can't be called" do
       expect { Squishling.configure { |c| c.squawk = "log it" } }
