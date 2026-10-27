@@ -9,12 +9,20 @@ module Squishling
     Conversation = Struct.new(:step, :instructions, :schema, :messages)
 
     # purpose, harness (the harness type), and handed_off (squish! sent the call here) are only told to the observer.
-    def initialize(label, purpose:, harness:, handed_off:)
+    # budget (see Budget) caps the tokens the requests of this client may use between them.
+    def initialize(label, purpose:, harness:, handed_off:, budget: {})
       @label = label
       @purpose = purpose
       @harness = harness
       @handed_off = handed_off
       @adapter = Squishling.config.resolved_adapter
+      @tally = Budget::Tally.new(budget)
+    end
+
+    # The budget limit this client's requests have reached ({ limit:, max:, used: }), or nil. Checked before each
+    # request, so one already in flight is never cut short.
+    def exhausted_budget
+      @tally.exhausted
     end
 
     # Runs each job on its own thread and returns, in order, each job's [value, exception]. Only provider
@@ -61,7 +69,7 @@ module Squishling
     # A System One judgment on one step, through the adapter.
     # Judge#check_judgments! has already refused an adapter that can't.
     def judge(input, questions:, step:)
-      @adapter.judge(input, questions:, step:, label: @label)
+      @tally.add(@adapter.judge(input, questions:, step:, label: @label))
     end
 
     # #judge inside the configured observer (see Observer), attempt counting in attempts.
@@ -89,7 +97,7 @@ module Squishling
       end
 
       chat.messages = messages + [{ role: :assistant, content: response.text }]
-      response
+      @tally.add(response)
     end
 
     def with_context(context, &)

@@ -35,7 +35,8 @@ module Squishling
       @purpose = purpose
       @harness = harness
       @steps = definition.escalation_path(receiver, inputs).freeze
-      @client = LLMClient.new(definition.label, purpose:, harness: harness.type, handed_off: definition.handed_off)
+      @client = LLMClient.new(definition.label, purpose:, harness: harness.type, handed_off: definition.handed_off,
+        budget: definition.budget)
       @output_check = OutputCheck.new(definition, receiver, inputs)
       @owner = Thread.current
       @produced = {}.compare_by_identity
@@ -74,7 +75,8 @@ module Squishling
     end
 
     # Makes each attempt of the stages in order (the escalation's steps when none are given) until an output
-    # passes the schema and squish_validate. Consecutive attempts on the same step continue the same chat, so the
+    # passes the schema and squish_validate. Raises BudgetExhaustedError instead of making an attempt once the
+    # call's token budget (see Budget) is spent. Consecutive attempts on the same step continue the same chat, so the
     # model sees what it got wrong; a new step starts a fresh chat told about the last rejected output (unless
     # the step sets forward_rejected: false). A retry that repeats the rejected output it was just told about gives
     # up on the rest of its step's attempts. Raises InvalidOutputError, or LLMError, when the last attempt fails.
@@ -107,6 +109,8 @@ module Squishling
         pending = samples.reject(&:result)
         break if pending.empty?
 
+        check_budget!(attempts: attempt - 1, models: samples.first.stage.first(attempt - 1).map(&:model),
+          rejected: pending.filter_map(&:rejected).last)
         round(pending, attempt)
       end
       samples.map(&:result)
@@ -123,7 +127,7 @@ module Squishling
       judge = judge_step(judge) unless judge.nil?
       Judge.new(definition: @definition, receiver: @receiver, client: @client, judge:, instructions:, path: steps,
         purpose: @purpose, payload: @payload, escalate: method(:escalate_with), log_failure: method(:log_failure),
-        guard: method(:owner!), harness_type: @harness.type)
+        guard: method(:owner!), budget_check: method(:check_budget!), harness_type: @harness.type)
     end
 
     # Whether two outputs agree: compare (a Proc, evaluated against the receiver with the two results and the
@@ -174,6 +178,7 @@ module Squishling
       attempt = 1
 
       while attempt <= path.size
+        check_budget!(attempts: models.size, models:, rejected:)
         step = path[attempt - 1]
         models << step.model
         last = attempt == path.size
@@ -214,6 +219,18 @@ module Squishling
         log_failure(prompt.role, attempt, path, rejection_reason(error.errors, response), following:, repeated:)
         attempt = following
       end
+    end
+
+    # Raises BudgetExhaustedError when the call has spent its token budget (see Budget), before another request.
+    # attempts is how many were made so far, models the ones tried, rejected the last [raw content, errors].
+    def check_budget!(attempts: 0, models: nil, rejected: nil)
+      exhausted = @client.exhausted_budget
+      return unless exhausted
+
+      error = BudgetExhaustedError.new(**exhausted, errors: rejected&.last || [], raw: rejected&.first,
+        attempts: (attempts if attempts.positive?), models: (models.dup if models&.any?))
+      log("stopped, #{error.errors.first}")
+      raise error
     end
 
     # One round of #samples: the pending samples' requests, sent concurrently, then each outcome recorded.

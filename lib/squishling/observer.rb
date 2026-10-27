@@ -90,7 +90,7 @@ module Squishling
     end
 
     # An Adapter::Response carries its token counts in a Hash; a judgment (see Adapter::Base#judge) may carry them in
-    # an object with input and output instead.
+    # an object with input and output instead. Shared with Budget::Tally; not part of the public API.
     def usage(response)
       tokens = response.respond_to?(:tokens) ? response.tokens : nil
       model = response.respond_to?(:model) ? response.model : nil
@@ -105,6 +105,5 @@ module Squishling
       tokens.respond_to?(reader) ? tokens.public_send(reader) : nil
     end
     private_class_method :token_count
-    private_class_method :usage
   end
 end

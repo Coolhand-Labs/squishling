@@ -32,6 +32,7 @@ end
 | `default_escalation` | `nil` | The universal [escalation](#models-and-escalation): models tried in order. Assigning it clears `default_model`, and vice versa. |
 | `default_provider` | `nil` | The provider for `default_model`/`default_escalation` steps that don't name one. What it means depends on the adapter: RubyLLM needs it only for models missing from its registry (see below); the OpenAI-compatible adapter ignores it. |
 | `default_params` | `{}` | Generation params for every call (temperature, reasoning effort, top_p, …), overridable per class, per method, and per escalation step. See [Generation params](#generation-params). |
+| `default_max_total_output_tokens`, `default_max_total_input_tokens` | `nil` (no limit) | The most output (or input) tokens one call may use across all its requests; once reached, the call raises `BudgetExhaustedError` instead of making another attempt. Overridable per class (`squishling max_total_output_tokens: ...`), per method, and per `squish!` call. See [Capping a call's cost](failures.md#capping-a-calls-cost-token-budgets). |
 | `squawk` | `nil` | A callable run after every LLM attempt (see `squawk_on`) with the raw output, for sending it to an error tracker or tracing tool. Also settable per class and per method. See [Observing every attempt](failures.md#observing-every-attempt-squawk). |
 | `squawk_on` | `:all` | Which attempts reach the `squawk` hook: `:all`, `:rejections` (errors only), `:retries` (errors plus any accepted attempt after the first), `:final` (the last attempt the escalation allows), or a list of them (any one holding runs the hook). Also settable per class and per method. |
 | `observer` | `nil` | An around-style hook for every provider request: `:coolhand`, any object responding to `around(call)`, or `false` for none. `nil` uses the [Coolhand observer](coolhand.md) when the `coolhand` gem is configured. See [Observers](observers.md). |
@@ -258,7 +259,7 @@ end
 
 ## Inheritance
 
-Subclasses inherit the model or escalation and its provider (as a pair), harness, generation params (merged key by key), purpose, output schema,
+Subclasses inherit the model or escalation and its provider (as a pair), harness, generation params (merged key by key), token budgets (limit by limit), purpose, output schema,
 `squish_when` predicate, `squish_context` names, `squish_validate`, `squish_fallback`, and every `squish` declaration. Overrides in a subclass, including
 overridden methods, are routed the same way.
 
@@ -268,5 +269,6 @@ overridden methods, are routed the same way.
 ## Per-call overrides
 
 Inside a squished method, `squish!` sends the call to the LLM with its own `purpose:`,
-`append_to_purpose:`, `context:`, `model:` or `escalation:` (with `provider:`), `params:`, and `harness:`. Each layers over the method and class
+`append_to_purpose:`, `context:`, `model:` or `escalation:` (with `provider:`), `params:`, `harness:`, and
+`max_total_output_tokens:`/`max_total_input_tokens:`. Each layers over the method and class
 settings the same way they layer over each other. See [Handing off to the LLM](routing.md#handing-off-to-the-llm-with-squish).

@@ -31,6 +31,7 @@ require_relative "squishling/schema"
 require_relative "squishling/source"
 require_relative "squishling/appendices"
 require_relative "squishling/definition"
+require_relative "squishling/budget"
 require_relative "squishling/llm_client"
 require_relative "squishling/output_check"
 require_relative "squishling/run/messages"
@@ -133,10 +134,11 @@ module Squishling
   # it); return it from the method. The overrides apply to this call only: append_to_purpose adds to (or,
   # with false, replaces) the declared sections, context is sent alongside the declared squish_context,
   # model/escalation (one or the other)/provider/purpose/harness replace the declared ones, and params merge
-  # key by key over them.
+  # key by key over them. max_total_output_tokens/max_total_input_tokens cap what the call may spend across all its
+  # requests (false lifts a declared cap).
   def squish!(append_to_purpose: nil, context: nil, purpose: nil, model: nil, escalation: nil, provider: nil,
-    params: nil, harness: nil)
+    params: nil, harness: nil, max_total_output_tokens: nil, max_total_input_tokens: nil)
     Router.hand_off(self, { append_to_purpose:, context:, purpose:, model:, escalation:, provider:, params:,
-                            harness: })
+                            harness:, max_total_output_tokens:, max_total_input_tokens: })
   end
 end

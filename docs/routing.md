@@ -94,6 +94,7 @@ end
 - `output_schema:` (or a schema block)
 - `model:` or `escalation:`, `provider:`, and `params:` (generation params; see [Configuration](configuration.md))
 - `harness:` (see [Harnesses](harnesses.md), including your own)
+- `max_total_output_tokens:` and `max_total_input_tokens:` (see [Capping a call's cost](failures.md#capping-a-calls-cost-token-budgets))
 - `when:`, a predicate proc
 - `validate:` and `fallback:` (see [Failure handling](failures.md))
 
@@ -137,6 +138,7 @@ end
 | `purpose:` | Replaces the purpose |
 | `model:` or `escalation:`, `provider:`, `params:` | E.g. send this call to a stronger model, or a whole [escalation](configuration.md#models-and-escalation), when Ruby fails. A `provider:` needs a `model:` or `escalation:`; `params:` merge key by key over the declared ones. |
 | `harness:` | Replaces the declared [harness](harnesses.md), e.g. `harness: :judged_squishsum` to double-check a hand-off |
+| `max_total_output_tokens:`, `max_total_input_tokens:` | Cap what this call may spend, e.g. a tighter budget for a hand-off; `false` lifts a declared cap. See [Capping a call's cost](failures.md#capping-a-calls-cost-token-budgets). |
 
 - **The output schema can't be overridden.** The call still returns the method's result type.
 - **Failures** go through the normal LLM path: a declared `squish_fallback` is used, otherwise

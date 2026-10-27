@@ -9,6 +9,8 @@ first tells you when the second is worth paying.
 - The [`squawk` hook](failures.md#observing-every-attempt-squawk) runs after every LLM attempt (by default; see `squawk_on` below) and receives the
   method (`label`, e.g. `"ShipmentUpdate#call"`), the model and provider, which attempt it was, and the token usage
   the adapter reported. That is enough to attribute spend to a squishling method without any other tooling.
+- A [token budget](failures.md#capping-a-calls-cost-token-budgets) (`max_total_output_tokens:`, `max_total_input_tokens:`)
+  caps what a single call may use across all its attempts, so a call that keeps failing can't spend without limit.
 - Cost in dollars isn't reported by Squishling's adapters. Multiply the reported tokens by your model's price, or, with
   the RubyLLM adapter, read it from RubyLLM directly (see [OpenTelemetry](#opentelemetry), or RubyLLM's `config.instrumenter`).
 

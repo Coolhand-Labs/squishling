@@ -15,6 +15,7 @@ A failed attempt moves on to the next one; once the last fails, the error is rai
 | Malformed or truncated JSON | Moves to the next attempt, then raises `InvalidOutputError`. JSON wrapped in a markdown code fence is accepted. |
 | JSON that doesn't match the schema (wrong types, missing or extra keys, `null` in a non-`optional` field, a broken [conditional rule](schemas.md#contracts-beyond-the-schema), root not an object) | Moves to the next attempt with the validation errors, then raises `InvalidOutputError` |
 | Schema-valid output that [`squish_validate`](#output-checks-squish_validate) rejects | Moves to the next attempt with your messages, then raises `InvalidOutputError` |
+| The call has used its [token budget](#capping-a-calls-cost-token-budgets) | Stops before the next attempt and raises `Squishling::BudgetExhaustedError` (an `InvalidOutputError`) |
 | With a [squishsum harness](harnesses.md): two valid samples that differ, with no judge or a judge that rejects both | Raises `Squishling::DisagreementError` (an `InvalidOutputError`), carrying both typed `candidates` |
 
 Squishling validates output itself with [json_schemer](https://github.com/davishmcclurg/json_schemer), because
@@ -97,6 +98,47 @@ end
 The same applies to anything you log yourself, such as `error.message` in a [fallback](#fallbacks). Use `error.raw`
 only where you are willing to store model output. To send the output of every attempt somewhere on purpose, use
 [`squawk`](#observing-every-attempt-squawk).
+
+## Capping a call's cost (token budgets)
+
+`attempts:` limits retries per step, but a call that fails every attempt still pays for all of them, and with
+reasoning models the failed attempts are often the longest. A token budget caps what one call may use across every
+request it makes, whichever [harness](harnesses.md) it runs:
+
+```ruby
+class TicketTriager
+  include Squishling
+
+  squishling escalation: [{ model: "claude-haiku-4-5", attempts: 2 }, { model: "claude-sonnet-5-5", attempts: 2 }],
+    max_total_output_tokens: 25_000,
+    max_total_input_tokens: 200_000
+end
+```
+
+Before each request, Squishling checks the tokens used so far by the call's earlier requests (the escalation's
+attempts, a squishsum harness's samples, and a judge's). Once either total has reached its limit, it makes no more
+requests and raises `Squishling::BudgetExhaustedError`. It is an `InvalidOutputError` (so
+[`squish_fallback`](#fallbacks) receives it, and existing `rescue InvalidOutputError` code keeps working), and
+`rescue Squishling::BudgetExhaustedError` tells it apart from a plain validation failure:
+
+- `limit` is `:max_total_output_tokens` or `:max_total_input_tokens`, `max` its value, and `used` the tokens spent
+  so far (`{ input_tokens:, output_tokens: }`).
+- `errors` starts with the budget line, followed by the validation errors of the last rejected output, which is in
+  `raw` (`nil` when no output was rejected, e.g. the samples were valid but there was no budget left for the judge);
+  `attempts` and `models` are the requests made.
+- Like any other error message, it carries no model output.
+
+Things to know:
+
+- The first request always runs, and a request already in flight is never cut short, so a call can end above the
+  limit by one request (for the squishsum harnesses, one round of samples).
+- Tokens are the counts the [adapter](adapters.md) reports (`output_tokens` includes a reasoning model's thinking
+  tokens for providers that count them that way). A request that failed reports none, and a provider that reports no
+  usage never exhausts a budget.
+- The limits are positive Integers. Set them with `Squishling.configure` (`default_max_total_output_tokens`,
+  `default_max_total_input_tokens`), `squishling`, `squish :method, ...`, or a [`squish!`](routing.md#handing-off-to-the-llm-with-squish) call.
+  The more specific level wins, limit by limit, and `false` lifts a limit set at a wider level.
+- To limit a single response instead, use the `max_output_tokens` [generation param](configuration.md#generation-params).
 
 ## Observing every attempt (`squawk`)
 
@@ -185,6 +227,7 @@ end
 | `Squishling::ConfigurationError` | Missing purpose or schema, a non-strict schema, invalid or reserved params, an invalid `model:`/`escalation:` declaration, an invalid `append_to_purpose` item or unavailable source, bad credentials, an unknown model, a request the provider rejects (400, as `RequestRejectedError`, with `provider_status` and `provider_code`) |
 | `Squishling::InvalidOutputError` | LLM output still invalid (schema or `squish_validate`) after every attempt in the escalation, or a deterministic/fallback return that doesn't match the schema |
 | `Squishling::DisagreementError` | A subclass of `InvalidOutputError`: a [squishsum harness](harnesses.md#when-the-harness-fails)'s samples disagreed and no judge accepted either. `candidates`, `verdict`, and `reason` describe what happened |
+| `Squishling::BudgetExhaustedError` | A subclass of `InvalidOutputError`: the call used up its [token budget](#capping-a-calls-cost-token-budgets) before an attempt was accepted. `limit`, `max`, and `used` describe the budget |
 | `Squishling::LLMError` | The provider call failed on the last attempt in the escalation, after the adapter's own retries, including context-length errors (`cause` holds the original, when the adapter has one) |
 
 Errors raised by your own Ruby code are not wrapped.
@@ -192,7 +235,7 @@ Errors raised by your own Ruby code are not wrapped.
 ## Fallbacks
 
 Use `squish_fallback` to decide what happens when the LLM path fails with `InvalidOutputError` (including a
-`DisagreementError`) or `LLMError`. It's the one fallback for every [harness](harnesses.md).
+`DisagreementError` or `BudgetExhaustedError`) or `LLMError`. It's the one fallback for every [harness](harnesses.md).
 It receives the error plus the method's inputs as keywords, and runs against the instance:
 
 ```ruby

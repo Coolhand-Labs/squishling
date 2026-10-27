@@ -98,6 +98,23 @@ module Squishling
     end
   end
 
+  # The call spent its token budget (max_total_output_tokens or max_total_input_tokens) before any attempt was
+  # accepted, so no further request was made. limit names the budget that was reached, max its value, and used the
+  # tokens spent so far ({ input_tokens:, output_tokens: }). errors starts with the budget line, then the validation
+  # errors of the last rejected output, which is in raw (nil when no output had been rejected, e.g. the samples were
+  # valid but the judge could not run). Like any InvalidOutputError it goes to squish_fallback.
+  class BudgetExhaustedError < InvalidOutputError
+    attr_reader :limit, :max, :used
+
+    def initialize(limit:, max:, used:, errors: [], raw: nil, attempts: nil, models: nil)
+      @limit = limit
+      @max = max
+      @used = used
+      spent = used.fetch(:"#{limit.to_s.delete_prefix('max_total_')}")
+      super(errors: ["token budget exhausted: #{spent} of #{max} #{limit} used", *errors], raw:, attempts:, models:)
+    end
+  end
+
   # The LLM call itself failed (rate limit, server error, timeout, connection) after the
   # adapter's own HTTP retries. The original exception is available as #cause.
   class LLMError < Error; end
