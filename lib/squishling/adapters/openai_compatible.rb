@@ -215,7 +215,7 @@ module Squishling
         status = response.code.to_i
         return llm_error(request, "HTTP #{status}") if retryable?(response, nil) || too_large?(response, status)
 
-        configuration_error(request, rejection(status, request.params))
+        rejection(request, response, status)
       end
 
       # A certificate that doesn't verify is a setup mistake (base_url, CA store) that a retry can't fix.
@@ -232,12 +232,13 @@ module Squishling
         error.is_a?(OpenSSL::SSL::SSLError) && error.message.include?("certificate verify failed")
       end
 
-      def rejection(status, params)
+      def rejection(request, response, status)
         case status
-        when 401, 403 then "the provider refused the credentials (HTTP #{status})"
-        when 404 then "HTTP 404: check base_url and the model name"
-        when 300..399 then "HTTP #{status}: redirects aren't followed; check base_url"
-        else "the provider rejected the request (HTTP #{status})#{params_hint(params)}"
+        when 401, 403 then configuration_error(request, "the provider refused the credentials (HTTP #{status})")
+        when 404 then configuration_error(request, "HTTP 404: check base_url and the model name")
+        when 300..399 then configuration_error(request, "HTTP #{status}: redirects aren't followed; check base_url")
+        else rejected_request_error(request, via: "HTTP #{status}", body: response.body.to_s,
+          http_status: status)
         end
       end
 
@@ -250,12 +251,9 @@ module Squishling
       def context_length?(response)
         return false unless response.code.to_i == 400
 
-        data = JSON.parse(response.body.to_s.dup.force_encoding(Encoding::UTF_8))
-        error = data["error"] if data.is_a?(Hash)
+        error = Adapter::ErrorBody.error(response.body.to_s)
         error.is_a?(Hash) && (error.values_at("code", "type").include?("context_length_exceeded") ||
           error["message"].to_s.match?(CONTEXT_LENGTH_MESSAGE))
-      rescue JSON::ParserError, TypeError
-        false
       end
 
       def retry_delay(response, attempt)

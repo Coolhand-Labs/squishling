@@ -135,17 +135,21 @@ module Squishling
       rescue ::RubyLLM::UnauthorizedError, ::RubyLLM::ForbiddenError => e
         raise configuration_error(request, describe_failure(e))
       rescue ::RubyLLM::BadRequestError => e
-        raise configuration_error(request,
-          "the provider rejected the request (#{describe_failure(e)})#{params_hint(request.params)}")
+        raise rejected_request_error(request, via: describe_failure(e), body: response_field(e.response, :body),
+          http_status: response_field(e.response, :status))
       rescue ::RubyLLM::Error, Faraday::Error => e
         raise llm_error(request, describe_failure(e))
       end
 
       # The error's class and HTTP status, when it has one, which is all of it that is ours to repeat.
       def describe_failure(error)
-        response = error.response
-        status = response.is_a?(Hash) ? response[:status] : (response.status if response.respond_to?(:status))
+        status = response_field(error.response, :status)
         status ? "#{error.class}, HTTP #{status}" : error.class.to_s
+      end
+
+      # A field of an error's response, which is a Faraday::Response, or a Hash for a Faraday error.
+      def response_field(response, field)
+        response.is_a?(Hash) ? response[field] : (response.public_send(field) if response.respond_to?(field))
       end
 
       def model_options(model, provider)
