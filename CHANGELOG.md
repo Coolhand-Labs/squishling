@@ -67,6 +67,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and otherwise says the params, output schema, or input may be invalid. An array-wrapped overlong-context 400 from the
   OpenAI-compatible adapter is now an `LLMError`. (#53)
 
+### Fixed
+
+- A raw Hash `output_schema` that omits `type: "object"` no longer lets a non-object reply (a String, Array, or number)
+  reach the typed result as a `NoMethodError`; it is now invalid output, retried, escalated, and sent to
+  `squish_fallback` like any other. Schemas built with Schematist always had `type: "object"`.
+- `RequestRejectedError`'s `provider_status` and `provider_code` no longer accept a hyphenated token, so a key-shaped
+  string a gateway echoes into an error body is never repeated in our message. The RubyLLM adapter's "invalid params"
+  `ConfigurationError` now names the param keys, not their values.
+
 ### Internal
 
 - Development dependencies: `ruby_llm` 2.1.1, `coolhand` 0.10.0, and `rubocop` 1.92.1; CI pins `ruby/setup-ruby` v1.335.0
