@@ -39,7 +39,7 @@ RSpec.describe Squishling::Testing do
       klass.call(text: "long text")
 
       expect { assert_sent_arguments fake, { text: "other" } }
-        .to raise_error(RSpec::Expectations::ExpectationNotMetError, /but it was sent \{"text" => "long text"\}/)
+        .to raise_error(RSpec::Expectations::ExpectationNotMetError, /but it was sent \{"text" ?=> ?"long text"\}/)
       expect { assert_sent_arguments fake, { text: "x" }, request: 3 }
         .to raise_error(RSpec::Expectations::ExpectationNotMetError, /only 1 were/)
       expect { assert_llm_calls fake, 2 }
