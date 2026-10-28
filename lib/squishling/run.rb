@@ -12,9 +12,7 @@ module Squishling
   # Primitives must be called from the thread that runs the harness. Only the provider requests inside them run
   # on other threads; parsing, validation, and every callback (squish_validate, compare:, procs) stay on this one.
   class Run
-    include Messages
-    include Repeats
-    include Rejections
+    include Messages, Repeats, Rejections, Budgeting
 
     private_constant :Messages, :Repeats
 
@@ -219,18 +217,6 @@ module Squishling
         log_failure(prompt.role, attempt, path, rejection_reason(error.errors, response), following:, repeated:)
         attempt = following
       end
-    end
-
-    # Raises BudgetExhaustedError when the call has spent its token budget (see Budget), before another request.
-    # attempts is how many were made so far, models the ones tried, rejected the last [raw content, errors].
-    def check_budget!(attempts: 0, models: nil, rejected: nil)
-      exhausted = @client.exhausted_budget
-      return unless exhausted
-
-      error = BudgetExhaustedError.new(**exhausted, errors: rejected&.last || [], raw: rejected&.first,
-        attempts: (attempts if attempts.positive?), models: (models.dup if models&.any?))
-      log("stopped, #{error.errors.first}")
-      raise error
     end
 
     # One round of #samples: the pending samples' requests, sent concurrently, then each outcome recorded.
