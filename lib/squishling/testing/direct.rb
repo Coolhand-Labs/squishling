@@ -13,7 +13,7 @@ module Squishling
           schema = definition.schema or raise SetupError, "#{definition.label} has no output_schema"
           inputs = definition.bind_arguments(args, kwargs)
           prompt = Invoker::Prompt.new(instructions: nil, schema:, input: nil, role: nil)
-          OutputCheck.new(definition, receiver || klass.new, inputs).call(reply, prompt).last
+          OutputCheck.new(definition, receiver || klass.new, inputs).call(reply, prompt).last.map(&:message)
         end
 
         # What squish_fallback returns for this error, typed like any result of the method.
