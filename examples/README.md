@@ -75,6 +75,17 @@ Each script resolves its key in this order:
 
 ## Running
 
+`bin/live-examples` runs every script here concurrently and prints one `PASS` / `NOKEY` / `FAIL` line each, with a
+log per script in `tmp/live-examples/`. It exits non-zero unless all pass. Provider keys usually live in `~/.zshrc`,
+which a non-interactive shell (an agent's tool shell, say) never sources, so it re-runs itself under `zsh -ic`; set
+`SQUISHLING_EXAMPLES_NO_ZSH=1` to use the current environment as-is.
+
+```bash
+bin/live-examples
+```
+
+Or run one script at a time:
+
 ```bash
 bundle install
 bundle exec ruby examples/anthropic_example.rb

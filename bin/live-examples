@@ -1,0 +1,152 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# Runs every live script in examples/ (concurrently) against real provider keys and prints one PASS / NOKEY / FAIL
+# line per script. Exits non-zero on NOKEY and FAIL: a missing key is a failure, not a skip, because this is the
+# check that sends a real strict schema to a real provider.
+#
+# Provider keys usually live in the developer's ~/.zshrc, which a non-interactive shell (an agent's tool shell, for
+# instance) never sources. So when zsh is installed this re-execs itself under `zsh -ic`. Set
+# SQUISHLING_EXAMPLES_NO_ZSH=1 to use the current environment as-is. The scripts never print a key; the logs hold
+# provider requests and responses, so they are written owner-only.
+#
+# Run: bin/live-examples
+# Env: SQUISHLING_EXAMPLES_NO_ZSH   skip the zsh re-exec
+#      SQUISHLING_EXAMPLES_LOG_DIR  where per-script logs go (default: tmp/live-examples/)
+#      SQUISHLING_EXAMPLES_TIMEOUT  per-script timeout in seconds (default: 600); a timeout is a FAIL
+
+require "fileutils"
+require "open3"
+require "rbconfig"
+
+ROOT = File.expand_path("..", __dir__)
+ZSH_GUARD = "SQUISHLING_EXAMPLES_IN_ZSH"
+DEFAULT_TIMEOUT_SECONDS = 600
+NO_KEY = /: no API key\./
+# Process groups of the scripts currently running, so an interrupted runner can stop them. A trap handler can't take
+# a Mutex, so this is a bare Hash (MRI's Hash#[]= / #delete are atomic enough for this use).
+ACTIVE_GROUPS = {}
+
+def zsh_installed?
+  ENV.fetch("PATH", "").split(File::PATH_SEPARATOR).any? { |dir| File.executable?(File.join(dir, "zsh")) }
+end
+
+def reexec_under_zsh?
+  ENV["SQUISHLING_EXAMPLES_NO_ZSH"].to_s.empty? && ENV[ZSH_GUARD].to_s.empty? && zsh_installed?
+end
+
+# The ruby is passed as a positional arg ("$@") rather than interpolated, so paths with spaces or quotes can't break
+# out of the command string.
+def reexec_under_zsh
+  puts "live-examples: re-running under `zsh -ic` to load provider keys (SQUISHLING_EXAMPLES_NO_ZSH=1 to opt out)"
+  $stdout.flush # exec replaces the process without flushing buffered output
+  exec("zsh", "-ic", %(#{ZSH_GUARD}=1 exec "$@"), "live-examples", RbConfig.ruby, File.expand_path(__FILE__), *ARGV)
+end
+
+def classify(success, output)
+  return :pass if success
+
+  output.match?(NO_KEY) ? :nokey : :fail
+end
+
+# Runs the command in its own process group with stdin closed (so an unexpected prompt can't hang it) and kills the
+# whole group after `timeout` seconds, so a script's own children (a local server) can't hold the output pipe open.
+# Returns [combined output, success?].
+def capture_with_timeout(timeout, *command)
+  Open3.popen2e(*command, chdir: ROOT, pgroup: true) do |stdin, out, waiter|
+    ACTIVE_GROUPS[waiter.pid] = true
+    stdin.close
+    output = String.new # binary: chunks can split a multibyte character
+    reader = Thread.new do
+      loop { output << out.readpartial(4096) }
+    rescue EOFError, IOError
+      nil
+    end
+
+    timed_out = !waiter.join(timeout)
+    kill_group(waiter.pid) # after a timeout it ends the script; after a normal exit it reaps leftover children
+    reader.join(1)
+    text = output.dup.force_encoding(Encoding::UTF_8).scrub
+    next ["#{text}\nlive-examples: timed out after #{timeout}s", false] if timed_out
+
+    [text, waiter.value.success?]
+  ensure
+    ACTIVE_GROUPS.delete(waiter.pid)
+  end
+end
+
+def kill_group(pid)
+  Process.kill("KILL", -pid)
+rescue Errno::ESRCH
+  nil # already gone
+end
+
+def write_log(path, content)
+  File.write(path, content)
+  File.chmod(0o600, path) # File.write's perm: only applies to a new file
+end
+
+def run_script(path, log_dir, timeout)
+  name = File.basename(path)
+  log_path = File.join(log_dir, "#{File.basename(name, '.rb')}.log")
+  output, success = capture_with_timeout(timeout, "bundle", "exec", RbConfig.ruby, path)
+  write_log(log_path, output)
+  { name:, log: log_path, output:, result: classify(success, output) }
+rescue StandardError => e
+  { name:, log: log_path, output: "live-examples: #{e.class}: #{e.message}", result: :fail }
+end
+
+def parse_timeout
+  timeout = Float(ENV.fetch("SQUISHLING_EXAMPLES_TIMEOUT", DEFAULT_TIMEOUT_SECONDS))
+  raise ArgumentError, "must be positive" unless timeout.positive?
+
+  timeout
+rescue ArgumentError
+  warn "live-examples: SQUISHLING_EXAMPLES_TIMEOUT must be a positive number of seconds"
+  exit 2
+end
+
+def tally(output)
+  output[/(\d+)\/(\d+) passed/]
+end
+
+def print_report(results)
+  results.each { |r| puts "#{r[:result].to_s.upcase.ljust(5)} #{r[:name].ljust(32)} #{tally(r[:output])}  #{r[:log]}" }
+  counts = results.group_by { |r| r[:result] }.transform_values(&:size)
+  puts "\n#{counts.fetch(:pass, 0)} passed, #{counts.fetch(:nokey, 0)} without a key, #{counts.fetch(:fail, 0)} failed"
+end
+
+def print_failure_tails(results)
+  results.reject { |r| r[:result] == :pass }.each do |r|
+    puts "\n--- #{r[:name]} (last 20 lines of #{r[:log]}) ---"
+    puts r[:output].lines.last(20).join
+  end
+end
+
+def main
+  reexec_under_zsh if reexec_under_zsh?
+
+  %w[INT TERM].each do |signal|
+    trap(signal) do
+      ACTIVE_GROUPS.each_key { |pid| kill_group(pid) }
+      exit 130
+    end
+  end
+
+  scripts = Dir[File.join(ROOT, "examples", "*_example.rb")].sort
+  abort "live-examples: no scripts found" if scripts.empty?
+
+  timeout = parse_timeout
+  log_dir = ENV.fetch("SQUISHLING_EXAMPLES_LOG_DIR", File.join(ROOT, "tmp", "live-examples"))
+  FileUtils.mkdir_p(log_dir, mode: 0o700)
+  File.chmod(0o700, log_dir)
+  puts "live-examples: running #{scripts.size} script(s) concurrently, logs in #{log_dir}\n\n"
+
+  results = scripts.map { |path| Thread.new { run_script(path, log_dir, timeout) } }.map(&:value)
+
+  print_report(results)
+  print_failure_tails(results)
+  exit(results.all? { |r| r[:result] == :pass } ? 0 : 1)
+end
+
+main if $PROGRAM_NAME == __FILE__

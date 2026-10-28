@@ -216,8 +216,9 @@ rule `/loop-review` uses for stuck findings.
    purely to move the percentage.
 
 2. If Phase 4.1 is green, run every `*_example.rb` script in `examples/`
-   against live provider keys: `bundle exec ruby examples/<name>.rb` for
-   each (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`). Unlike some Coolhand
+   against live provider keys. Prefer `bin/live-examples`: it runs them all and re-runs itself under `zsh -ic`, so
+   keys exported in `~/.zshrc` reach an agent's non-interactive shell (or `bundle exec ruby examples/<name>.rb` for
+   each; `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`). Unlike some Coolhand
    repos, these scripts **exit 1** when their key is missing (message
    `no API key. Pass --api-key KEY or set …`) rather than skipping —
    record that case as "not run (no key)" and tell the user, since this
