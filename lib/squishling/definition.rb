@@ -14,7 +14,7 @@ module Squishling
 
     def initialize(klass:, name:, purpose: nil, append_to_purpose: nil, output_schema: nil, model: nil,
       provider: nil, params: nil, harness: nil, predicate: nil, fallback: nil, validator: nil, squawk: nil,
-      call_context: {}, handed_off: false)
+      squawk_on: nil, call_context: {}, handed_off: false)
       @klass = klass
       @name = name
       @purpose = purpose
@@ -28,6 +28,7 @@ module Squishling
       @fallback = fallback
       @validator = validator
       @squawk = squawk
+      @squawk_on = squawk_on
       @call_context = call_context
       @handed_off = handed_off
     end
@@ -47,7 +48,7 @@ module Squishling
       call_harness = Harness.normalize(harness, "#{label} squish!") unless harness.nil?
       self.class.new(
         klass:, name:, output_schema: @output_schema, predicate: @predicate, fallback: @fallback,
-        validator: @validator, squawk: @squawk,
+        validator: @validator, squawk: @squawk, squawk_on: @squawk_on,
         purpose: purpose || @purpose,
         append_to_purpose: [*@append_to_purpose, *appended],
         model: call_path || @model, provider: call_path ? provider : @provider,
@@ -117,6 +118,11 @@ module Squishling
     # silences the levels above it.
     def squawk
       [@squawk, klass.squishling_squawk, Squishling.config.squawk].find { |hook| !hook.nil? } || nil
+    end
+
+    # Which attempts reach the hook (see Squawk): the method's, else the class's, else the configured one.
+    def squawk_on
+      [@squawk_on, klass.squishling_squawk_on, Squishling.config.squawk_on].find { |on| !on.nil? }
     end
 
     def context_names

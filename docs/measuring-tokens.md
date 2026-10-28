@@ -6,7 +6,7 @@ first tells you when the second is worth paying.
 ## What Squishling gives you
 
 - `result.squished?` says which path served a call, so you can count LLM calls per class.
-- The [`squawk` hook](failures.md#observing-every-attempt-squawk) runs after every LLM attempt and receives the
+- The [`squawk` hook](failures.md#observing-every-attempt-squawk) runs after every LLM attempt (by default; see `squawk_on` below) and receives the
   method (`label`, e.g. `"ShipmentUpdate#call"`), the model and provider, which attempt it was, and the token usage
   the adapter reported. That is enough to attribute spend to a squishling method without any other tooling.
 - Cost in dollars isn't reported by Squishling's adapters. Multiply the reported tokens by your model's price, or, with
@@ -56,7 +56,7 @@ template each call belongs to; see [Coolhand Labs](coolhand.md).
 
 ### Custom: the `squawk` hook
 
-`config.squawk` runs after every LLM attempt, accepted or rejected, and is handed the method's label, the model,
+`config.squawk` runs after every LLM attempt, accepted or rejected (unless you narrow it with `squawk_on:`, which makes token totals undercount, so keep `:all` for measuring), and is handed the method's label, the model,
 and the token usage the adapter reported. A lambda can take just the keywords it needs:
 
 ```ruby

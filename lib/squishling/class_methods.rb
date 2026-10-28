@@ -19,11 +19,15 @@ module Squishling
     #   squishling append_to_purpose: ["The Ruby that handles well-formed input:", self]
     # harness: chooses how the escalation is used (see Harness):
     #   squishling harness: :judged_squishsum
-    # squawk: is called after every LLM attempt with the raw output (see Configuration#squawk); false silences
+    # squawk: is called after each LLM attempt (narrowed by squawk_on:) with the raw output (see
+    # Configuration#squawk); false silences
     # an inherited one:
     #   squishling squawk: ->(output:, metadata:, error:) { Tracer.record(output, metadata, error) }
+    # squawk_on: limits which attempts reach the hook: :all (the default), :rejections, :retries, :final, or a
+    # list of them (any one holding runs the hook):
+    #   squishling squawk: hook, squawk_on: %i[rejections final]
     def squishling(model: nil, escalation: nil, provider: nil, params: nil, harness: nil, purpose: nil,
-      append_to_purpose: nil, output_schema: nil, squawk: nil)
+      append_to_purpose: nil, output_schema: nil, squawk: nil, squawk_on: nil)
       path = ModelPath.declare(model, escalation, to_s)
       # A provider belongs to the model declared at the same level. Without a model here it would apply to
       # nothing (the model comes from the config or a parent class), so it is an error unless this class already
@@ -41,12 +45,16 @@ module Squishling
       self.purpose(purpose) if purpose
       self.append_to_purpose(append_to_purpose) unless append_to_purpose.nil?
       self.output_schema(output_schema) if output_schema
-      @squishling_squawk = Squawk.validate(squawk, to_s) unless squawk.nil?
+      declare_squawk(squawk, squawk_on)
       self
     end
 
     def squishling_squawk
       squishling_lookup(:@squishling_squawk)
+    end
+
+    def squishling_squawk_on
+      squishling_lookup(:@squishling_squawk_on)
     end
 
     # The class's (or nearest ancestor's) model or escalation, as normalized steps.
@@ -147,11 +155,13 @@ module Squishling
     #   squish :triage, purpose: "...", escalation: %w[claude-haiku-4-5 claude-sonnet-5-5], when: ->(**) { true },
     #                   fallback: ->(error, **) { { priority: "medium" } }, append_to_purpose: [...],
     #                   validate: ->(result, **) { "team is required" if result.team.empty? },
-    #                   harness: :squishsum, squawk: ->(output:, error:, **) { Tracer.record(output, error) } do
+    #                   harness: :squishsum, squawk: ->(output:, error:, **) { Tracer.record(output, error) },
+    #                   squawk_on: :retries do
     #     string :priority
     #   end
     def squish(*names, purpose: nil, append_to_purpose: nil, output_schema: nil, model: nil, escalation: nil,
-      provider: nil, params: nil, harness: nil, when: nil, fallback: nil, validate: nil, squawk: nil, &schema_block)
+      provider: nil, params: nil, harness: nil, when: nil, fallback: nil, validate: nil, squawk: nil,
+      squawk_on: nil, &schema_block)
       schema = schema_block ? Schematist::Schema.create(&schema_block) : output_schema
       model = ModelPath.declare(model, escalation, "#{self} squish")
       raise ConfigurationError, "#{self} squish: provider: needs a model: or escalation:" if provider && !model
@@ -162,8 +172,10 @@ module Squishling
         append_to_purpose = Appendices.normalize(append_to_purpose, "#{self} squish append_to_purpose")
       end
       squawk = Squawk.validate(squawk, "#{self} squish")
+      squawk_on = Squawk.validate_on(squawk_on, "#{self} squish")
       options = { purpose:, append_to_purpose:, output_schema: schema, model:, provider:, params:, harness:,
-                  predicate: binding.local_variable_get(:when), fallback:, validator: validate, squawk: }.compact
+                  predicate: binding.local_variable_get(:when), fallback:, validator: validate, squawk:,
+                  squawk_on: }.compact
 
       names.map(&:to_sym).each do |name|
         (@squishling_methods ||= {})[name] = options
@@ -191,6 +203,12 @@ module Squishling
     end
 
     private
+
+    # nil leaves a level unset (so the parent's applies); false for squawk: is stored, to silence it.
+    def declare_squawk(squawk, squawk_on)
+      @squishling_squawk = Squawk.validate(squawk, to_s) unless squawk.nil?
+      @squishling_squawk_on = Squawk.validate_on(squawk_on, "#{self} squishling") unless squawk_on.nil?
+    end
 
     # Each class gets its own prepended wrapper so overrides in subclasses are routed too.
     def squishling_install_wrapper

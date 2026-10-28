@@ -101,7 +101,8 @@ only where you are willing to store model output. To send the output of every at
 ## Observing every attempt (`squawk`)
 
 `squawk` is an opt-in hook for sending what the model returned to an error tracker or tracing tool. It runs after
-every LLM attempt, accepted or rejected, and does nothing unless you set it:
+every LLM attempt, accepted or rejected (unless you narrow it with `squawk_on:`, below), and does nothing unless you
+set it:
 
 ```ruby
 Squishling.configure do |config|
@@ -120,6 +121,24 @@ end
 - Set it globally with `config.squawk`, per class with `squishling squawk: ...`, or per method with
   `squish :triage, squawk: ...`. The method's hook wins over the class's, which wins over the configured one;
   `squawk: false` silences an inherited hook. Subclasses and `squish!` calls inherit it.
+- Limit which attempts reach the hook with `squawk_on:`: `:all` (the default), `:rejections` (only attempts that
+  errored), `:retries` (those plus any accepted attempt after the first), or `:final` (the last attempt the escalation
+  allows, accepted or not; `metadata[:final]`). A classifier that passes on the first try nearly every time can post
+  only when something went wrong:
+
+  ```ruby
+  squishling squawk: ->(error:, **) { Tracer.record(error) if error }, squawk_on: :retries
+  ```
+
+  Pass a list to combine conditions; the hook runs when any one holds. `squawk_on: %i[rejections final]` reports
+  every error, plus the last attempt when it is reached and succeeds. A call accepted on an earlier attempt never
+  reaches `:final`. A level's value replaces the one above it; lists are never merged across levels.
+
+  Set it globally with `config.squawk_on`, per class with `squishling squawk_on: ...`, or per method with
+  `squish :triage, squawk_on: ...`. It resolves on its own, method then class then configured, so
+  `config.squawk_on = :retries` filters every hook, including a class's own, unless that class or method overrides it.
+  Under a [harness](harnesses.md), `attempt`, `attempts` and `final` count per sample or judge, so a sample's
+  first-attempt success is skipped even while another sample retries, and `:final` fires once per sample and judge.
 - Any object that responds to `call` works. The hook receives only the keywords it declares, unless it takes `**`,
   so a lambda that wants just `error:` is fine and new metadata fields won't break it.
 - It runs inline, so keep it quick. Exceptions it raises propagate unchanged and fail the call, like any of your own
