@@ -34,6 +34,15 @@ RSpec.describe Squishling::Adapter do
   describe "Squishling::Adapter::Base" do
     let(:base) { Squishling::Adapter::Base.new }
 
+    it "makes a finish reason a Symbol, nil when blank, and truncated? when the output cap cut it off" do
+      response = ->(reason) { Squishling::Adapter::Response.new(content: "{}", finish_reason: reason) }
+
+      expect(response.call("length")).to have_attributes(finish_reason: :length, truncated?: false)
+      expect(response.call(:max_tokens)).to have_attributes(finish_reason: :max_tokens, truncated?: true)
+      expect(response.call(" ")).to have_attributes(finish_reason: nil, truncated?: false)
+      expect(response.call(nil).finish_reason).to be_nil
+    end
+
     it "builds a Response with only content, and treats nil tokens as none" do
       response = Squishling::Adapter::Response.new(content: "{}", tokens: nil)
 

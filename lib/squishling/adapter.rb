@@ -21,16 +21,24 @@ module Squishling
     # What a completion returns. content is the model's output: the raw String, or a Hash the adapter already parsed.
     # model is the model id the provider reports. tokens is a Hash of counts (:input_tokens, :output_tokens, and
     # whatever else the provider reports, such as :cache_read_tokens and :thinking_tokens), empty when unknown.
-    Response = Data.define(:content, :model, :tokens) do
-      # model and tokens may be left out; nil tokens count as none. Raises ConfigurationError for tokens that aren't
-      # a Hash.
-      def initialize(content:, model: nil, tokens: {})
+    # finish_reason is why the provider stopped, as a Symbol: :stop, :max_tokens (the output cap cut the reply off),
+    # :content_filter, :tool_calls, or the provider's own spelling; nil when it reported none.
+    Response = Data.define(:content, :model, :tokens, :finish_reason) do
+      # model, tokens, and finish_reason may be left out; nil tokens count as none, and a String or blank
+      # finish_reason is made a Symbol or nil. Raises ConfigurationError for tokens that aren't a Hash.
+      def initialize(content:, model: nil, tokens: {}, finish_reason: nil)
         tokens ||= {}
         unless tokens.is_a?(Hash)
           raise ConfigurationError, "Adapter::Response tokens must be a Hash, got #{tokens.class}"
         end
 
+        finish_reason = finish_reason.to_s.strip.empty? ? nil : finish_reason.to_sym
         super
+      end
+
+      # Whether the provider cut the reply off at the output token cap.
+      def truncated?
+        finish_reason == :max_tokens
       end
 
       # The token counts, or nil when the adapter reported none (what squawk's usage: carries).

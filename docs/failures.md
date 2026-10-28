@@ -11,7 +11,7 @@ A failed attempt moves on to the next one; once the last fails, the error is rai
 | Rate limit, 5xx, overload, timeout, connection error | The [adapter](adapters.md) retries at the HTTP level first (RubyLLM: `RubyLLM.config.max_retries`, default 3; OpenAI-compatible: `max_retries:`, default 2). If it still fails, moves to the next attempt in a fresh chat; on the last attempt, raises `Squishling::LLMError` with the original exception as its `cause` (when the adapter has one: the RubyLLM adapter always does; the OpenAI-compatible adapter for transport errors, not for HTTP statuses). |
 | Bad API key, unknown model, missing provider config | Raises `Squishling::ConfigurationError`. Never escalated, never sent to the fallback. |
 | Provider rejects the request (400 Bad Request), e.g. an unsupported `temperature` or a schema it won't accept | Raises `Squishling::RequestRejectedError` (a `ConfigurationError`) naming the error class, the HTTP status, and the provider's error status/code when its body carries one (`INVALID_ARGUMENT`, `invalid_request_error`). They are also on `error.provider_status` and `error.provider_code` (nil when absent); only plain tokens are kept, never the provider's message. The message points at a param only when the provider named it, and otherwise says the params, output schema, or input may be invalid. The provider's own message is on `cause` when the adapter has one (RubyLLM's does; with the OpenAI-compatible adapter `cause` carries only the status). It is never retried, so if you know a given code means "this input was bad", rescue it and decide for yourself. Never escalated, never sent to the fallback, so a setup mistake can't be silently covered up on every call. |
-| Empty or `nil` response (e.g. a refusal or a max-tokens cutoff) | Moves to the next attempt, then raises `Squishling::InvalidOutputError` |
+| Empty or `nil` response (e.g. a refusal or a max-tokens cutoff) | Moves to the next attempt, then raises `Squishling::InvalidOutputError`. When the provider reported a max-tokens cutoff, the error says so and [`truncated?`](#a-cutoff-or-a-wrong-answer) is true. |
 | Malformed or truncated JSON | Moves to the next attempt, then raises `InvalidOutputError`. JSON wrapped in a markdown code fence is accepted. |
 | JSON that doesn't match the schema (wrong types, missing or extra keys, `null` in a non-`optional` field, a broken [conditional rule](schemas.md#contracts-beyond-the-schema), root not an object) | Moves to the next attempt with the validation errors, then raises `InvalidOutputError` |
 | Schema-valid output that [`squish_validate`](#output-checks-squish_validate) rejects | Moves to the next attempt with your messages, then raises `InvalidOutputError` |
@@ -26,10 +26,27 @@ last), so size `attempts:` for replies that can differ. Set `retry_temperature:`
 of its same-chat retries. A different step gets a fresh chat with the original input plus the rejected output
 (truncated to 4,000 characters) and its errors, so that output is sent to the next step's provider, which may not be the one that
 produced it. Set `forward_rejected: false` on a step to leave both out. `InvalidOutputError` exposes `errors`, `raw`
-(the last response), `attempts`, and `models` (the model tried on each attempt); for a
-[`DisagreementError`](harnesses.md#when-the-harness-fails), `raw` holds both candidates, `attempts` is `nil`, and
-`models` has one entry per role (sample a, sample b, then the judge). With a `logger` configured, every
+(the last response), `attempts`, `models` (the model tried on each attempt), and `finish_reason` (why the provider
+stopped on the last one). For a [`DisagreementError`](harnesses.md#when-the-harness-fails), `raw` holds both
+candidates, `attempts` and `finish_reason` are `nil`, and `models` has one entry per role (sample a, sample b, then
+the judge). With a `logger` configured, every
 escalation is logged as a warning.
+
+### A cutoff or a wrong answer
+
+An empty or half-written reply can mean the model was cut off at the output cap, not that it answered wrongly. The
+provider's stop reason tells them apart: `InvalidOutputError#finish_reason` and `squawk`'s `metadata[:finish_reason]`
+hold it as a Symbol (`:stop`, `:max_tokens`, `:content_filter`, or the provider's own spelling; `nil` when it reported
+none), and `truncated?` is true for `:max_tokens`. A truncated error's message and the log line say so.
+
+```ruby
+rescue Squishling::InvalidOutputError => e
+  e.truncated? # => true: raise max_output_tokens, rather than tuning the prompt or validator
+```
+
+Providers that count thinking against the cap need `max_output_tokens` to leave room for the thinking budget plus the
+answer: `thinking: { budget: 8192 }` with `max_output_tokens: 8192` leaves none, so every reply that uses its full
+budget is cut off before any JSON is written.
 
 ### What ends up in errors and logs
 
@@ -75,7 +92,7 @@ end
 |---|---|
 | `output` | The raw response: a Hash or String, or `nil` when the provider call itself failed |
 | `error` | `nil` for an accepted attempt. Otherwise the `InvalidOutputError` (with `errors` and `raw`) or `LLMError` that ended the attempt |
-| `metadata` | `label` (`"Class#method"`), `attempt`, `attempts` (the escalation's length; `attempt` jumps past the attempts a repeated reply skips; under a harness, the sample's or judge's own attempts), `final` (the last attempt, or a rejection after which none follows), `repeated` (`true` when the attempt returned the same reply as the one before it, in the same chat, which skips the step's remaining attempts), `model`, `provider`, `params`, `input` (the JSON sent: arguments and named context only), `usage` (token counts, when the adapter reports them), `role` (`nil` for an escalation attempt, `:sample`, or `:judge`), `sample` (`"a"`, `"b"`, ... for a sample's attempt, else `nil`) |
+| `metadata` | `label` (`"Class#method"`), `attempt`, `attempts` (the escalation's length; `attempt` jumps past the attempts a repeated reply skips; under a harness, the sample's or judge's own attempts), `final` (the last attempt, or a rejection after which none follows), `repeated` (`true` when the attempt returned the same reply as the one before it, in the same chat, which skips the step's remaining attempts), `model`, `provider`, `params`, `input` (the JSON sent: arguments and named context only), `usage` (token counts, when the adapter reports them), `finish_reason` (why the provider stopped, e.g. `:stop` or `:max_tokens`; `nil` when unknown or the call failed), `role` (`nil` for an escalation attempt, `:sample`, or `:judge`), `sample` (`"a"`, `"b"`, ... for a sample's attempt, else `nil`) |
 
 - Set it globally with `config.squawk`, per class with `squishling squawk: ...`, or per method with
   `squish :triage, squawk: ...`. The method's hook wins over the class's, which wins over the configured one;

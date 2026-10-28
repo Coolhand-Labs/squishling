@@ -32,7 +32,8 @@ module Squishling
         *history, last = request.messages
         history.each { |message| chat.add_message(role: message[:role], content: message[:content]) }
         response = guarded(request) { chat.ask(last[:content]) }
-        Adapter::Response.new(content: response.content, model: response.model, tokens: tokens_of(response))
+        Adapter::Response.new(content: response.content, model: response.model, tokens: tokens_of(response),
+          finish_reason: response.finish_reason)
       end
 
       def judgments?

@@ -24,16 +24,29 @@ module Squishling
   # Output that didn't match the schema (or a squish_validate check): from the LLM after every attempt in the
   # escalation, or from the deterministic path.
   class InvalidOutputError < Error
-    # models: the model ids tried, one per attempt (nil entries mean the adapter's default model).
-    attr_reader :errors, :raw, :attempts, :models
+    # Added to the message (and the log line) when the last reply was cut off at the output token cap.
+    CUTOFF_NOTE = "cut off at the output token limit"
 
-    def initialize(errors:, raw: nil, source: "LLM", attempts: nil, models: nil)
+    # models: the model ids tried, one per attempt (nil entries mean the adapter's default model). finish_reason: why
+    # the provider stopped on the last attempt (a Symbol such as :stop or :max_tokens; nil when unknown or not from
+    # an LLM).
+    attr_reader :errors, :raw, :attempts, :models, :finish_reason
+
+    def initialize(errors:, raw: nil, source: "LLM", attempts: nil, models: nil, finish_reason: nil)
       @errors = errors
       @raw = raw
       @attempts = attempts
       @models = models
+      @finish_reason = finish_reason
       tries = attempts ? " after #{attempts} attempt#{'s' unless attempts == 1}" : ""
-      super("#{source} output was invalid#{tries}: #{errors.join('; ')}")
+      cutoff = " (#{CUTOFF_NOTE})" if truncated?
+      super("#{source} output was invalid#{tries}: #{errors.join('; ')}#{cutoff}")
+    end
+
+    # Whether the last reply was cut off at the output token cap, so raising max_output_tokens (leaving room for any
+    # thinking budget) is the fix rather than changing the prompt or validator.
+    def truncated?
+      finish_reason == :max_tokens
     end
   end
 

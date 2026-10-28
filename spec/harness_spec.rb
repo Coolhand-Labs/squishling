@@ -261,6 +261,15 @@ RSpec.describe "Squishling harnesses" do
       expect(chats.map(&:model)).not_to include("claude-sonnet-5-5")
     end
 
+    it "carries a sample's max-token cutoff on the InvalidOutputError" do
+      cut_off = FakeChat::Response.new("", nil, nil, :max_tokens)
+      stub_llm_chats([cut_off, cut_off], [high])
+
+      expect { klass.call(text: "x") }.to raise_error(Squishling::InvalidOutputError) do |e|
+        expect(e).to have_attributes(finish_reason: :max_tokens, truncated?: true)
+      end
+    end
+
     it "raises LLMError when a sample's last attempt fails" do
       stub_llm_chats([high], [Squishling::LLMError.new("boom")], [Squishling::LLMError.new("again")])
 

@@ -4,7 +4,7 @@ require "ruby_llm"
 
 RSpec.describe Squishling::Adapters::RubyLLM do
   # Stand-in for RubyLLM::Chat: records configuration and replays canned responses.
-  let(:reply_class) { Struct.new(:content, :model, :tokens) }
+  let(:reply_class) { Struct.new(:content, :model, :tokens, :finish_reason) }
   let(:fake_chat_class) do
     reply = reply_class
     Class.new do
@@ -97,6 +97,14 @@ RSpec.describe Squishling::Adapters::RubyLLM do
 
       expect(response.model).to eq("served-model")
       expect(response.tokens).to include(input_tokens: 10, output_tokens: 5)
+    end
+
+    it "reports the finish reason RubyLLM reports, nil when it reports none" do
+      stub_chat(reply_class.new("", nil, nil, :max_tokens))
+      expect(adapter.complete(adapter_request).finish_reason).to eq(:max_tokens)
+
+      stub_chat("{}")
+      expect(adapter.complete(adapter_request).finish_reason).to be_nil
     end
 
     it "reports no tokens as an empty Hash" do

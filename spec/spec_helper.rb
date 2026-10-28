@@ -6,7 +6,7 @@ require "squishling"
 # One conversation as FakeAdapter saw it: the requests that continued the same chat (a retry on the same
 # step), with what the first one carried.
 class FakeChat
-  Response = Struct.new(:content, :model, :tokens)
+  Response = Struct.new(:content, :model, :tokens, :finish_reason)
 
   attr_reader :model, :provider, :params, :instructions, :schema, :transcript
   attr_accessor :pending
@@ -70,7 +70,8 @@ class FakeAdapter < Squishling::Adapter::Base
 
     reply = response.is_a?(FakeChat::Response) ? response : FakeChat::Response.new(response)
     tokens = reply.tokens ? reply.tokens.to_h : {}
-    Squishling::Adapter::Response.new(content: reply.content, model: reply.model, tokens:).tap do |answer|
+    Squishling::Adapter::Response.new(content: reply.content, model: reply.model, tokens:,
+      finish_reason: reply.finish_reason).tap do |answer|
       chat.transcript << { role: :assistant, content: answer.text }
     end
   ensure

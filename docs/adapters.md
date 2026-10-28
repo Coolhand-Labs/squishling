@@ -133,10 +133,14 @@ Squishling.register_adapter(:acme, AcmeAdapter)
 
 ### The response
 
-`Squishling::Adapter::Response.new(content:, model:, tokens:)`. `content` is the model's output as a String, or a Hash if
-you parsed it; `nil` or empty counts as invalid output and is retried. `model` is the id the provider reports.
-`tokens` is a Hash (`:input_tokens`, `:output_tokens`, and anything else you have); `{}` when unknown. These feed
-[`squawk`'s `usage`](failures.md#observing-every-attempt-squawk) and the [observer](observers.md)'s `Usage`.
+`Squishling::Adapter::Response.new(content:, model:, tokens:, finish_reason:)`. `content` is the model's output as a
+String, or a Hash if you parsed it; `nil` or empty counts as invalid output and is retried. `model` is the id the
+provider reports. `tokens` is a Hash (`:input_tokens`, `:output_tokens`, and anything else you have); `{}` when
+unknown. These feed [`squawk`'s `usage`](failures.md#observing-every-attempt-squawk) and the [observer](observers.md)'s `Usage`.
+`finish_reason` is why the provider stopped, as a Symbol: `:stop`, `:max_tokens` (the output cap cut the reply off),
+`:content_filter`, `:tool_calls`, or the provider's own spelling; leave it out (`nil`) when unknown. Map your
+provider's "length" reason to `:max_tokens`, so Squishling can [tell a cutoff from a wrong
+answer](failures.md#a-cutoff-or-a-wrong-answer).
 
 ### The error contract
 
