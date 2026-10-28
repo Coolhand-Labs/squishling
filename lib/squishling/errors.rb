@@ -27,20 +27,47 @@ module Squishling
     # Added to the message (and the log line) when the last reply was cut off at the output token cap.
     CUTOFF_NOTE = "cut off at the output token limit"
 
+    # One entry of #error_details: the message and where it came from.
+    #   :schema      a JSON Schema error; it can name a key the model chose (a disallowed additional property)
+    #   :validator   your own squish_validate message, verbatim (so it holds model values only if you interpolate them)
+    #   :parse       a message about a response or return value that didn't parse (not valid JSON, empty,
+    #                a value JSON can't represent)
+    #   :squishling  any other text Squishling or a custom harness wrote
+    Detail = Data.define(:message, :source) do
+      # One detail per message, all from the same source.
+      def self.from(messages, source) = messages.map { |message| new(message, source) }
+
+      def initialize(message:, source:)
+        unless Detail::SOURCES.include?(source)
+          raise ArgumentError, "unknown error source #{source.inspect} (expected #{Detail::SOURCES.join(', ')})"
+        end
+
+        super
+      end
+
+      # Whether the message can contain text the model chose, so a sink with its own control syntax should escape
+      # it. Your own squish_validate messages are never flagged, even if you interpolate result values into them.
+      def model_derived? = source == :schema
+    end
+    Detail::SOURCES = %i[schema validator parse squishling].freeze
+
     # models: the model ids tried, one per attempt (nil entries mean the adapter's default model). finish_reason: why
     # the provider stopped on the last attempt (a Symbol such as :stop or :max_tokens; nil when unknown or not from
     # an LLM).
-    attr_reader :errors, :raw, :attempts, :models, :finish_reason
+    # errors: Strings, or Details; a String counts as :squishling text.
+    attr_reader :errors, :error_details, :raw, :attempts, :models, :finish_reason
 
     def initialize(errors:, raw: nil, source: "LLM", attempts: nil, models: nil, finish_reason: nil)
-      @errors = errors
+      @error_details = errors.map { |error| error.is_a?(Detail) ? error : Detail.new(error.to_s, :squishling) }
+      @error_details.freeze
+      @errors = @error_details.map(&:message).freeze
       @raw = raw
       @attempts = attempts
       @models = models
       @finish_reason = finish_reason
       tries = attempts ? " after #{attempts} attempt#{'s' unless attempts == 1}" : ""
       cutoff = " (#{CUTOFF_NOTE})" if truncated?
-      super("#{source} output was invalid#{tries}: #{errors.join('; ')}#{cutoff}")
+      super("#{source} output was invalid#{tries}: #{@errors.join('; ')}#{cutoff}")
     end
 
     # Whether the last reply was cut off at the output token cap, so raising max_output_tokens (leaving room for any

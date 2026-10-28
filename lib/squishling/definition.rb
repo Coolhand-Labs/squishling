@@ -155,7 +155,7 @@ module Squishling
 
       attrs = attrs.to_h if attrs.is_a?(Result::Instance)
       data, errors = jsonify_return(attrs)
-      errors = schema.validate(data) if errors.empty?
+      errors = InvalidOutputError::Detail.from(schema.validate(data), :schema) if errors.empty?
       raise InvalidOutputError.new(errors:, raw: attrs, source: "Deterministic") if errors.any?
 
       schema.build(data, squished:)
@@ -195,7 +195,7 @@ module Squishling
     def jsonify_return(attrs)
       [Schema.jsonify(attrs), []]
     rescue JSON::GeneratorError, JSON::NestingError => e
-      [nil, [e.message]]
+      [nil, [InvalidOutputError::Detail.new(e.message, :parse)]]
     end
 
     # The implementation's parameters, beneath the prepended wrappers.

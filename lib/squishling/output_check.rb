@@ -5,6 +5,7 @@ module Squishling
   # method's squish_validate check.
   class OutputCheck
     MAX_ERRORS = 20
+    EMPTY = "response was empty"
     UNREPRESENTABLE = "response contained a value JSON can't represent (such as Infinity or invalid UTF-8)"
 
     def initialize(definition, receiver, inputs)
@@ -13,15 +14,15 @@ module Squishling
       @inputs = inputs
     end
 
-    # Parses and validates a response: [typed result, []] when it passes, [nil or result, errors] otherwise.
+    # Parses and validates a response: [typed result, []] when it passes, [nil or result, error Details] otherwise.
     # The judge's role skips squish_validate, which checks the operation's output, not a verdict.
     def call(content, prompt)
       data, errors = parse(content)
-      errors = prompt.schema.validate(data) if errors.empty?
+      errors = InvalidOutputError::Detail.from(prompt.schema.validate(data), :schema) if errors.empty?
       return [nil, cap(errors)] if errors.any?
 
       result = prompt.schema.build(data, squished: true)
-      [result, prompt.role == :judge ? [] : validator_errors(result)]
+      [result, prompt.role == :judge ? [] : InvalidOutputError::Detail.from(validator_errors(result), :validator)]
     end
 
     private
@@ -30,14 +31,16 @@ module Squishling
     # content is a Hash on success, or a String/nil when the model refused, was cut off, or
     # ignored the schema.
     def parse(content)
-      return [nil, [UNREPRESENTABLE]] if content.is_a?(String) && !content.valid_encoding?
-      return [nil, ["response was empty"]] if content.nil? || (content.is_a?(String) && content.strip.empty?)
+      return [nil, [parse_error(UNREPRESENTABLE)]] if content.is_a?(String) && !content.valid_encoding?
+      return [nil, [parse_error(EMPTY)]] if content.nil? || (content.is_a?(String) && content.strip.empty?)
 
       data = content.is_a?(String) ? JSON.parse(strip_code_fence(content)) : content
-      representable?(data) ? [data, []] : [nil, [UNREPRESENTABLE]]
+      representable?(data) ? [data, []] : [nil, [parse_error(UNREPRESENTABLE)]]
     rescue JSON::ParserError => e
-      [nil, ["response was not valid JSON#{parse_position(e)}"]]
+      [nil, [parse_error("response was not valid JSON#{parse_position(e)}")]]
     end
+
+    def parse_error(message) = InvalidOutputError::Detail.new(message, :parse)
 
     # JSON.parse turns an out-of-range number such as 1e400 into Infinity, and accepts invalid UTF-8 in a string.
     # Both can satisfy the schema but can't be serialized again (and the deterministic path rejects them), so
@@ -54,7 +57,8 @@ module Squishling
     def cap(errors)
       return errors if errors.size <= MAX_ERRORS
 
-      errors.first(MAX_ERRORS) + ["... and #{errors.size - MAX_ERRORS} more errors"]
+      notice = "... and #{errors.size - MAX_ERRORS} more errors"
+      errors.first(MAX_ERRORS) + [InvalidOutputError::Detail.new(notice, :squishling)]
     end
 
     # The parser's message quotes a snippet of the response, which must not reach error messages or logs

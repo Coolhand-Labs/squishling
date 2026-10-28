@@ -182,6 +182,7 @@ RSpec.describe "Squishling harnesses" do
         expect(e.candidates).to all(be_squished)
         expect(e.verdict).to be_nil
         expect(e.errors).to eq(["the two samples disagreed"])
+        expect(e.error_details.map(&:source)).to eq([:squishling])
         expect(e.raw).to eq([{ priority: "high", team: "api" }, { priority: "low", team: "api" }])
         expect(e.models).to eq(%w[claude-haiku-4-5 claude-haiku-4-5])
       end
