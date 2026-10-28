@@ -229,6 +229,7 @@ module Squishling
 
     # Each class gets its own prepended wrapper so overrides in subclasses are routed too.
     def squishling_install_wrapper
+      ClassRegistry.register(self)
       @squishling_wrapper = Wrapper.new
       prepend(@squishling_wrapper)
 

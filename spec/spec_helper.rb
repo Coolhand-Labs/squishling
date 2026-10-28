@@ -129,6 +129,15 @@ class FakeAdapter < Squishling::Adapter::Base
 end
 
 module LLMHelpers
+  # An anonymous class that includes Squishling, then runs the block in it.
+  def squishling_class(parent = Object, &body)
+    Class.new(parent) do
+      include Squishling
+
+      class_eval(&body) if body
+    end
+  end
+
   # An Adapter::Request for specs that call an adapter directly.
   def adapter_request(schema: nil, **overrides)
     schema ||= Squishling::Schema.new({ type: "object", properties: { label: { type: "string" } },

@@ -3,14 +3,6 @@
 require "spec_helper"
 
 RSpec.describe Squishling::Collisions do
-  def squishling_class(parent = Object, &body)
-    Class.new(parent) do
-      include Squishling
-
-      class_eval(&body) if body
-    end
-  end
-
   it "raises when a parent class already defines a class method Squishling adds" do
     rack_app = Class.new { def self.call(env) = env }
 

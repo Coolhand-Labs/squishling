@@ -228,6 +228,8 @@ sees it right where the value goes, and the purpose stays short and about the go
 - [Output schemas](docs/schemas.md): schema forms, strict mode, typed results, optional vs. empty, contracts
 - [Failure handling](docs/failures.md): escalation, `squish_validate`, error classes, fallbacks
 - [Harnesses](docs/harnesses.md): escalation, squishsum, judges (chat or Jev), and custom harnesses
+- [Verifying squished classes](docs/verifying.md): `Squishling.verify!`, a rake task, and an RSpec matcher that check
+  every class ahead of runtime, without a request
 - [Naming and collisions](docs/naming.md): the methods `include Squishling` adds and what happens when a name is taken
 - [Measuring token spend](docs/measuring-tokens.md): see what each squished path costs, with Coolhand Labs,
   the `squawk` hook, your own observer, or OpenTelemetry

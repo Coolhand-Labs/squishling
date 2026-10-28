@@ -68,7 +68,7 @@ module Squishling
 
     # The system prompt: the purpose, then each append_to_purpose section.
     def purpose(receiver)
-      value = @purpose || klass.purpose
+      value = declared_purpose
       value = receiver.instance_exec(&value) if value.is_a?(Proc)
       return value if value.nil? || value.empty?
 
@@ -90,15 +90,37 @@ module Squishling
     # tied on priority are rotated by this method's call count (see Rotation). Steps whose include_when: is falsy
     # for this call's inputs are left out, so a tier rotates only between its eligible models.
     def escalation_path(receiver, inputs)
-      config = Squishling.config
-      entries, provider = [[@model, @provider], [klass.squishling_model_path, klass.squishling_provider],
-                           [config.default_model_path, config.default_provider]].find(&:first)
-      declared = entries || [DEFAULT_STEP]
+      declared, provider = declared_path
       eligible = ModelPath.eligible(declared, receiver, inputs, label)
       # Counted when the declared path rotates (so a call that excludes some models doesn't skew the others'
       # rotation) or when this call's eligible steps do (an excluded rotate: false step no longer pins its tier).
       turn = ModelPath.rotating?(declared) || ModelPath.rotating?(eligible) ? Rotation.advance(klass, name) : 0
       ModelPath.steps(eligible, provider:, params:, turn:)
+    end
+
+    # The steps and provider of the first level (method, class, or config) that declares a model or escalation, or
+    # the default step, before any call's include_when: filtering.
+    def declared_path
+      config = Squishling.config
+      entries, provider = [[@model, @provider], [klass.squishling_model_path, klass.squishling_provider],
+                           [config.default_model_path, config.default_provider]].find(&:first)
+      [entries || [DEFAULT_STEP], provider]
+    end
+
+    # Whether a purpose is declared for this method or its class (a Proc one can't be evaluated without a receiver).
+    def purpose_declared?
+      value = declared_purpose
+      value.is_a?(Proc) || !(value.nil? || value.empty?)
+    end
+
+    # The names the method's inputs are sent under (see #bind_arguments), and whether any keyword may be an input:
+    # there is no implementation to name them, it takes **, or has a parameter with no name to send it under.
+    def input_names
+      names = parameters.filter_map { |type, param| input_name(type, param) }
+      any_keyword = !implemented? || parameters.any? do |type, param|
+        type == :keyrest || (Squawk::POSITIONAL_TYPES.include?(type) && param.nil?)
+      end
+      [names, any_keyword]
     end
 
     # How the escalation is used (see Harness): the method's, the class's, the configured default, or :escalation.
@@ -137,8 +159,17 @@ module Squishling
       klass.squishling_context_names
     end
 
+    # The squish_when predicate: the method's, else the class's.
+    def predicate
+      @predicate || klass.squishling_predicate
+    end
+
+    # Whether the method has a Ruby implementation (otherwise every call goes to the LLM).
+    def implemented?
+      !Wrapper.implementation(klass.instance_method(name)).nil?
+    end
+
     def squish?(receiver, inputs)
-      predicate = @predicate || klass.squishling_predicate
       return false unless predicate
 
       receiver.instance_exec(**inputs, &predicate) ? true : false
@@ -195,7 +226,7 @@ module Squishling
             unnamed += 1
           end
         when :rest
-          bound[param.nil? || param == :* ? :args : param] = positional.shift(positional.size)
+          bound[input_name(type, param)] = positional.shift(positional.size)
         end
       end
       positional.each_with_index { |value, index| bound[:"arg#{unnamed + index}"] = value }
@@ -210,6 +241,17 @@ module Squishling
       [Schema.jsonify(attrs), []]
     rescue JSON::GeneratorError, JSON::NestingError => e
       [nil, [InvalidOutputError::Detail.new(e.message, :parse)]]
+    end
+
+    def declared_purpose
+      @purpose || klass.purpose
+    end
+
+    def input_name(type, param)
+      case type
+      when :req, :opt, :key, :keyreq then param
+      when :rest then param.nil? || param == :* ? :args : param
+      end
     end
 
     # The implementation's parameters, beneath the prepended wrappers.
