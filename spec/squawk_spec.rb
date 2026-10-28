@@ -48,6 +48,16 @@ RSpec.describe "Squishling squawk" do
         .to eq([[1, false, false], [2, true, true]])
     end
 
+    it "is final on a repeat that skips the step's remaining attempts, though it isn't the last attempt" do
+      klass.squishling(escalation: [{ model: "test-model", attempts: 3 }])
+      bad = { "label" => 1 }
+      stub_llm(bad, bad, { "label" => "ok" })
+
+      expect { klass.call(text: "x") }.to raise_error(Squishling::InvalidOutputError)
+      expect(calls.map { |call| call[:metadata].values_at(:attempt, :attempts, :final, :repeated) })
+        .to eq([[1, 3, false, false], [2, 3, true, true]])
+    end
+
     it "gets the raw output, no error, and metadata for an accepted attempt" do
       stub_llm({ "label" => "ok" })
       klass.call(text: "x")

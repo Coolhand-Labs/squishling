@@ -239,6 +239,15 @@ RSpec.describe Squishling::Testing::Adapter do
     end
   end
 
+  describe "the testing errors" do
+    it "are all outside Squishling::Error, so no squish_fallback or rescue of the gem's errors absorbs them" do
+      [Squishling::Testing::Error, Squishling::Testing::UnscriptedRequestError, Squishling::Testing::ProviderCallError,
+       Squishling::Testing::SetupError].each do |error_class|
+        expect(error_class.ancestors).not_to include(Squishling::Error)
+      end
+    end
+  end
+
   describe "working without the observer" do
     it "still records the requests, inferring what it can" do
       adapter = described_class.new

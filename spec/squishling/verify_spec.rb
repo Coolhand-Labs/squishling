@@ -29,6 +29,22 @@ RSpec.describe Squishling, ".verify" do
     expect(report.to_s).to eq("Squishling: no problems found")
   end
 
+  it "makes no provider request, even for a class with a judgment judge or with problems" do
+    adapter = Squishling.config.adapter
+    expect(adapter).not_to receive(:complete)
+    expect(adapter).not_to receive(:judge)
+    judged = squishling_class do
+      squishling model: "claude-haiku-4-5", purpose: "Triage.",
+        harness: { type: :judged_squishsum, judge: { model: "judge", type: :judgment } }
+      squish :triage do
+        string :team
+      end
+    end
+    broken = squishling_class { squish :bad }
+
+    expect(Squishling.verify(judged, broken).problems).not_to be_empty
+  end
+
   it "checks every registered class when none are given" do
     valid_class
     squishling_class { squish :bad }

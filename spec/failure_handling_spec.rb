@@ -347,6 +347,16 @@ RSpec.describe "Squishling failure handling" do
       expect { klass.call(text: "x") }.to raise_error(error, "adapter bug")
     end
 
+    it "doesn't retry or escalate on any other exception from the adapter, nor hand it to the fallback" do
+      error = Class.new(StandardError)
+      klass.squishling(escalation: [{ model: "test-model", attempts: 3 }, "other-model"])
+      klass.squish_fallback { |_error, **| { label: "fallback" } }
+      chats = stub_llm(error.new("adapter bug"), { "label" => "ok" })
+
+      expect { klass.call(text: "x") }.to raise_error(error, "adapter bug")
+      expect(chats.size).to eq(1)
+    end
+
     it "rejects an adapter that doesn't return an Adapter::Response" do
       adapter = Class.new(Squishling::Adapter::Base) { def complete(_request) = { "label" => "ok" } }
       Squishling.configure { |c| c.adapter = adapter.new }

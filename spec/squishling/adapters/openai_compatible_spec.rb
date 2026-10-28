@@ -181,6 +181,31 @@ RSpec.describe Squishling::Adapters::OpenAICompatible do # rubocop:disable RSpec
       expect(WebMock).not_to have_requested(:post, url)
     end
 
+    it "refuses a carriage return or NUL in a header name or value, or in the api_key" do
+      ["a\rb", "a\0b"].each do |bad|
+        [{ headers: { "X-Key" => bad } }, { headers: { bad => "v" } }, { api_key: bad }].each do |options|
+          expect { described_class.new(**options).complete(adapter_request) }
+            .to raise_error(Squishling::ConfigurationError, /line breaks/)
+        end
+      end
+      expect(WebMock).not_to have_requested(:post, url)
+    end
+
+    it "applies open_timeout and read_timeout to the connection" do
+      stub_post.to_return(reply)
+      timed = described_class.new(api_key: "sk-test", open_timeout: 3, read_timeout: 7, max_retries: 0)
+      connections = []
+      allow(Net::HTTP).to(receive(:new).and_wrap_original do |original, *args|
+        original.call(*args).tap do |http|
+          connections << http
+        end
+      end)
+
+      timed.complete(adapter_request)
+
+      expect(connections.map { |http| [http.open_timeout, http.read_timeout, http.write_timeout] }).to eq([[3, 7, 7]])
+    end
+
     it "strips surrounding whitespace from the api_key" do
       stub = stub_post(headers: { "Authorization" => "Bearer sk-clean" }).to_return(reply)
 
@@ -479,6 +504,57 @@ RSpec.describe Squishling::Adapters::OpenAICompatible do # rubocop:disable RSpec
 
       expect { adapter.complete(adapter_request) }.to raise_error(Squishling::LLMError, /wasn't valid JSON/)
       expect { adapter.complete(adapter_request) }.to raise_error(Squishling::LLMError, /wasn't a JSON object/)
+    end
+
+    it "keeps a TLS error's own text out of the ConfigurationError, whatever it names" do
+      stub_post.to_raise(OpenSSL::SSL::SSLError.new("certificate verify failed: CN=patient-host.internal sk-test"))
+
+      expect { adapter.complete(adapter_request) }.to raise_error(Squishling::ConfigurationError) do |e|
+        expect(e.message).to eq("Klass#call: TLS certificate verification failed (OpenSSL::SSL::SSLError); " \
+                                "check base_url and the CA certificates")
+      end
+    end
+
+    it "keeps the body out of the LLMError for a response that isn't JSON or isn't an object" do
+      stub_post.to_return(reply("<html>sk-test Jane Doe</html>"), reply('["Jane Doe"]'))
+
+      expect { adapter.complete(adapter_request) }
+        .to raise_error(Squishling::LLMError, "Klass#call: the response wasn't valid JSON (HTTP 200)")
+      expect { adapter.complete(adapter_request) }
+        .to raise_error(Squishling::LLMError, "Klass#call: the response wasn't a JSON object (HTTP 200)")
+    end
+
+    it "points 401 and 403 at the credentials and 404 at base_url, and only a 400 is a RequestRejectedError" do
+      stub_post.to_return(reply("{}", status: 401), reply("{}", status: 403), reply("{}", status: 404),
+        reply("{}", status: 400))
+
+      [[/refused the credentials/, 401], [/refused the credentials/, 403], [/check base_url/, 404]].each do |text, _|
+        expect { adapter.complete(adapter_request) }.to raise_error(Squishling::ConfigurationError, text) do |e|
+          expect(e).not_to be_a(Squishling::RequestRejectedError)
+        end
+      end
+      expect { adapter.complete(adapter_request) }.to raise_error(Squishling::RequestRejectedError)
+    end
+
+    it "recognizes a context-length 400 by its type alone, but not a 422 with the same body" do
+      body = JSON.generate(error: { type: "context_length_exceeded", message: "too long" })
+      stub_post.to_return(reply(body, status: 400), reply(body, status: 422))
+
+      expect { adapter.complete(adapter_request) }.to raise_error(Squishling::LLMError)
+      expect { adapter.complete(adapter_request) }.to raise_error(Squishling::ConfigurationError)
+    end
+
+    it "falls back to backoff for a Retry-After that isn't a number of seconds" do
+      stub_post.to_return(reply({ error: { message: "slow down" } }, status: 429,
+        headers: { "Retry-After" => "Thu, 1 Jan 2026 00:00:00 GMT" }), reply)
+      retrying = described_class.new(api_key: "sk-test", max_retries: 1)
+      delays = []
+      allow(retrying).to receive(:sleep) { |seconds| delays << seconds }
+
+      retrying.complete(adapter_request)
+
+      expect(delays.size).to eq(1)
+      expect(delays.first).to be_between(0.5, 0.75)
     end
 
     it "never puts the API key in an error" do
