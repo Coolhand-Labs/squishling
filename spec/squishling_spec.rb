@@ -674,6 +674,62 @@ RSpec.describe Squishling do
       expect(chats.size).to eq(1)
       expect(JSON.parse(chats.first.messages.first)["arguments"]).to eq("mode" => "ruby", "depth" => 2)
     end
+
+    describe "squished methods that call each other" do
+      let(:pair) do
+        Class.new do
+          include Squishling
+
+          purpose "Answer."
+          output_schema { string :value }
+
+          squish :inner, when: ->(**) { true } do
+            string :value
+          end
+          squish :outer, when: ->(**) { false } do
+            string :value
+          end
+
+          def inner(text) = { value: "ruby inner #{text}" }
+          def outer(text) = { value: "outer>#{inner(text).value}" }
+        end
+      end
+
+      it "routes a squished method called from another's Ruby implementation on its own" do
+        chats = stub_llm({ "value" => "llm" })
+
+        expect(pair.new.outer("x").value).to eq("outer>llm")
+        expect(chats.size).to eq(1)
+        expect(JSON.parse(chats.first.messages.first)["arguments"]).to eq("text" => "x")
+      end
+
+      it "routes a squished method called while another decides whether to go to the LLM" do
+        pair.squish :outer, when: ->(**) { inner("probe").value == "llm" } do
+          string :value
+        end
+        chats = stub_llm({ "value" => "llm" }, { "value" => "llm outer" })
+
+        expect(pair.new.outer("x").value).to eq("llm outer")
+        expect(chats.size).to eq(2)
+        expect(JSON.parse(chats.first.messages.first)["arguments"]).to eq("text" => "probe")
+      end
+
+      it "routes the same method called on another instance while a call decides whether to go to the LLM" do
+        probing = Class.new do
+          include Squishling
+
+          purpose "Answer."
+          output_schema { string :value }
+          squish_when { |inner: false, **| inner || self.class.new.call(inner: true).value == "llm" }
+
+          def call(inner: false) = { value: inner ? "ruby inner" : "ruby outer" }
+        end
+        chats = stub_llm({ "value" => "llm" }, { "value" => "llm outer" })
+
+        expect(probing.call.value).to eq("llm outer")
+        expect(chats.size).to eq(2)
+      end
+    end
   end
 
   describe "configuration errors" do

@@ -22,7 +22,8 @@ introduce new duplicate code or methods over the complexity floor.
 After the feature or fix is built and `rake` is green, run `/loop-review` until it comes back clean (see
 [Review and release skills](#review-and-release-skills)).
 
-Live provider tests are in `examples/` (`bundle exec ruby examples/<provider>_example.rb`). They need real
+Live provider tests are in `examples/` (`bin/live-examples` runs them all, loading keys from `~/.zshrc`; or
+`bundle exec ruby examples/<provider>_example.rb`). They need real
 API keys and cost money, so they run during `/prep-release`, not in CI. Never delete an assertion, mark a
 spec pending, or rescue-and-swallow to get green.
 

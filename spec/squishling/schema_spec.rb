@@ -10,6 +10,16 @@ RSpec.describe Squishling::Schema do
     }
   end
 
+  describe "#validate" do
+    it "rejects a non-object when a raw Hash schema omits type: object" do
+      schema = described_class.new(json_schema.except("type"))
+
+      expect(schema.validate("hello")).to eq(["root must be an object"])
+      expect(schema.validate([1, 2])).to eq(["root must be an object"])
+      expect(schema.validate({ "label" => "ok" })).to be_empty
+    end
+  end
+
   describe "accepted output_schema forms" do
     it "accepts any object that responds to to_json_schema" do
       duck = Struct.new(:schema) { def to_json_schema = schema }.new(json_schema)

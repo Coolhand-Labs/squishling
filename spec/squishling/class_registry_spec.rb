@@ -9,6 +9,10 @@ RSpec.describe Squishling::ClassRegistry do
     expect(Squishling.squished_classes).to include(klass)
   end
 
+  it "holds classes weakly, so a reloaded class can be collected" do
+    expect(described_class.instance_variable_get(:@classes)).to be_a(ObjectSpace::WeakMap)
+  end
+
   it "records anonymous classes and subclasses of a squishling class" do
     parent = squishling_class
     child = Class.new(parent)

@@ -123,6 +123,32 @@ RSpec.describe Squishling::Params do
       expect(generation_for(base)).to eq(generationConfig: { topK: 5 })
     end
 
+    # Written out, not read from the constants, so deleting a key from RESERVED_KEYS fails here.
+    it "rejects every top-level request key an adapter or protocol owns" do
+      %w[
+        model messages input inputs instructions contents system system_instruction systemInstruction cachedContent
+        stream stream_options store include response_format text output_config outputConfig tools tool_choice
+        toolConfig tool_config schema functions function_call
+      ].each do |key|
+        [key.to_sym, key].each do |spelling|
+          expect { base.squishling(params: { spelling => 1 }) }
+            .to raise_error(Squishling::ConfigurationError, /#{key} can't be set through params/)
+        end
+      end
+    end
+
+    it "rejects the structured-output and tool keys of Gemini's, Interactions', and Mistral's nested containers" do
+      gemini = %w[responseMimeType response_mime_type responseSchema response_schema responseJsonSchema
+                  response_json_schema response_format tools tool_choice toolConfig tool_config]
+      { generationConfig: gemini, generation_config: gemini, completion_args: %w[response_format tools tool_choice] }
+        .each do |container, keys|
+        keys.each do |key|
+          expect { base.squishling(params: { container => { key => 1 } }) }
+            .to raise_error(Squishling::ConfigurationError, /#{container}\.#{key} can't be set through params/)
+        end
+      end
+    end
+
     it "rejects every reserved nested key inside each allowed container, as symbols or strings" do
       Squishling::Params::NESTED_RESERVED_KEYS.each do |container, reserved|
         reserved.each do |key|

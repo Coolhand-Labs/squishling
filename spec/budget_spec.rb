@@ -51,6 +51,17 @@ RSpec.describe "Squishling token budget" do
       }
     end
 
+    it "counts a budget as spent when the tokens used equal it, not only when they pass it" do
+      klass.squishling(max_total_output_tokens: 20_000)
+      chats = stub_llm(invalid, invalid, invalid, invalid)
+
+      expect { klass.call(text: "x") }.to raise_error(Squishling::BudgetExhaustedError) { |error|
+        expect(error.attempts).to eq(2)
+        expect(error.used).to eq(input_tokens: 200, output_tokens: 20_000)
+      }
+      expect(chats.map { |chat| chat.messages.size }).to eq([2])
+    end
+
     it "stops at the input budget too" do
       klass.squishling(max_total_input_tokens: 150)
       chats = stub_llm(invalid, invalid, invalid, invalid)
@@ -286,9 +297,30 @@ RSpec.describe "Squishling token budget" do
 
       expect { sampler.call(text: "x") }.to raise_error(Squishling::BudgetExhaustedError) { |error|
         expect(error.used).to eq(input_tokens: 200, output_tokens: 20_000)
+        expect(error.attempts).to eq(1)
+        expect(error.models).to eq(["claude-haiku-4-5"])
+        expect(error.raw).to eq({ "label" => 1 })
       }
       expect(chats.size).to eq(2)
       expect(chats.map { |chat| chat.messages.size }).to eq([1, 1])
+    end
+
+    it "returns the samples' agreed result when the round itself spent the budget" do
+      chats = stub_llm_chats([FakeChat::Response.new(high, nil, tokens(9_000))],
+        [FakeChat::Response.new(high, nil, tokens(9_000))])
+
+      expect(sampler.call(text: "x").priority).to eq("high")
+      expect(chats.size).to eq(2)
+    end
+
+    it "returns the judge's pick when the judge's own reply spent the budget" do
+      sampler.squishling(harness: :judged_squishsum, max_total_output_tokens: 12_000)
+      verdict = FakeChat::Response.new({ "verdict" => "a", "reason" => "more urgent" }, nil, tokens(20_000))
+      chats = stub_llm_chats([FakeChat::Response.new(high, nil, tokens(5_000))],
+        [FakeChat::Response.new(low, nil, tokens(5_000))], [verdict])
+
+      expect(sampler.call(text: "x").priority).to eq("high")
+      expect(chats.size).to eq(3)
     end
 
     it "raises the budget error instead of calling a judge the samples left no budget for" do
@@ -353,6 +385,16 @@ RSpec.describe "Squishling token budget" do
       tally.add(judgment)
       expect(tally.exhausted).to eq(limit: :max_total_output_tokens, max: 100,
         used: { input_tokens: 80, output_tokens: 120 })
+    end
+
+    it "is exhausted exactly when a total reaches its limit" do
+      tally = described_class.new({ output: 100 })
+
+      tally.add(Squishling::Adapter::Response.new(content: "{}", tokens: { output_tokens: 99 }))
+      expect(tally.exhausted).to be_nil
+
+      tally.add(Squishling::Adapter::Response.new(content: "{}", tokens: { output_tokens: 1 }))
+      expect(tally.exhausted).to include(limit: :max_total_output_tokens, max: 100)
     end
 
     it "counts nothing for a response without token counts, or with counts that aren't positive Integers" do

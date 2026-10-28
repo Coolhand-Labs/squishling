@@ -567,7 +567,6 @@ RSpec.describe "Squishling custom harnesses" do
           stage = run.stages.first
           first, second = run.samples([stage, stage])
           verdict = judge.verdict(first, second)
-          [verdict.choice, verdict.reason, judge.step.model, first.priority, second.priority]
           verdict.choice == :a ? first : second
         end
       end
@@ -1111,6 +1110,28 @@ RSpec.describe "Squishling custom harnesses" do
 
       expect { klass.call(text: "x") }
         .to raise_error(Squishling::ConfigurationError, /from the thread it runs on/)
+    end
+
+    {
+      samples: ->(run) { run.samples([run.stages.first] * 2) },
+      judge: lambda(&:judge),
+      agree?: ->(run) { run.agree?({}, {}) }
+    }.each do |primitive, call|
+      it "refuses #{primitive} called from another thread, before it makes a request" do
+        Squishling.register_harness(:threaded) do
+          define_method(:call) do |run|
+            Thread.new do
+              Thread.current.report_on_exception = false
+              call.call(run)
+            end.value
+          end
+        end
+        klass.squishling(harness: :threaded)
+        expect(fake_adapter).not_to receive(:complete)
+
+        expect { klass.call(text: "x") }
+          .to raise_error(Squishling::ConfigurationError, /from the thread it runs on/)
+      end
     end
 
     it "stops the requests still running when the caller is interrupted" do
