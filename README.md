@@ -203,6 +203,8 @@ sees it right where the value goes, and the purpose stays short and about the go
   - [`:judged_squishsum`](docs/harnesses.md#the-judge): a chat or Jev judge picks between disagreeing samples
   - [Your own](docs/harnesses.md#custom-harnesses): `Squishling.register_harness` plugs a custom harness into the same
     machinery (samples, judges, `squawk`, `squish_fallback`)
+- **Cost caps**: `max_total_output_tokens:` and `max_total_input_tokens:` stop a call that keeps failing from
+  spending without limit (see [Capping a call's cost](docs/failures.md#capping-a-calls-cost-token-budgets)).
 - **Output contracts**: beyond the strict schema, conditional rules (`given`) and Ruby checks (`squish_validate`)
   reject bad output and trigger the next attempt.
 - **Defined failure behavior**: provider errors become `Squishling::LLMError`, and `squish_fallback` lets you decide

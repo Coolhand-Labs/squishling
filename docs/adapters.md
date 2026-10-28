@@ -136,7 +136,9 @@ Squishling.register_adapter(:acme, AcmeAdapter)
 `Squishling::Adapter::Response.new(content:, model:, tokens:, finish_reason:)`. `content` is the model's output as a
 String, or a Hash if you parsed it; `nil` or empty counts as invalid output and is retried. `model` is the id the
 provider reports. `tokens` is a Hash (`:input_tokens`, `:output_tokens`, and anything else you have); `{}` when
-unknown. These feed [`squawk`'s `usage`](failures.md#observing-every-attempt-squawk) and the [observer](observers.md)'s `Usage`.
+unknown. These feed [`squawk`'s `usage`](failures.md#observing-every-attempt-squawk), the [observer](observers.md)'s `Usage`, and the
+[token budget](failures.md#capping-a-calls-cost-token-budgets), which counts `:input_tokens` and `:output_tokens`
+(a response with none never exhausts a budget).
 `finish_reason` is why the provider stopped, as a Symbol: `:stop`, `:max_tokens` (the output cap cut the reply off),
 `:content_filter`, `:tool_calls`, or the provider's own spelling; leave it out (`nil`) when unknown. Map your
 provider's "length" reason to `:max_tokens`, so Squishling can [tell a cutoff from a wrong
@@ -158,7 +160,8 @@ propagates unwrapped and is never retried, so map your transport's errors. Retur
 
 - **`judgments?` and `judge(input, questions:, step:, label:)`**: System One decision models for `type: :judgment` judges.
   `judge` returns an object answering `[:winner]` with something that responds to `choice` and `probabilities`.
-  Without `judgments?`, such a judge raises `ConfigurationError` before any request.
+  Without `judgments?`, such a judge raises `ConfigurationError` before any request. If the object has `tokens` (with
+  `input` and `output` readers), they count toward the call's token budget.
 - **`capture_context` and `with_context(context) { … }`**: samples (the `:squishsum` harnesses) send their requests from
   worker threads. `capture_context` runs on the caller's thread and returns whatever your tracing needs; `with_context`
   re-establishes it around each worker's request. The RubyLLM adapter uses this for its instrumentation workflow.

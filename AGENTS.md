@@ -69,11 +69,17 @@ Flag any change that breaks one of these; they are behavior contracts, not style
   Invalid output and `LLMError` move on to the next attempt (a same-chat retry that returns the reply it was just
   rejected for skips the rest of its step's attempts, reported as `repeated:` in `squawk` metadata);
   `ConfigurationError` never does.
+- **A budget stops a call, never a request.** `max_total_output_tokens`/`max_total_input_tokens` (config, class,
+  method, `squish!`; layered limit by limit, `false` lifts one) are checked before each request the call's `Run` makes
+  (escalation attempts, sample rounds, judge attempts), against the tokens its `LLMClient` has tallied from the
+  responses so far (mutex-guarded: samples add from worker threads). A request in flight is never cut short, so a call
+  can end above the limit by one request; a response without token counts adds nothing. It raises
+  `BudgetExhaustedError`, an `InvalidOutputError`, so `squish_fallback` and the "no second rescue path" rule hold.
 - **Error taxonomy.** Everything Squishling raises inherits `Squishling::Error`: `ConfigurationError`
   (setup mistakes; never retried, escalated, or passed to fallbacks; a provider 400 is its `RequestRejectedError`
-  subclass), `InvalidOutputError` (bad output after every attempt in the escalation), `LLMError` (provider/transport
-  failure after the adapter's HTTP retries, original as `cause`). Never wrap or swallow exceptions raised by the
-  user's own Ruby code.
+  subclass), `InvalidOutputError` (bad output after every attempt in the escalation; `BudgetExhaustedError` is its
+  subclass for a spent token budget), `LLMError` (provider/transport failure after the adapter's HTTP retries,
+  original as `cause`). Never wrap or swallow exceptions raised by the user's own Ruby code.
 - **Model output leaves the process only through `InvalidOutputError#raw` and the opt-in `squawk` hook.** Error
   messages and `config.logger` lines carry parse positions and schema paths, never the response itself (the
   documented exceptions are model-chosen extra key names, which `InvalidOutputError#error_details` tags
@@ -110,7 +116,7 @@ Flag any change that breaks one of these; they are behavior contracts, not style
   propagate unwrapped. With `observer` nil, the Coolhand observer is used when the `coolhand` gem is loaded and
   configured (no gem dependency, and it must never break a call it can't declare).
 - **Harnesses don't add a second rescue path.** Every harness failure surfaces as `InvalidOutputError`
-  (disagreements as its `DisagreementError` subclass) or `LLMError`, so `squish_fallback` stays the only fallback.
+  (disagreements as its `DisagreementError` subclass, a spent budget as `BudgetExhaustedError`) or `LLMError`, so `squish_fallback` stays the only fallback.
 - **Built-ins and custom harnesses share one interface.** `:escalation`, `:squishsum`, and `:judged_squishsum` are
   `Harness::Base` subclasses written against `Run`, and custom harnesses are registered in the same mutex-guarded
   `Harness::Registry`. A harness's return value must be a typed result its `Run` produced (`Invoker#accepted`), so
@@ -127,15 +133,18 @@ The public surface is `Squishling.configure`/`config`, the adapter plugin point 
 `model:`/`escalation:` (steps with `model:`, `attempts:`, `priority:`, `rotate:`, `provider:`, `params:`,
 `forward_rejected:`, `retry_temperature:`, `include_when:`)/`provider:`/`params:`/
 `harness:` (`type:`, `compare:`, `judge:` (a step, plus `type: :chat | :judgment` and `min_confidence:`),
-`judge_instructions:`)/`append_to_purpose:`/`squawk:`/`squawk_on:` options — `purpose`, `append_to_purpose`, `output_schema`,
-`squish_when`, `squish_context`, `squish` (including `validate:`/`harness:`/`squawk:`/`squawk_on:`), `squish_validate`,
-`squish_fallback`, `result`/`squishling_result`, `squish!` (including `model:`/`escalation:`/`harness:`)),
-`Squishling::Configuration` options (including `default_harness`, `observer`, `squawk_on`, and `squawk`, whose
+`judge_instructions:`)/`append_to_purpose:`/`squawk:`/`squawk_on:` options — `purpose`, `append_to_purpose`,
+`output_schema`, `squish_when`, `squish_context`, `squish` (including `validate:`/`harness:`/`squawk:`/`squawk_on:`),
+`squish_validate`, `squish_fallback`, `result`/`squishling_result`, `squish!` (including
+`model:`/`escalation:`/`harness:`), and the `max_total_output_tokens:`/`max_total_input_tokens:` options of
+`squishling`, `squish`, and `squish!`), `Squishling::Configuration` options (including `default_harness`,
+`default_max_total_output_tokens`/`default_max_total_input_tokens`, `observer`, `squawk_on`, and `squawk`, whose
 `output:`/`metadata:`/`error:` keywords are public), `Squishling::Observer::Call`/`Usage`,
 `Squishling::Harness::DEFAULT_JUDGE_INSTRUCTIONS`, result objects (`squished?`, `to_h`, `[]`), and the error classes
 (including `InvalidOutputError#error_details` (`InvalidOutputError::Detail`: `message`, `source`,
-`model_derived?`), `InvalidOutputError#models`, `DisagreementError#candidates`/`verdict`/`reason`, and
-`RequestRejectedError#provider_status`/`provider_code`). The custom-harness plugin point is public too:
+`model_derived?`), `InvalidOutputError#models`, `DisagreementError#candidates`/`verdict`/`reason`,
+`RequestRejectedError#provider_status`/`provider_code`, and `BudgetExhaustedError#limit`/`max`/`used`). The
+custom-harness plugin point is public too:
 `Squishling.register_harness`/`harnesses`/`reset_harnesses!`, `Squishling::Harness::Base` (`option` and its types,
 `call(run, **options)`, `validate_options!`), the `Squishling::Run` primitives a harness gets (`receiver`, `inputs`,
 `label`, `steps`, `stages`, `stage`, `escalate`, `samples`, `judge`, `agree?`, `log`) with

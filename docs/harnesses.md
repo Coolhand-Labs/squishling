@@ -168,6 +168,10 @@ end
 | `attempts` | `nil` |
 | `models` | The model behind each role: sample `a`, sample `b`, then the judge if one ran (one entry each, not one per attempt) |
 
+A [token budget](failures.md#capping-a-calls-cost-token-budgets) covers every request of the call, the samples
+and the judge's included. When it is spent before the next round of retries or before the judge can run, the call raises
+`BudgetExhaustedError` (also an `InvalidOutputError`, and also sent to the fallback) instead of a `DisagreementError`.
+
 Other failures are unchanged. A sample or judge that never produces valid output raises `InvalidOutputError`, a
 failed request on the last attempt raises `LLMError`, and setup mistakes (including a provider 400 on either
 sample) raise `ConfigurationError`, which is never sent to the fallback.

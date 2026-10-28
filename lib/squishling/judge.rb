@@ -44,7 +44,7 @@ module Squishling
     # judge: is a normalized judge step (see Harness::JudgedSquishsum) or nil for the escalation's next stage,
     # instructions: a String, a Proc evaluated against the receiver, or nil for the default prompt.
     def initialize(definition:, receiver:, client:, judge:, instructions:, path:, purpose:, payload:, escalate:,
-      log_failure:, guard:, harness_type:)
+      log_failure:, guard:, budget_check:, harness_type:)
       @definition = definition
       @receiver = receiver
       @client = client
@@ -53,6 +53,7 @@ module Squishling
       check!
       check_judgments!
       @guard = guard
+      @budget_check = budget_check
       @harness_type = harness_type
       @purpose = purpose
       @payload = payload
@@ -174,6 +175,7 @@ module Squishling
     # A judgment always matches its questions, so only a failed request (LLMError) moves on to the next attempt.
     def judge_with_retries(input, questions)
       @steps.each.with_index(1) do |step, attempt|
+        @budget_check.call(attempts: attempt - 1)
         return @client.observed_judgment(input, questions:, step:, attempt:, attempts: @steps.size)
       rescue LLMError => e
         raise if attempt == @steps.size

@@ -29,6 +29,11 @@ module Squishling
     # its options.
     attr_reader :default_harness
 
+    # Most output tokens, and most input tokens, one squished call may use across all its requests (nil, the default,
+    # sets no limit). A call that has used this many stops with a BudgetExhaustedError instead of making another
+    # attempt; overridable per class, method and squish! call (see Budget).
+    attr_reader :default_max_total_output_tokens, :default_max_total_input_tokens
+
     # Optional Logger for routing and escalation decisions.
     attr_accessor :logger
 
@@ -91,6 +96,19 @@ module Squishling
     # use. Raises ConfigurationError when there is neither.
     def resolved_adapter
       @adapter_lock.synchronize { @adapter || (@detected_adapter ||= Adapter.detect) }
+    end
+
+    def default_max_total_output_tokens=(tokens)
+      @default_max_total_output_tokens = Budget.build("default_max_total_output_tokens", output: tokens)[:output]
+    end
+
+    def default_max_total_input_tokens=(tokens)
+      @default_max_total_input_tokens = Budget.build("default_max_total_input_tokens", input: tokens)[:input]
+    end
+
+    # The configured limits as a Budget level.
+    def default_budget
+      { output: default_max_total_output_tokens, input: default_max_total_input_tokens }.compact
     end
 
     def squawk=(hook)

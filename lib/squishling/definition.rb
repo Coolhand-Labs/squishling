@@ -14,7 +14,7 @@ module Squishling
 
     def initialize(klass:, name:, purpose: nil, append_to_purpose: nil, output_schema: nil, model: nil,
       provider: nil, params: nil, harness: nil, predicate: nil, fallback: nil, validator: nil, squawk: nil,
-      squawk_on: nil, call_context: {}, handed_off: false)
+      squawk_on: nil, budget: nil, call_context: {}, handed_off: false)
       @klass = klass
       @name = name
       @purpose = purpose
@@ -29,6 +29,7 @@ module Squishling
       @validator = validator
       @squawk = squawk
       @squawk_on = squawk_on
+      @budget = budget || {}
       @call_context = call_context
       @handed_off = handed_off
     end
@@ -36,7 +37,7 @@ module Squishling
     # This definition with one call's overrides on top. The output schema, predicate, fallback, and validator
     # can't be overridden: the call must still return the method's result type.
     def for_call(purpose: nil, append_to_purpose: nil, context: nil, model: nil, escalation: nil,
-      provider: nil, params: nil, harness: nil)
+      provider: nil, params: nil, harness: nil, max_total_output_tokens: nil, max_total_input_tokens: nil)
       call_path = ModelPath.declare(model, escalation, "#{label} squish!")
       raise ConfigurationError, "#{label}: squish! provider: needs a model: or escalation:" if provider && !call_path
       unless context.nil? || (context.is_a?(Hash) && context.each_key.all?(NAME_KEY))
@@ -46,6 +47,7 @@ module Squishling
       appended = Appendices.normalize(append_to_purpose, "#{label} squish!") unless append_to_purpose.nil?
       call_params = params && Params.normalize(params, "#{label} squish! params")
       call_harness = Harness.normalize(harness, "#{label} squish!") unless harness.nil?
+      call_budget = Budget.build("#{label} squish!", output: max_total_output_tokens, input: max_total_input_tokens)
       self.class.new(
         klass:, name:, output_schema: @output_schema, predicate: @predicate, fallback: @fallback,
         validator: @validator, squawk: @squawk, squawk_on: @squawk_on,
@@ -54,7 +56,7 @@ module Squishling
         model: call_path || @model, provider: call_path ? provider : @provider,
         # merge, not Params.resolve: a nil at the method level must still unset the class's key.
         params: call_params ? (@params || {}).merge(call_params) : @params,
-        harness: call_harness || @harness,
+        harness: call_harness || @harness, budget: @budget.merge(call_budget),
         call_context: @call_context.merge((context || {}).transform_keys(&:to_sym)),
         handed_off: true # only squish! builds a definition this way; it is not part of a declared one
       )
@@ -107,6 +109,12 @@ module Squishling
     # Generation params: config defaults, overridden key by key by the class, then by the method.
     def params
       Params.resolve(Squishling.config.default_params, klass.squishling_params, @params)
+    end
+
+    # The token limits of one call (see Budget): config defaults, overridden limit by limit by the class, then by the
+    # method (and a squish! call).
+    def budget
+      Budget.resolve(Squishling.config.default_budget, klass.squishling_budget, @budget)
     end
 
     # Extra output checks run on schema-valid LLM results (see ClassMethods#squish_validate).
