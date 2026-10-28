@@ -14,6 +14,7 @@ module Squishling
   class Run
     include Messages
     include Repeats
+    include Rejections
 
     private_constant :Messages, :Repeats
 
@@ -269,17 +270,6 @@ module Squishling
 
       sample.rejected = [response.content, errors]
       log_failure(role, attempt, stage, rejection_reason(errors, response))
-    end
-
-    def invalid_output(response, errors, attempt, models, source = "LLM")
-      InvalidOutputError.new(errors:, raw: response.content, attempts: attempt, models:, source:,
-        finish_reason: response.finish_reason)
-    end
-
-    # Why an attempt was rejected, for the log: the output check's errors, plus a note when the reply was cut off.
-    def rejection_reason(errors, response)
-      reason = errors.join("; ")
-      response.truncated? ? "#{reason} (#{InvalidOutputError::CUTOFF_NOTE})" : reason
     end
 
     # Remembers a result of the method's own output (a judge's verdict isn't one), so a harness can only return
