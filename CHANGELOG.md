@@ -7,6 +7,72 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-28
+
+### Added
+
+- Pluggable adapters: provider requests go through an adapter (`Squishling::Adapter::Base`, a stateless
+  `complete(request)`), set with `config.adapter` or registered with `Squishling.register_adapter`. Two ship:
+  `:ruby_llm` (the previous behavior) and `:openai_compatible`, plain `Net::HTTP` against any `/chat/completions`
+  endpoint with retries and strict `json_schema` output, which keeps keys and provider text out of errors, logs, and
+  `inspect`. See [Adapters](docs/adapters.md). (#47)
+- `include_when:` on an escalation step: a Proc called like `squish_when` (the method's inputs as keywords, on the
+  instance) that leaves the step out of a call when falsy, for example a model without a BAA. Steps are filtered before
+  rotation, and a call left with no steps raises `ConfigurationError`. (#46)
+- `squishling/testing` (opt-in, `require "squishling/testing"`): a scripted adapter that records requests and
+  conversations, `assert_no_llm_call`/`forbid_provider_calls!`, schema-validated `stub_result`/`stub_error`,
+  `validate`/`fallback_for`/`preview`, schema-driven `valid_reply_for`/`invalid_reply_for`, squawk capture, and
+  Minitest and RSpec mixins. See [Testing](docs/testing.md). (#44, #50)
+- `Squishling.verify`/`verify!` check every squished class without a request (output schema and typed result, resolved
+  escalation, params and squawk, harness and judge, the keywords `include_when:`/`squish_when` take, and the adapter),
+  reporting every problem; `verify!` raises `VerificationError`. Squished classes are tracked in a weak registry
+  (`Squishling.squished_classes`). A `squishling:verify` rake task (with a Rails Railtie) and a `be_squishling_valid`
+  RSpec matcher (`require "squishling/rspec"`) wrap it. See [Verifying squished classes](docs/verifying.md). (#48, #67)
+- Per-call token budgets: `max_total_output_tokens:` and `max_total_input_tokens:` (on `squishling`, `squish`,
+  `squish!`, and `default_max_total_*` in `Squishling.configure`; layered limit by limit, `false` lifts one) cap what one
+  call spends across its escalation attempts, squishsum sample rounds, and judge. A request in flight is never cut short,
+  so a call can end above the limit by one request. Once a limit is reached the call raises `BudgetExhaustedError`, an
+  `InvalidOutputError`, so `squish_fallback` still receives it. (#55, #68)
+- `squawk_on:` (`:all`, `:rejections`, `:retries`, `:final`, or a list) filters which attempts reach the `squawk` hook,
+  settable with `config.squawk_on`, `squishling squawk_on:`, and `squish :method, squawk_on:`. The default `:all` keeps
+  the old behavior. (#58, #69)
+- `Adapter::Response#finish_reason` (a Symbol such as `:stop` or `:max_tokens`), filled by both built-in adapters.
+  `InvalidOutputError` gains `finish_reason` and `truncated?`, with a fixed note in its message and log line when the
+  reply was cut off, and `squawk` metadata gains `finish_reason`. (#54, #60)
+- `InvalidOutputError#error_details`: `InvalidOutputError::Detail` entries (`message`, `source` of `:schema`,
+  `:validator`, `:parse` or `:squishling`) with a `model_derived?` predicate that is true only for schema errors, which
+  can name a key the model chose. Escape just those when forwarding messages to a chat webhook, HTML, or markdown.
+  `#errors` is still an Array of Strings (now frozen). (#57, #62)
+- `RequestRejectedError` (a `ConfigurationError`) for a provider's 400, with `provider_status` and `provider_code` read
+  as plain tokens from the error body (`INVALID_ARGUMENT`, `invalid_request_error`). The provider's message is still
+  never repeated. (#52, #53)
+- `retry_temperature:` on an escalation step sets the temperature for same-chat retries only. (#56, #61)
+
+### Changed
+
+- **Breaking change:** `ruby_llm` is no longer a runtime dependency of the gem. Apps that use the RubyLLM adapter (the
+  default when no adapter is configured and `ruby_llm` is loadable) must now list `gem "ruby_llm"` in their own
+  Gemfile, and `require "ruby_llm"` before `RubyLLM.configure` if they don't use `Bundler.require`; or switch to
+  `config.adapter = :openai_compatible`. (#47)
+- **Behavior change:** a schema property named like a method the typed result needs (`class`, `hash`, `to_h`,
+  `members`, `inspect`, `is_a?`, ...) now raises `ConfigurationError` when the schema is built, before any request,
+  instead of replacing that method on the result class and failing late. Rename such fields (`class` to
+  `ticket_class`); the reserved names are listed in [Output schemas](docs/schemas.md). (#43, #49)
+- **Behavior change:** when a same-chat retry returns the exact reply it was just rejected for, Squishling skips the
+  step's remaining attempts and moves to the next step (or raises `InvalidOutputError` right away on the last step);
+  samples end early the same way. `InvalidOutputError#attempts` counts requests actually made, `squawk` metadata gains
+  `repeated:`, and `final:` now means no attempt follows a rejection. Size a step's `attempts:` for replies that can
+  differ. (#56, #61)
+- A provider 400's "Check params" hint now names a param only when the provider's error body names one you configured,
+  and otherwise says the params, output schema, or input may be invalid. An array-wrapped overlong-context 400 from the
+  OpenAI-compatible adapter is now an `LLMError`. (#53)
+
+### Internal
+
+- Development dependencies: `ruby_llm` 2.1.1, `coolhand` 0.10.0, and `rubocop` 1.92.1; CI pins `ruby/setup-ruby` v1.335.0
+  so the matrix resolves Ruby 3.3.13, 3.4.12, and 4.0.9. A `finish-release` skill now tags and publishes a reviewed
+  release-prep PR. (#45, #51, #59, #63, #64, #65)
+
 ## [0.4.0] - 2026-10-18
 
 ### Added
