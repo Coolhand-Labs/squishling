@@ -12,9 +12,10 @@ module Squishling
   # Primitives must be called from the thread that runs the harness. Only the provider requests inside them run
   # on other threads; parsing, validation, and every callback (squish_validate, compare:, procs) stay on this one.
   class Run
-    include Messages, Repeats, Rejections, Budgeting
+    include Messages
+    include Rejections
 
-    private_constant :Messages, :Repeats
+    private_constant :Messages, :Rejections
 
     # One of #samples' outputs, between rounds.
     Sample = Struct.new(:name, :stage, :chat, :rejected, :result, :reask)
