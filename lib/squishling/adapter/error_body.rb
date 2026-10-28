@@ -6,9 +6,10 @@ module Squishling
     # `status`), the code, and the name of the field it objected to. Only short plain tokens come out; the message
     # and anything else a provider might echo from the request never do.
     module ErrorBody
-      # A status or code is an enumeration-like word; a param is a field path (messages[0].content), which is only
-      # compared with the developer's own param names and never repeated.
-      WORD = /\A[A-Za-z0-9][\w.-]{0,39}\z/
+      # A status or code is an enumeration-like word (no hyphens, so an API key like sk-... never passes); a param is
+      # a field path (messages[0].content), which is only compared with the developer's own param names and never
+      # repeated.
+      WORD = /\A[A-Za-z0-9][\w.]{0,39}\z/
       PATH = /\A[\w.\-\[\]]{1,64}\z/
       private_constant :WORD, :PATH
 

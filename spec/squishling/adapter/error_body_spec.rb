@@ -36,6 +36,13 @@ RSpec.describe Squishling::Adapter::ErrorBody do
       expect(described_class.read(body)).to eq(status: nil, code: nil, param: "messages[0].content")
     end
 
+    it "refuses a hyphenated status or code, so an API key echoed there is never repeated" do
+      body = { "error" => { "status" => "sk-proj-abc123", "code" => "sk-ant-api03-abc",
+                            "type" => "invalid_request_error" } }
+
+      expect(described_class.read(body)).to eq(status: "invalid_request_error", code: nil, param: nil)
+    end
+
     it "ignores a Hash with Symbol keys" do
       expect(described_class.read({ error: { status: "INVALID_ARGUMENT" } })).to eq(status: nil, code: nil, param: nil)
     end

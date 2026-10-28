@@ -114,7 +114,7 @@ module Squishling
         apply_thinking(chat, params[:thinking]) if params.key?(:thinking)
         chat.with_provider_options(rest) if rest.any?
       rescue ArgumentError => e
-        raise configuration_error(request, "invalid params #{params.inspect} (#{e.message})")
+        raise configuration_error(request, "invalid params #{params.keys.inspect} (#{e.message})")
       end
 
       # true: the model's default thinking; false: off; a Hash: { effort:, budget:, display: }.
