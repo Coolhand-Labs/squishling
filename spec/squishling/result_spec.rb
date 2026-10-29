@@ -90,4 +90,65 @@ RSpec.describe Squishling::Result do
       false
     end
   end
+
+  describe "object schemas without type: object" do
+    let(:untyped) { { "properties" => { "a" => { "type" => "string" } }, "required" => ["a"] } }
+
+    def root_with(property)
+      { "type" => "object", "properties" => { "n" => property }, "required" => ["n"], "additionalProperties" => false }
+    end
+
+    def message = /`properties` but no `type: "object"`/
+
+    it "rejects a nested property" do
+      expect { Squishling::Schema.new(root_with(untyped)) }.to raise_error(Squishling::ConfigurationError, message)
+    end
+
+    it "rejects array items" do
+      list = { "type" => "array", "items" => untyped }
+
+      expect { Squishling::Schema.new(root_with(list)) }.to raise_error(Squishling::ConfigurationError, message)
+    end
+
+    it "rejects the object branch of an optional property" do
+      optional = { "anyOf" => [untyped, { "type" => "null" }] }
+
+      expect { Squishling::Schema.new(root_with(optional)) }.to raise_error(Squishling::ConfigurationError, message)
+    end
+
+    it "rejects a schema reached through $ref into $defs" do
+      raw = root_with({ "$ref" => "#/$defs/thing" }).merge("$defs" => { "thing" => untyped })
+
+      expect { Squishling::Schema.new(raw) }.to raise_error(Squishling::ConfigurationError, message)
+    end
+
+    it "rejects the root" do
+      expect { Squishling::Schema.new(untyped) }.to raise_error(Squishling::ConfigurationError, message)
+    end
+
+    it "does not echo schema content in the message" do
+      secret = untyped.merge("properties" => { "hunter2" => { "type" => "string" } }, "required" => ["hunter2"])
+
+      expect { Squishling::Schema.new(root_with(secret)) }
+        .to raise_error(Squishling::ConfigurationError) { |error| expect(error.message).not_to include("hunter2") }
+    end
+
+    it "still builds the valid shapes" do
+      typed = untyped.merge("type" => "object")
+      union = untyped.merge("type" => %w[object null])
+      list = { "type" => "array", "items" => typed }
+      optional = { "anyOf" => [typed, { "type" => "null" }] }
+
+      [typed, union, list, optional, { "type" => "string" }].each do |property|
+        expect { Squishling::Schema.new(root_with(property)) }.not_to raise_error
+      end
+    end
+
+    it "builds a nested result from a $ref to a typed schema" do
+      raw = root_with({ "$ref" => "#/$defs/thing" }).merge("$defs" => { "thing" => untyped.merge("type" => "object") })
+      result = Squishling::Schema.new(raw).build({ "n" => { "a" => "x" } }, squished: true)
+
+      expect(result.n.a).to eq("x")
+    end
+  end
 end

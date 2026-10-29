@@ -97,6 +97,17 @@ RSpec.describe Squishling, ".verify" do
       expect(messages(klass)).to contain_exactly(/invalid data member: a=/)
     end
 
+    it "reports an object schema that lacks type: object, without a request" do
+      adapter = FakeAdapter.new
+      Squishling.config.adapter = adapter
+      schema = { type: "object", properties: { n: { properties: { a: { type: "string" } }, required: ["a"] } },
+                 required: ["n"], additionalProperties: false }
+      klass = squishling_class { squishling purpose: "p", output_schema: schema }
+
+      expect(messages(klass)).to contain_exactly(/no `type: "object"`/)
+      expect(adapter.chats).to be_empty
+    end
+
     it "reports a schema that isn't valid JSON Schema" do
       klass = squishling_class { squishling purpose: "p", output_schema: { type: "objct" } }
 
