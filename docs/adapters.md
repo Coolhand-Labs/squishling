@@ -42,7 +42,9 @@ below (an error with no response, such as a timeout, is sorted by its class). Ru
 decides: on a 400 its middleware picks a class from the provider's message text, so a bad parameter whose message says
 "per day" would otherwise look like a rate limit. The one RubyLLM class that is honored over the status is
 `RubyLLM::ContextLengthExceededError`, an `LLMError`, since RubyLLM is where each provider's wording for an overlong
-prompt is known. The original error is on `cause`.
+prompt is known. RubyLLM picks that class from the message on a 400, with wording broader than the OpenAI-compatible
+adapter's, so a bad parameter whose message happens to match is retried as an overflow rather than rejected. The
+original error is on `cause`.
 
 This is the only built-in adapter that supports `type: :judgment` judges ([System One decision models](harnesses.md#the-judge)).
 
@@ -180,7 +182,8 @@ how it says a prompt is too long:
 `squawk`. It never looks at a provider's status, code, or message; it sees only the error class your adapter raised.
 
 For an HTTP provider, `http_failure(request, status:, body:, via:)` does the sorting, so every adapter treats a status
-the same way: 408, 413, 429, and 5xx are `LLMError`s; 401, 402, 403, 404, and a redirect are `ConfigurationError`s;
+the same way: 408, 413, 429, 5xx, no status at all (a timeout), and a success status (a reply that was unusable) are
+`LLMError`s; 401, 402, 403, 404, and a redirect are `ConfigurationError`s;
 every other 4xx is a `RequestRejectedError`. `via` ("Acme, HTTP 400") is the only text repeated, plus the status and
 code tokens of a rejection. Between those, one case depends on the provider: a rejected request whose input was too
 long for the model should be an `LLMError`, since a bigger model may take it. `http_failure` asks the

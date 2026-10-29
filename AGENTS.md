@@ -60,11 +60,11 @@ Flag any change that breaks one of these; they are behavior contracts, not style
     timeout, connection, a prompt too long for the model), `ConfigurationError` (credentials, billing, model or
     endpoint), or `RequestRejectedError` (the provider refused the request). Only it knows its provider's status codes,
     error bodies, and wording for an overlong prompt. `Adapter::Base#http_failure` is the shared status mapping
-    (408/413/429/5xx → `LLMError`; 401/402/403/404/3xx → `ConfigurationError`; every other 4xx →
-    `RequestRejectedError`),
-    and `Adapter::Base#context_length?` is the hook where an adapter decides a rejection is an overlong prompt (the
-    default reads only the structured `context_length_exceeded` code or type). An adapter may match a provider's
-    documented wording for an overflow (the OpenAI-compatible one does, narrowly; a match is never repeated), but
+    (408/413/429/5xx, no status, or a success status → `LLMError`; 401/402/403/404/3xx → `ConfigurationError`; every
+    other 4xx → `RequestRejectedError`), and `Adapter::Base#context_length?` is the hook where an adapter decides a
+    rejection is an overlong prompt (the default reads only the structured `context_length_exceeded` code or type).
+    An adapter may match a provider's documented wording for an overflow (the OpenAI-compatible one does, narrowly; a
+    match is never repeated), but
     where it can't tell it raises the general error, which errs toward `RequestRejectedError`: that is never
     absorbed by a fallback, so a misjudged setup mistake can't be hidden.
   - *Squishling manages* what follows from the class it is given: retry and escalation (`LLMError` and invalid
@@ -95,8 +95,8 @@ Flag any change that breaks one of these; they are behavior contracts, not style
 - **Error taxonomy.** Everything Squishling raises inherits `Squishling::Error`: `ConfigurationError`
   (setup mistakes; never retried, escalated, or passed to fallbacks; a provider 400 or other rejected 4xx is its
   `RequestRejectedError` subclass), `InvalidOutputError` (bad output after every attempt in the escalation;
-  `BudgetExhaustedError` is its subclass for a spent token budget), `LLMError` (provider/transport failure after the adapter's HTTP retries,
-  original as `cause`). Never wrap or swallow exceptions raised by the user's own Ruby code.
+  `BudgetExhaustedError` is its subclass for a spent token budget), `LLMError` (provider/transport failure after the
+  adapter's HTTP retries, original as `cause`). Never wrap or swallow exceptions raised by the user's own Ruby code.
 - **Model output leaves the process only through `InvalidOutputError#raw` and the opt-in `squawk` hook.** Error
   messages and `config.logger` lines carry parse positions and schema paths, never the response itself (the
   documented exceptions are model-chosen extra key names, which `InvalidOutputError#error_details` tags
