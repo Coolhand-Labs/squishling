@@ -103,7 +103,6 @@ RSpec.describe Squishling::Adapters::OpenAICompatible do # rubocop:disable RSpec
 
       expect(stub).to have_been_requested
     end
-
   end
 
   describe "credential headers" do
