@@ -49,8 +49,8 @@ module Squishling
         read_timeout: 120, max_retries: 2, max_tokens_param: :max_completion_tokens, structured_output: :json_schema)
         super()
         @endpoint = Options.endpoint(base_url)
-        @api_key = api_key
-        @headers = Options.headers(headers)
+        @api_key = Secret.new(api_key) unless api_key.nil?
+        @headers = Secret.new(Options.headers(headers))
         @default_model = Options.default_model(default_model)
         @open_timeout = Options.number(:open_timeout, open_timeout)
         @read_timeout = Options.number(:read_timeout, read_timeout)
@@ -60,7 +60,8 @@ module Squishling
       end
 
       # Shows where requests go, never the key or the header values (a console, a log line, or an error tracker may
-      # print the config).
+      # print the config). The key and headers are held in a Secret, so to_yaml, as_json and Marshal can't expose them
+      # either.
       def inspect
         "#<#{self.class.name} #{@endpoint.scheme}://#{@endpoint.authority}#{@endpoint.path} " \
           "default_model=#{@default_model.inspect} structured_output=#{@structured_output.inspect}>"
@@ -173,7 +174,7 @@ module Squishling
       # Built once per call, before any request and outside the network-error rescue, so the developer's own api_key
       # callable runs once and its exceptions propagate as they are.
       def request_headers(request)
-        key = (@api_key.respond_to?(:call) ? @api_key.call : (@api_key || default_api_key)).to_s.strip
+        key = api_key_value.to_s.strip
         if Options.unsafe_header?(key)
           raise configuration_error(request,
             "the api_key can't contain line breaks or NUL")
@@ -182,7 +183,12 @@ module Squishling
         headers = { "Content-Type" => "application/json", "Accept" => "application/json",
                     "User-Agent" => "squishling/#{VERSION}" }
         headers["Authorization"] = "Bearer #{key}" unless key.empty?
-        headers.merge(@headers)
+        headers.merge(@headers.reveal)
+      end
+
+      def api_key_value
+        key = @api_key&.reveal
+        key.respond_to?(:call) ? key.call : (key || default_api_key)
       end
 
       def default_api_key
