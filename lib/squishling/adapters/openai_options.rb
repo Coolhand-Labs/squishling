@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "ipaddr"
 require "uri"
 
 module Squishling
@@ -10,6 +11,9 @@ module Squishling
       # The URL itself is never in the message: it may carry credentials.
       INVALID_BASE_URL = "adapter :openai_compatible base_url must be an http(s) URL without credentials (use " \
                          "api_key:), a query, or a fragment"
+      CLEARTEXT_CREDENTIAL = "adapter :openai_compatible won't send credentials (the api_key or an Authorization " \
+                             "header) over plain http to a host that isn't this machine; use https, or pass " \
+                             "allow_insecure_http: true to accept the risk on a network you trust"
       INVALID_HEADER = "adapter :openai_compatible headers (and the api_key) can't contain line breaks or NUL"
 
       module_function
@@ -40,6 +44,40 @@ module Squishling
         text.match?(/[\r\n\0]/)
       end
 
+      # Whether a credential would travel in the clear: over http, to a host that isn't loopback (a name is judged by
+      # its spelling, never resolved, so a lookup can't change the answer).
+      def cleartext?(endpoint)
+        endpoint.scheme == "http" && !loopback?(endpoint.hostname)
+      end
+
+      def loopback?(host)
+        host = host.downcase.delete_suffix(".")
+        host == "localhost" || host.end_with?(".localhost") || IPAddr.new(host).loopback?
+      rescue IPAddr::Error
+        false
+      end
+
+      # Whether a request to endpoint, with this key (a String, possibly blank) and these headers, would send a
+      # credential in the clear.
+      def cleartext_credential?(endpoint, key, headers)
+        return false unless cleartext?(endpoint)
+
+        !key.to_s.strip.empty? || headers.each_key.any? { |name| name.casecmp?("authorization") }
+      end
+
+      def flag(name, value)
+        return value if [true, false].include?(value)
+
+        raise ConfigurationError, "adapter :openai_compatible #{name} must be true or false, got #{value.inspect}"
+      end
+
+      # Defaults to the time the three timeouts allow together: connecting, writing the request, one read.
+      def total_timeout(value, open_timeout, read_timeout)
+        return open_timeout + (2 * read_timeout) if value.nil?
+
+        number(:total_timeout, value)
+      end
+
       def default_model(model)
         return nil if model.nil?
         return model.to_s if (model.is_a?(String) || model.is_a?(Symbol)) && !model.to_s.strip.empty?
@@ -47,10 +85,11 @@ module Squishling
         raise ConfigurationError, "adapter :openai_compatible default_model must be a model name, got #{model.inspect}"
       end
 
-      def number(name, value)
-        return value if value.is_a?(Numeric) && value.positive?
+      def number(name, value, type: Numeric)
+        return value if value.is_a?(type) && value.positive?
 
-        raise ConfigurationError, "adapter :openai_compatible #{name} must be a positive number, got #{value.inspect}"
+        kind = type == Integer ? "Integer" : "number"
+        raise ConfigurationError, "adapter :openai_compatible #{name} must be a positive #{kind}, got #{value.inspect}"
       end
 
       def retries(value)

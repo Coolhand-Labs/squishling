@@ -56,10 +56,13 @@ end
 | Option | Default | Description |
 |---|---|---|
 | `base_url` | `https://api.openai.com/v1` | The API root. Requests go to `{base_url}/chat/completions`. Must be `http(s)` and carry no credentials, query, or fragment. |
-| `api_key` | `ENV["OPENAI_API_KEY"]` for OpenAI's own endpoint, else none | A String, or a callable returning one (called once per completion, outside the adapter's retry handling, so rotating keys work and its exceptions reach you unchanged). Sent as a bearer token; omitted when blank. The key is sent as-is, so use `https://` for anything off your machine or trusted network. `OPENAI_API_KEY` is read only for OpenAI's own `https://api.openai.com`, so it can never go to another host: pass `api_key:` for any other endpoint that needs one. |
+| `api_key` | `ENV["OPENAI_API_KEY"]` for OpenAI's own endpoint, else none | A String, or a callable returning one (called once per completion, outside the adapter's retry handling, so rotating keys work and its exceptions reach you unchanged). Sent as a bearer token; omitted when blank. The key is sent as-is, and not over plain `http://` to another machine unless `allow_insecure_http: true` (below). `OPENAI_API_KEY` is read only for OpenAI's own `https://api.openai.com`, so it can never go to another host: pass `api_key:` for any other endpoint that needs one. |
 | `headers` | `{}` | Extra request headers, e.g. `{ "OpenAI-Organization" => "org-…" }` or a gateway's own. |
 | `default_model` | `nil` | The model for steps that don't name one. Without it, a step with no model raises `ConfigurationError`. |
-| `open_timeout` / `read_timeout` | `10` / `120` | Seconds. |
+| `allow_insecure_http` | `false` | A credential (the `api_key`, or an `Authorization` header) is never sent over plain `http://` to a host that isn't this machine: building the adapter (or, for a callable key, making the request) raises `ConfigurationError`. Loopback hosts (`localhost`, `*.localhost`, `127.0.0.0/8`, `::1`) are exempt, judged by the name as written and never resolved. Set `true` to send it anyway, for a trusted LAN or container network. With no credential, `http://` to any host is fine. |
+| `open_timeout` / `read_timeout` | `10` / `120` | Seconds. `read_timeout` restarts at every read, so it alone doesn't bound a request. |
+| `total_timeout` | `open_timeout + 2 * read_timeout` | Seconds one attempt (each retry gets its own) may take from connecting to the last byte of the response. Past it the call fails with an `LLMError` that isn't retried by the adapter. |
+| `max_response_bytes` | `8388608` (8 MiB) | The most a response body may hold, an error body included, checked against `Content-Length` and the bytes actually read. Over it the call fails with an `LLMError` that isn't retried by the adapter. Raise it only if you expect very large completions. |
 | `max_retries` | `2` | Timeouts, connection and protocol failures, HTTP 408, 429, and 5xx are retried this many times with exponential backoff (honoring `Retry-After`, up to 30 seconds) before they surface as an `LLMError`. A timed-out request may still have been processed by the server, so a retry can be billed twice; set `max_retries: 0` if that matters more than resilience. |
 | `max_tokens_param` | `:max_completion_tokens` | The body key for `max_output_tokens`. Use `:max_tokens` for servers that don't know the newer name. |
 | `structured_output` | `:json_schema` | `:json_schema` asks for strict structured output. For servers without it use `:json_object`, or `:none`: the schema then goes into the system prompt in words. Squishling validates every answer itself either way. |
@@ -78,6 +81,12 @@ connection errors raise `LLMError` once the adapter's own retries are used up. M
 class only; a rejected request (400) also carries the server's error status and code when they are plain tokens (as
 `provider_status` and `provider_code`). The server's message, the response body, and the API key never appear in an error or log. Redirects
 aren't followed, so the key can't be sent to another host.
+
+**Response limits.** The adapter sends `Accept-Encoding: identity` (it replaces any `Accept-Encoding` header you set)
+and reads the body in chunks. A response that is compressed anyway, one over `max_response_bytes`, and one that takes
+longer than `total_timeout` each raise an `LLMError` naming the limit (never the URL or any of the response) and
+are not retried by the adapter, since the same request would meet the same limit; escalation and `squish_fallback`
+handle it like any other `LLMError`.
 
 ## Writing your own
 
