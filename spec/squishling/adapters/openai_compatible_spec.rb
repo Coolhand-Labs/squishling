@@ -524,11 +524,11 @@ RSpec.describe Squishling::Adapters::OpenAICompatible do # rubocop:disable RSpec
         .to raise_error(Squishling::LLMError, "Klass#call: the response wasn't a JSON object (HTTP 200)")
     end
 
-    it "points 401 and 403 at the credentials and 404 at base_url, and only a 400 is a RequestRejectedError" do
+    it "points 401 and 403 at the credentials and 404 at the model, and only a 400 is a RequestRejectedError" do
       stub_post.to_return(reply("{}", status: 401), reply("{}", status: 403), reply("{}", status: 404),
         reply("{}", status: 400))
 
-      [[/refused the credentials/, 401], [/refused the credentials/, 403], [/check base_url/, 404]].each do |text, _|
+      [/refused the credentials/, /refused the credentials/, /check the model name and the endpoint/].each do |text|
         expect { adapter.complete(adapter_request) }.to raise_error(Squishling::ConfigurationError, text) do |e|
           expect(e).not_to be_a(Squishling::RequestRejectedError)
         end

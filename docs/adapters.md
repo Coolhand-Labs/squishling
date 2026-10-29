@@ -37,6 +37,13 @@ Everything works as it did before adapters: configure provider API keys with `Ru
 use `provider:` for models missing from RubyLLM's registry. See [Configuration](configuration.md). Transport-level
 retries are RubyLLM's (`RubyLLM.config.max_retries`, `request_timeout`).
 
+**Failures** are sorted by the HTTP status of the error's response, the same way as for the OpenAI-compatible adapter
+below (an error with no response, such as a timeout, is sorted by its class). RubyLLM's own error classes are not what
+decides: on a 400 its middleware picks a class from the provider's message text, so a bad parameter whose message says
+"per day" would otherwise look like a rate limit. The one RubyLLM class that is honored over the status is
+`RubyLLM::ContextLengthExceededError`, an `LLMError`, since RubyLLM is where each provider's wording for an overlong
+prompt is known. The original error is on `cause`.
+
 This is the only built-in adapter that supports `type: :judgment` judges ([System One decision models](harnesses.md#the-judge)).
 
 ## OpenAI-compatible endpoints
@@ -70,14 +77,17 @@ end
 the request body as given. Squishling's own keys (`model`, `messages`, `response_format`, `n`, `stream`) always win.
 `provider:` has no meaning here and is ignored.
 
-**Failures.** Every HTTP status of 300 or above except 408, 429, and 5xx (401, 403, 404, 400, 422, a redirect, …) raises `ConfigurationError`, a `RequestRejectedError` for a 400 or other rejected request (never retried or escalated; a 400 that
-reports an overlong context, and a 413, are `LLMError`s, since they depend on the input; a 400 counts as an overlong
-context when its error code is `context_length_exceeded` or its message uses the usual wording ("context length", "too many
-tokens", …), which the message is only matched against, never repeated). 408, 429, 5xx, timeouts, and
-connection errors raise `LLMError` once the adapter's own retries are used up. Messages carry the status or error
-class only; a rejected request (400) also carries the server's error status and code when they are plain tokens (as
-`provider_status` and `provider_code`). The server's message, the response body, and the API key never appear in an error or log. Redirects
-aren't followed, so the key can't be sent to another host.
+**Failures.** The HTTP status decides (see [the status mapping](#the-error-contract)): 408, 413, 429, 5xx, timeouts, and
+connection errors raise `LLMError` once the adapter's own retries are used up; 401, 403, 402, 404, and a redirect raise
+`ConfigurationError`; any other 4xx (400, 409, 422, …) raises `RequestRejectedError`, never retried or escalated. The
+one exception is a 400 that reports an overlong context, which is an `LLMError` too, since it depends on the input (a
+bigger model may take it). This adapter recognizes one when the error's `code` or `type` is `context_length_exceeded`, or,
+for servers that send neither (vLLM, Ollama, llama.cpp), when its message uses the usual wording ("context length",
+"context window", "context size", "too many tokens", "prompt is too long"). The message is only matched against that
+wording, never repeated; the match is deliberately narrow, so a wording it doesn't know is a rejected request, not a
+retry. Messages carry the status or error class only; a rejected request also carries the server's error status and code
+when they are plain tokens (as `provider_status` and `provider_code`). The server's message, the response body, and the
+API key never appear in an error or log. Redirects aren't followed, so the key can't be sent to another host.
 
 ## Writing your own
 
@@ -105,11 +115,19 @@ class AcmeAdapter < Squishling::Adapter::Base
     )
   rescue Acme::AuthError
     raise configuration_error(request, "Acme rejected the credentials")
-  rescue Acme::BadRequest => e
-    # a 400: repeats only the body's status and code, and points at a param only if the provider named one
-    raise rejected_request_error(request, via: "Acme, HTTP 400", body: e.response_body, http_status: 400)
+  rescue Acme::HTTPError => e
+    # sorted by status like the built-in adapters; only the status and a rejection's status/code tokens are repeated
+    raise http_failure(request, status: e.status, body: e.response_body, via: "Acme, HTTP #{e.status}")
   rescue Acme::Error => e
     raise llm_error(request, "Acme failed (#{e.class})")
+  end
+
+  private
+
+  # Optional: what an overlong prompt looks like for Acme. The default (super) already recognizes a 400 whose error
+  # code or type is "context_length_exceeded"; add whatever else Acme's errors tell you, without reading its message.
+  def context_length?(status:, body:)
+    super || (status == 400 && JSON.parse(body).dig("error", "code") == "prompt_too_long")
   end
 end
 
@@ -124,7 +142,7 @@ Squishling.register_adapter(:acme, AcmeAdapter)
 
 | Field | |
 |---|---|
-| `label` | `"Class#method"`, to prefix your error messages (the `configuration_error` / `llm_error` helpers do; `rejected_request_error(request, via:, body:, http_status:)` builds the error for a rejected request, from a JSON String or String-keyed Hash body). |
+| `label` | `"Class#method"`, to prefix your error messages (the `configuration_error` / `llm_error` helpers do; `http_failure(request, status:, body:, via:)` sorts an HTTP failure; `rejected_request_error(request, via:, body:, http_status:)` builds the error for a rejected request, from a JSON String or String-keyed Hash body). |
 | `model`, `provider` | The escalation step's, or `nil` when it names none (use your own default). What `provider:` means is up to you. |
 | `instructions` | The system prompt. |
 | `messages` | The conversation so far, ending with the user message to answer. After invalid output, Squishling appends your previous answer and a retry message; you never keep history. |
@@ -146,14 +164,32 @@ answer](failures.md#a-cutoff-or-a-wrong-answer).
 
 ### The error contract
 
+Classifying a provider failure is the adapter's job; what happens next is Squishling's.
+
+**An adapter defines** which error a failure is. Only the adapter knows its provider's status codes, error bodies, and
+how it says a prompt is too long:
+
 | Raise | When | What Squishling does |
 |---|---|---|
-| `Squishling::ConfigurationError` | Bad credentials, a request the provider rejects, an unknown model: anything a retry can't fix | Raised at once. Never retried, escalated, or sent to `squish_fallback`. |
+| `Squishling::ConfigurationError` | Bad credentials, billing, an unknown model or endpoint: anything a retry can't fix | Raised at once. Never retried, escalated, or sent to `squish_fallback`. |
+| `Squishling::RequestRejectedError` (a `ConfigurationError`) | The provider refused the request itself: a 400 or another 4xx for a bad param or schema | Same as `ConfigurationError`, so a setup mistake can't be hidden by a fallback on every call. |
 | `Squishling::LLMError` | Rate limit, 5xx, timeout, connection failure, an overlong context: anything worth another go | Moves to the next attempt; raised from the last one (and goes to `squish_fallback`). |
 
-Keep the provider's own message out of both: it can echo request content or part of a key, and ours reach logs and
-error trackers. Put the original on `cause` (raising inside a `rescue` does that for you). Any other exception
-propagates unwrapped and is never retried, so map your transport's errors. Return anything but an
+**Squishling manages** everything that follows from the class: retries, escalation, the fallback, the token budget, and
+`squawk`. It never looks at a provider's status, code, or message; it sees only the error class your adapter raised.
+
+For an HTTP provider, `http_failure(request, status:, body:, via:)` does the sorting, so every adapter treats a status
+the same way: 408, 413, 429, and 5xx are `LLMError`s; 401, 402, 403, 404, and a redirect are `ConfigurationError`s;
+every other 4xx is a `RequestRejectedError`. `via` ("Acme, HTTP 400") is the only text repeated, plus the status and
+code tokens of a rejection. Between those, one case depends on the provider: a rejected request whose input was too
+long for the model should be an `LLMError`, since a bigger model may take it. `http_failure` asks the
+`context_length?(status:, body:)` hook. Its default recognizes a 400 whose error `code` or `type` is
+`context_length_exceeded` and never reads the message; override it (calling `super`) to recognize what your provider
+sends. Where the adapter can't tell, leave it: the failure stays a `RequestRejectedError`, which is never absorbed.
+
+Keep the provider's own message out of every error you raise: it can echo request content or part of a key, and ours
+reach logs and error trackers. Put the original on `cause` (raising inside a `rescue` does that for you). Any other
+exception propagates unwrapped and is never retried, so map your transport's errors. Return anything but an
 `Adapter::Response` and Squishling raises `ConfigurationError`.
 
 ### Optional hooks
