@@ -25,13 +25,14 @@ module Squishling
     Built = Data.define(:prompt, :payload, :purpose)
 
     # Runs the harness (Definition#harness) over a Run of the call: the harness decides how the escalation is
-    # used, and what it returns is checked against the output schema's type.
+    # used, and what it returns is checked against the output schema's type. A call that ends on the token budget
+    # or a disagreement is reported to squawk once here, as the stop no attempt of its own reported.
     def call
       built = build
       harness = @definition.harness
       run = Run.new(definition: @definition, receiver: @receiver, inputs: @inputs, prompt: built.prompt,
         payload: built.payload, purpose: built.purpose, harness:)
-      accepted(harness.klass.new.call(run, **harness.options), run, harness)
+      accepted(call_harness(harness, run), run, harness)
     end
 
     # The first request the call would make (system prompt, output schema, user message), without making it.
@@ -40,6 +41,13 @@ module Squishling
     end
 
     private
+
+    def call_harness(harness, run)
+      harness.klass.new.call(run, **harness.options)
+    rescue BudgetExhaustedError, DisagreementError => e
+      run.report_stop(e)
+      raise
+    end
 
     def build
       purpose = @definition.purpose(@receiver)

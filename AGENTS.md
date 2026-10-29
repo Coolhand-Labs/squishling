@@ -75,7 +75,9 @@ Flag any change that breaks one of these; they are behavior contracts, not style
   (escalation attempts, sample rounds, judge attempts), against the tokens its `LLMClient` has tallied from the
   responses so far (mutex-guarded: samples add from worker threads). A request in flight is never cut short, so a call
   can end above the limit by one request; a response without token counts adds nothing. It raises
-  `BudgetExhaustedError`, an `InvalidOutputError`, so `squish_fallback` and the "no second rescue path" rule hold.
+  `BudgetExhaustedError`, an `InvalidOutputError`, so `squish_fallback` and the "no second rescue path" rule hold. Like a `DisagreementError`, it ends a call with no
+  attempt of its own to report, so `Invoker` reports it to `squawk` once (`stopped:`, `final: true`, no output), for
+  built-in and custom harnesses alike, before the fallback runs.
 - **Error taxonomy.** Everything Squishling raises inherits `Squishling::Error`: `ConfigurationError`
   (setup mistakes; never retried, escalated, or passed to fallbacks; a provider 400 is its `RequestRejectedError`
   subclass), `InvalidOutputError` (bad output after every attempt in the escalation; `BudgetExhaustedError` is its
@@ -164,7 +166,7 @@ The public surface is `Squishling.configure`/`config`, the adapter plugin point 
 `Squishling.register_harness`/`harnesses`/`reset_harnesses!`, `Squishling::Harness::Base` (`option` and its types,
 `call(run, **options)`, `validate_options!`), the `Squishling::Run` primitives a harness gets (`receiver`, `inputs`,
 `label`, `steps`, `stages`, `stage`, `escalate`, `samples`, `judge`, `agree?`, `log`) with
-`Squishling::Judge::Verdict`, and the squawk `metadata` keys `role:`/`sample:`/`repeated:`. The opt-in test support is public
+`Squishling::Judge::Verdict`, and the squawk `metadata` keys `role:`/`sample:`/`repeated:`/`stopped:`. The opt-in test support is public
 too: `Squishling::Testing` (`install`, `forbid_provider_calls!`, `no_llm_call`, `reset!`, `stub_result`/`stub_error`,
 `validate`/`fallback_for`/`preview`, `valid_reply_for`/`invalid_reply_for`, `capture_squawk`/`with_squawk`), its
 script DSL (`step`/`sample`/`judge`, `reply`/`fail`/`once`, `Reply`), `Testing::Adapter#requests`/`conversations` with
