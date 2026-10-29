@@ -84,7 +84,8 @@ fields; rename them (`class` to `ticket_class`). The reserved names are `class`,
 `deconstruct_keys`, and a few Ruby and Squishling internals (`initialize*`, `__send__`, `squishling_squished`).
 Other names, such as `method`, `format`, or `type`, work as usual. This applies to nested objects and array items too.
 
-With a hand-written Hash schema, every object that has `properties` must also say `type: "object"`: a schema with
+With a hand-written Hash schema, every object schema that becomes a result (and so a nested result) must also say
+`type: "object"`; `allOf` parts and unions with several non-null branches aren't typed, so they are exempt. A schema with
 `properties` alone accepts a String or Array too (JSON Schema applies `properties` only to objects), which would end
 up in the typed result where a nested result belongs. Squishling raises `ConfigurationError` when the schema is built
 (and `Squishling.verify` reports it) for the root, a nested property, array `items`, the object branch of an

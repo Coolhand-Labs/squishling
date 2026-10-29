@@ -56,8 +56,8 @@ module Squishling
 
     def validate(data)
       errors = @validator.validate(data).map { |error| error["error"] }
-      # A raw Hash schema can leave out type: "object"; the typed result is built from a Hash, so anything else is
-      # invalid output rather than a NoMethodError out of the builder.
+      # A raw Hash schema's type can be a union that includes "object" (a bare `properties` is refused at build);
+      # the typed result is built from a Hash, so anything else is invalid output rather than a NoMethodError.
       errors.empty? && result_class && !data.is_a?(Hash) ? ["root must be an object"] : errors
     end
 

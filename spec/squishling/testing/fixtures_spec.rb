@@ -118,7 +118,7 @@ RSpec.describe Squishling::Testing::Fixtures do
         "properties" => {
           "merged" => { "allOf" => [{ "type" => "object", "properties" => { "a" => { "type" => "string" } } },
                                     { "type" => "object", "properties" => { "b" => { "type" => "integer" } } }] },
-          # Schema rejects a typed-as-result property with `properties` but no type; allOf parts aren't typed.
+          # allOf parts aren't built into result classes, so a part without `type` is still allowed here.
           "untyped" => { "allOf" => [{ "properties" => { "x" => { "type" => "boolean" } } }] },
           "list" => { "items" => { "type" => "string" } },
           "nothing" => { "type" => "null" },

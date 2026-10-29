@@ -104,7 +104,7 @@ RSpec.describe Squishling, ".verify" do
                  required: ["n"], additionalProperties: false }
       klass = squishling_class { squishling purpose: "p", output_schema: schema }
 
-      expect(messages(klass)).to contain_exactly(/no `type: "object"`/)
+      expect(messages(klass)).to contain_exactly(/`type` isn't "object"/)
       expect(adapter.chats).to be_empty
     end
 

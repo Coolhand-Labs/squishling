@@ -98,7 +98,7 @@ RSpec.describe Squishling::Result do
       { "type" => "object", "properties" => { "n" => property }, "required" => ["n"], "additionalProperties" => false }
     end
 
-    def message = /`properties` but no `type: "object"`/
+    def message = /`properties` whose `type` isn't "object"/
 
     it "rejects a nested property" do
       expect { Squishling::Schema.new(root_with(untyped)) }.to raise_error(Squishling::ConfigurationError, message)

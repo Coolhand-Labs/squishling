@@ -91,8 +91,8 @@ module Squishling
         return if type == "object" || (type.is_a?(Array) && type.include?("object"))
 
         raise ConfigurationError,
-          "output_schema has a schema with `properties` but no `type: \"object\"`, so a non-object value would " \
-          "pass validation and end up in the typed result. Add `type: \"object\"` to it " \
+          "output_schema has a schema with `properties` whose `type` isn't \"object\" (or missing), so a non-object " \
+          "value would pass validation and end up in the typed result. Set `type: \"object\"` on it " \
           "(a union such as [\"object\", \"null\"] is also fine)"
       end
 
