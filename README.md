@@ -211,8 +211,7 @@ sees it right where the value goes, and the purpose stays short and about the go
   what to return when every attempt fails.
 - **Observability**: the opt-in [`squawk`](docs/failures.md#observing-every-attempt-squawk) hook sends each attempt's
   raw output (or only the rejected and retried ones), and the end of a call that a token budget or a disagreement
-  stopped, to your error tracker. Model output stays out of
-  error messages and logs otherwise.
+  stopped, to your error tracker. Model output stays out of error messages and logs otherwise.
 - **Opt-in context**: only method arguments, the instance state you name with `squish_context`, the `context:` you
   pass to `squish!`, and the source you choose to append are sent to the provider. The one addition: when
   [escalation](docs/configuration.md#models-and-escalation) moves to the next step, that step also sees the previous

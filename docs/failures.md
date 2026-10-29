@@ -193,9 +193,10 @@ end
 
 ### A call that is stopped
 
-A call that a [token budget](#capping-a-calls-cost-token-budgets) or a [disagreement](harnesses.md#when-the-harness-fails)
-stops has no attempt of its own to report: the attempt before a budget stop was reported as not final, and a
-disagreement's samples were both accepted. So the call gets one more report, whatever `squawk_on:` is set to:
+A call that a [token budget](#capping-a-calls-cost-token-budgets) or a
+[disagreement](harnesses.md#when-the-harness-fails) stops has no attempt of its own to report: the attempt before a
+budget stop was reported as not final, and a disagreement's samples were both accepted. So the call gets one more
+report, whatever `squawk_on:` is set to:
 
 - `error` is the `BudgetExhaustedError` or `DisagreementError`, `output` is `nil` (nothing was sent), `metadata[:final]`
   is `true`, and `metadata[:stopped]` is `:budget` or `:disagreement` (it is `nil` for every attempt's report).
