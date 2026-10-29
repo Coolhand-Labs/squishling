@@ -169,9 +169,9 @@ The public surface is `Squishling.configure`/`config`, the adapter plugin point 
 `call(run, **options)`, `validate_options!`), the `Squishling::Run` primitives a harness gets (`receiver`, `inputs`,
 `label`, `steps`, `stages`, `stage`, `escalate`, `samples`, `judge`, `agree?`, `log`) with
 `Squishling::Judge::Verdict`, and the squawk `metadata` keys `role:`/`sample:`/`repeated:`/`stopped:`. The opt-in test
-support is public too: `Squishling::Testing` (`install`, `forbid_provider_calls!`, `no_llm_call`, `reset!`, `stub_result`/`stub_error`,
-`validate`/`fallback_for`/`preview`, `valid_reply_for`/`invalid_reply_for`, `capture_squawk`/`with_squawk`), its
-script DSL (`step`/`sample`/`judge`, `reply`/`fail`/`once`, `Reply`), `Testing::Adapter#requests`/`conversations` with
+support is public too: `Squishling::Testing` (`install`, `forbid_provider_calls!`, `no_llm_call`, `reset!`,
+`stub_result`/`stub_error`, `validate`/`fallback_for`/`preview`, `valid_reply_for`/`invalid_reply_for`,
+`capture_squawk`/`with_squawk`), its script DSL (`step`/`sample`/`judge`, `reply`/`fail`/`once`, `Reply`), `Testing::Adapter#requests`/`conversations` with
 `Testing::Request`, and the `Testing::Minitest` / `Testing::RSpec` mixins. Don't break it without a clear
 migration path in the changelog.
 

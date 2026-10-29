@@ -205,8 +205,8 @@ disagreement's samples were both accepted. So the call gets one more report, wha
 - It is sent once, after the attempts that led to it and before `squish_fallback` runs, for the built-in harnesses and
   for a [custom one](harnesses.md#reporting-to-squawk) that raises either error. A call to another squished method
   from your own code (a `squish_validate`, say) reports its own stop, and the outer call does not report that error
-  again. The attempts before it keep
-  `final: false`, so `squawk_on: :final` sees a budget or disagreement ending only through this report.
+  again. The attempts before it keep `final: false`, so `squawk_on: :final` sees a budget or disagreement ending only
+  through this report.
 - Like any attempt's report, it runs your hook inline: an exception the hook raises propagates in place of the
   `BudgetExhaustedError` or `DisagreementError` (which stays on `cause`), so `squish_fallback` does not run.
 - `squawk: false`, or no hook, sends nothing. Ending on the last invalid attempt is not a stop: that attempt already
