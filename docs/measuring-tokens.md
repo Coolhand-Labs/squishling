@@ -73,8 +73,8 @@ end
 ```
 
 A call that stops on its [token budget](failures.md#capping-a-calls-cost-token-budgets) or a disagreement is also
-reported once, with `metadata[:stopped]` set (`:budget` or `:disagreement`) and no `usage`, so the hook above logs it with
-empty counts; check `metadata[:stopped]` to count it apart from an attempt.
+reported once, with `metadata[:stopped]` set (`:budget` or `:disagreement`) and no `usage`, so the hook above logs
+it with empty counts; check `metadata[:stopped]` to count it apart from an attempt.
 
 Each line carries the `"Class#method"` that made the call, so grouping by label gives you tokens per squishling. A call
 that stays in Ruby makes no LLM request and never reaches the hook, so a label that stops appearing is a path that has
