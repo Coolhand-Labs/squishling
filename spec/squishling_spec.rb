@@ -178,6 +178,16 @@ RSpec.describe Squishling do
       expect(Squishling::Wrapper.stub?(error.tap { |e| e.set_backtrace(["wrapper.rb:1"]) })).to be(false)
     end
 
+    it "does not take an error raised outside the wrapper's frames for a stub" do
+      error = begin
+        raise NotImplementedError, "helper"
+      rescue NotImplementedError => e
+        e
+      end
+
+      expect(Squishling::Wrapper.stub?(error)).to be(false)
+    end
+
     it "falls back to the LLM when a stub in a squished parent is reached through super" do
       parent = Class.new do
         include Squishling

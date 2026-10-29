@@ -45,7 +45,10 @@ Only the method's own stub routes: a `NotImplementedError` raised directly in th
 NotImplementedError` in a `def` or a `define_method` block, including one in a module prepended before
 `include Squishling`, or in a squished parent reached through `super`). One raised by code the method calls
 (a helper, another object, a block, or a `super` into a parent that isn't squished) is a bug in that code, not a
-missing implementation, so it propagates and nothing is sent to the provider.
+missing implementation, so it propagates and nothing is sent to the provider. Keep the `raise` in the method body:
+a shared `not_implemented!` helper, or a decorator prepended before `include Squishling` that wraps the method with
+its own `super` frame, hides the stub and the error propagates (use `squish_when { true }` or `squish!` to
+send those calls to the LLM).
 
 Each call is routed on its own, including a squished method that calls itself on smaller inputs (those
 recursive calls must return schema-valid values too). A subclass

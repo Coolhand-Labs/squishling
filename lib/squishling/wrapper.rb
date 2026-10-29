@@ -16,7 +16,8 @@ module Squishling
     # wrapper's own, or one raised directly in the method's own frame (`def x = raise NotImplementedError`). The
     # implementation lambda below sits one frame above the method, so anything raised deeper (a helper, a block,
     # another object, a `super` into an unsquished parent) has more frames in between. A missing backtrace fails
-    # closed; an exception re-raised or reused keeps the backtrace of its first raise.
+    # closed; an exception re-raised or reused keeps the backtrace of its first raise, so a stub that escapes
+    # another squished call (after its `squish!`) still reads as a stub to the caller.
     def self.stub?(error)
       error.is_a?(NoImplementation) || error.backtrace_locations&.at(1)&.absolute_path == FILE
     end
