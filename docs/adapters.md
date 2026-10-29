@@ -37,6 +37,10 @@ Everything works as it did before adapters: configure provider API keys with `Ru
 use `provider:` for models missing from RubyLLM's registry. See [Configuration](configuration.md). Transport-level
 retries are RubyLLM's (`RubyLLM.config.max_retries`, `request_timeout`).
 
+| Option | Default | Description |
+|---|---|---|
+| `keep_cause` | `false` | RubyLLM's exception holds the provider's response body, which can echo your request, and error trackers report the whole `cause` chain. By default the errors the adapter raises carry a sanitized `cause` (the class and HTTP status only). `true` keeps RubyLLM's original exception there. See [the cause of a provider failure](failures.md#the-cause-of-a-provider-failure). |
+
 This is the only built-in adapter that supports `type: :judgment` judges ([System One decision models](harnesses.md#the-judge)).
 
 ## OpenAI-compatible endpoints
@@ -152,7 +156,10 @@ answer](failures.md#a-cutoff-or-a-wrong-answer).
 | `Squishling::LLMError` | Rate limit, 5xx, timeout, connection failure, an overlong context: anything worth another go | Moves to the next attempt; raised from the last one (and goes to `squish_fallback`). |
 
 Keep the provider's own message out of both: it can echo request content or part of a key, and ours reach logs and
-error trackers. Put the original on `cause` (raising inside a `rescue` does that for you). Any other exception
+error trackers, and so do trackers that walk the `cause` chain. If the provider's exception carries a response body
+(an HTTP client error), don't leave it as the `cause` that raising inside a `rescue` sets: pass
+`cause: sanitized_cause(error, status: …)`, which builds a stand-in with only the class, the status, and the
+backtrace. An exception that carries no body (a timeout, a refused connection) can stay as the `cause`. Any other exception
 propagates unwrapped and is never retried, so map your transport's errors. Return anything but an
 `Adapter::Response` and Squishling raises `ConfigurationError`.
 

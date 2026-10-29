@@ -203,15 +203,61 @@ RSpec.describe Squishling::Adapters::RubyLLM do
       "a timeout" => [Faraday::TimeoutError, Squishling::LLMError],
       "a connection failure" => [Faraday::ConnectionFailed, Squishling::LLMError]
     }.each do |label, (type, raised)|
-      it "maps #{label} to #{raised.name.split('::').last}, keeping the provider's message out and on the cause" do
+      it "maps #{label} to #{raised.name.split('::').last}, keeping the provider's message out of it and its cause" do
         error = type.new(leaked)
         stub_chat(error)
 
         expect { adapter.complete(adapter_request) }.to raise_error(raised, /\AKlass#call: .*#{type.name}/) do |e|
           expect(e.message).not_to include("sk-proj", "Jane Doe")
+          expect(e.cause).to be_a(Squishling::Adapter::ProviderFailure)
+          expect(e.cause.message).to eq(type.name)
+          expect(e.cause.backtrace).to eq(error.backtrace)
+        end
+      end
+
+      it "keeps the original #{label} exception as the cause with keep_cause: true" do
+        error = type.new(leaked)
+        stub_chat(error)
+
+        expect { described_class.new(keep_cause: true).complete(adapter_request) }.to raise_error(raised) do |e|
           expect(e.cause).to equal(error)
         end
       end
+    end
+
+    it "leaves the provider's response body and the response itself off the cause" do
+      response = Struct.new(:status, :body).new(500, { "error" => { "message" => leaked } })
+      stub_chat(RubyLLM::ServerError.new(leaked, response:))
+
+      expect { adapter.complete(adapter_request) }.to raise_error(Squishling::LLMError) do |e|
+        expect(e.cause.message).to eq("RubyLLM::ServerError, HTTP 500")
+        expect(e.cause.instance_variables).to be_empty
+        expect(e.cause).not_to respond_to(:response)
+        expect(e.cause.inspect).not_to include("sk-proj", "Jane Doe")
+      end
+    end
+
+    it "gives a Faraday transport error a sanitized cause too" do
+      stub_chat(Faraday::ConnectionFailed.new("connect to https://api.example.test failed: #{leaked}"))
+
+      expect { adapter.complete(adapter_request) }.to raise_error(Squishling::LLMError) do |e|
+        expect(e.cause).to be_a(Squishling::Adapter::ProviderFailure)
+        expect(e.cause.message).to eq("Faraday::ConnectionFailed")
+      end
+    end
+
+    it "refuses a keep_cause: that isn't true or false" do
+      expect { described_class.new(keep_cause: "yes") }
+        .to raise_error(Squishling::ConfigurationError, /keep_cause: must be true or false/)
+    end
+
+    it "takes keep_cause: from a config.adapter Hash" do
+      adapter = Squishling::Adapter.build({ type: :ruby_llm, keep_cause: true }, "test")
+      error = RubyLLM::RateLimitError.new(leaked)
+      stub_chat(error)
+
+      expect { adapter.complete(adapter_request) }
+        .to raise_error(Squishling::LLMError) { |e| expect(e.cause).to equal(error) }
     end
 
     it "keeps RubyLLM's own configuration message, which names a missing setting and holds no provider text" do
@@ -232,7 +278,10 @@ RSpec.describe Squishling::Adapters::RubyLLM do
       stub_chat(Faraday::ServerError.new("upstream said no", { status: 503 }))
 
       expect { adapter.complete(adapter_request) }
-        .to raise_error(Squishling::LLMError, /Faraday::ServerError, HTTP 503/) { |e| expect(e.message).not_to include("upstream") }
+        .to raise_error(Squishling::LLMError, /Faraday::ServerError, HTTP 503/) do |e|
+          expect(e.message).not_to include("upstream")
+          expect(e.cause.message).to eq("Faraday::ServerError, HTTP 503")
+        end
     end
 
     def rejection_response(body)
@@ -264,7 +313,9 @@ RSpec.describe Squishling::Adapters::RubyLLM do
         expect(e.message).to include("may be invalid")
         expect(e.message).not_to include("temperature", "sk-proj", "Jane Doe")
         expect([e.provider_status, e.provider_code]).to eq(["INVALID_ARGUMENT", nil])
-        expect(e.cause).to be_a(RubyLLM::BadRequestError)
+        expect(e.cause).to be_a(Squishling::Adapter::ProviderFailure)
+        expect(e.cause.message).to eq("RubyLLM::BadRequestError, HTTP 400")
+        expect(e.cause.instance_variables).to be_empty
       end
     end
 

@@ -130,6 +130,7 @@ module Squishling
   end
 
   # The LLM call itself failed (rate limit, server error, timeout, connection) after the
-  # adapter's own HTTP retries. The original exception is available as #cause.
+  # adapter's own HTTP retries. #cause is the adapter's: a sanitized stand-in (Adapter::ProviderFailure) for a provider
+  # exception that carries a response body, or the transport error itself when it carries none.
   class LLMError < Error; end
 end

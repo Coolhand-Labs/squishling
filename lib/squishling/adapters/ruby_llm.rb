@@ -12,9 +12,16 @@ module Squishling
       # The ruby_llm gem isn't installed (Adapter.detect tells that apart from a gem that is, but too old).
       class MissingGemError < ConfigurationError; end
 
-      # Raises ConfigurationError when the ruby_llm gem is missing.
-      def initialize
-        super
+      # Raises ConfigurationError when the ruby_llm gem is missing. keep_cause: true keeps RubyLLM's original exception
+      # as the #cause of the errors raised for a failed request (its message and response hold the provider's response
+      # body); by default #cause is a sanitized stand-in (Adapter::ProviderFailure) with only the class and HTTP status.
+      def initialize(keep_cause: false)
+        super()
+        unless [true, false].include?(keep_cause)
+          raise ConfigurationError, "adapter :ruby_llm keep_cause: must be true or false, got #{keep_cause.inspect}"
+        end
+
+        @keep_cause = keep_cause
         require "ruby_llm"
         check_version!
         @lib = gem_lib_dir
@@ -129,23 +136,33 @@ module Squishling
       # A provider's or transport's own message never goes into ours: a provider can echo request content or part of
       # an API key in it, and ours reach logs and error trackers. The original stays as #cause for whoever
       # chooses to read it. RubyLLM's own ConfigurationError is local (it names a missing setting), so it is kept.
+      # Error trackers report the whole cause chain, and RubyLLM's error message and response hold the provider's
+      # response body, so #cause is a sanitized stand-in (class, HTTP status, backtrace) unless keep_cause: is set.
       def guarded(request)
         yield
       rescue ::RubyLLM::ConfigurationError => e
         raise configuration_error(request, "#{e.class}: #{e.message}")
       rescue ::RubyLLM::UnauthorizedError, ::RubyLLM::ForbiddenError => e
-        raise configuration_error(request, describe_failure(e))
+        raise configuration_error(request, describe_failure(e)), cause: cause_of(e)
       rescue ::RubyLLM::BadRequestError => e
         raise rejected_request_error(request, via: describe_failure(e), body: response_field(e.response, :body),
-          http_status: response_field(e.response, :status))
+          http_status: status_of(e)), cause: cause_of(e)
       rescue ::RubyLLM::Error, Faraday::Error => e
-        raise llm_error(request, describe_failure(e))
+        raise llm_error(request, describe_failure(e)), cause: cause_of(e)
       end
 
       # The error's class and HTTP status, when it has one, which is all of it that is ours to repeat.
       def describe_failure(error)
-        status = response_field(error.response, :status)
+        status = status_of(error)
         status ? "#{error.class}, HTTP #{status}" : error.class.to_s
+      end
+
+      def status_of(error)
+        response_field(error.response, :status)
+      end
+
+      def cause_of(error)
+        @keep_cause ? error : sanitized_cause(error, status: status_of(error))
       end
 
       # A field of an error's response, which is a Faraday::Response, or a Hash for a Faraday error.

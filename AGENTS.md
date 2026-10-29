@@ -80,14 +80,18 @@ Flag any change that breaks one of these; they are behavior contracts, not style
   (setup mistakes; never retried, escalated, or passed to fallbacks; a provider 400 is its `RequestRejectedError`
   subclass), `InvalidOutputError` (bad output after every attempt in the escalation; `BudgetExhaustedError` is its
   subclass for a spent token budget), `LLMError` (provider/transport failure after the adapter's HTTP retries,
-  original as `cause`). Never wrap or swallow exceptions raised by the user's own Ruby code.
+  `cause` per the adapter, see the invariant on provider text below). Never wrap or swallow exceptions raised by the user's own Ruby code.
 - **Model output leaves the process only through `InvalidOutputError#raw` and the opt-in `squawk` hook.** Error
   messages and `config.logger` lines carry parse positions and schema paths, never the response itself (the
   documented exceptions are model-chosen extra key names, which `InvalidOutputError#error_details` tags
   `model_derived?`, and the developer's own `squish_validate` messages).
   A provider's or transport's own message is the same: ours carry the error class and HTTP status (a 400's
   `RequestRejectedError` adds the body's status and code when they are plain tokens, as `provider_status` and
-  `provider_code`), and the original stays on `cause`.
+  `provider_code`). The cause chain is covered too, since error trackers walk it: only adapters set `cause`, and an
+  adapter puts a provider exception that carries a response body there only as `sanitized_cause` (`Adapter::Base`; an
+  `Adapter::ProviderFailure` with the class, HTTP status, and backtrace, built fresh, never a copy of the original).
+  The RubyLLM adapter's `keep_cause: true` is the developer's opt-in to the original; core never touches `cause`.
+  Transport errors that carry no body may stay as the cause.
 - **Only named context leaves the process.** The LLM sees method arguments, `squish_context` values, a
   `squish!` call's `context:`, and source the developer explicitly passes to `append_to_purpose` — never
   instance variables wholesale. Exceptions in context are sent as class and message only. The one model-generated
@@ -141,7 +145,8 @@ Flag any change that breaks one of these; they are behavior contracts, not style
 
 The public surface is `Squishling.configure`/`config`, the adapter plugin point (`config.adapter`,
 `Squishling.register_adapter`/`adapters`/`reset_adapters!`, `Squishling::Adapter::Base` (`complete`, and the optional
-`judgments?`/`judge`/`capture_context`/`with_context`), `Adapter::Request`, `Adapter::Response`, and the built-in
+`judgments?`/`judge`/`capture_context`/`with_context`, and the `sanitized_cause` helper with its
+`Adapter::ProviderFailure`), `Adapter::Request`, `Adapter::Response`, and the built-in
 `Adapters::RubyLLM` and `Adapters::OpenAICompatible` with their options), the `include Squishling` DSL
 (`squishling` — including its
 `model:`/`escalation:` (steps with `model:`, `attempts:`, `priority:`, `rotate:`, `provider:`, `params:`,

@@ -69,6 +69,11 @@ module Squishling
       end
     end
 
+    # What an adapter puts on a Squishling error's #cause in place of a provider's own exception (see
+    # Base#sanitized_cause): the original's class name and HTTP status in its message, and its backtrace, but none of
+    # its message, response, or other state. Not a Squishling::Error: it is never raised, only carried.
+    class ProviderFailure < StandardError; end
+
     # The adapter contract. Subclass it, implement #complete, and raise Squishling's errors:
     #
     #   class MyAdapter < Squishling::Adapter::Base
@@ -124,6 +129,16 @@ module Squishling
 
       def llm_error(request, message)
         LLMError.new("#{request.label}: #{message}")
+      end
+
+      # What to pass as `cause:` when raising a Squishling error for a provider's exception: a ProviderFailure naming
+      # the original's class and the HTTP status (when given), with the original's backtrace. A provider exception's
+      # message and response usually hold the provider's response body, which can echo request content, and error
+      # trackers (Sentry, say) report the whole cause chain. Built fresh, never a copy of the original, so none of
+      # its state (a Faraday response, say) comes along. Transport errors that carry no body can be passed as they are.
+      def sanitized_cause(error, status: nil)
+        ProviderFailure.new([error.class, ("HTTP #{status}" if status)].compact.join(", "))
+          .tap { |failure| failure.set_backtrace(error.backtrace) }
       end
 
       # A RequestRejectedError for a request the provider rejected (a 400). via names how it failed (the error class,
