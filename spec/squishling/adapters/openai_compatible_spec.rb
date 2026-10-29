@@ -104,7 +104,10 @@ RSpec.describe Squishling::Adapters::OpenAICompatible do # rubocop:disable RSpec
       expect(stub).to have_been_requested
     end
 
-    it "sends a callable's or the environment's key, and no Authorization for a blank one" do
+  end
+
+  describe "credential headers" do
+    it "sends a callable's or the environment's key" do
       from_proc = stub_post(headers: { "Authorization" => "Bearer from-proc" }).to_return(reply)
       from_env = stub_post(headers: { "Authorization" => "Bearer from-env" }).to_return(reply)
 
