@@ -46,11 +46,11 @@ module Squishling
       # max_retries: how often a timeout, connection failure, HTTP 408, 429, or 5xx is retried here (honoring
       # Retry-After) before it surfaces as an LLMError. max_tokens_param: the body key for max_output_tokens
       # (:max_completion_tokens, or :max_tokens for older servers). structured_output: :json_schema, :json_object,
-      # or :none. allow_insecure_http: lets a credential (api_key or an Authorization header) go over plain http to a
-      # host that isn't loopback; without it that is a ConfigurationError. max_response_bytes: the most a response
-      # (an error body too) may hold, 8 MiB by default. total_timeout: the most seconds one attempt may take
-      # (read_timeout restarts at every read); it defaults to open_timeout + 2 * read_timeout. Responses are requested
-      # and accepted uncompressed only. Raises ConfigurationError for a bad option.
+      # or :none. allow_insecure_http: lets a credential (api_key, or a header such as Authorization or api-key) go
+      # over plain http to a host that isn't loopback; without it that is a ConfigurationError. max_response_bytes:
+      # the most a response (an error body too) may hold, 8 MiB by default. total_timeout: the most seconds one
+      # attempt may take (read_timeout restarts at every read); it defaults to open_timeout + 2 * read_timeout.
+      # Responses are requested and accepted uncompressed only. Raises ConfigurationError for a bad option.
       def initialize(base_url: DEFAULT_BASE_URL, api_key: nil, headers: {}, default_model: nil, open_timeout: 10,
         read_timeout: 120, max_retries: 2, max_tokens_param: :max_completion_tokens, structured_output: :json_schema,
         allow_insecure_http: false, max_response_bytes: DEFAULT_MAX_RESPONSE_BYTES, total_timeout: nil)

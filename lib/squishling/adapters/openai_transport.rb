@@ -43,6 +43,9 @@ module Squishling
       def post(body, headers)
         deadline = @clock.call + @total_timeout
         perform(body, headers, deadline)
+      rescue DeadlineExceeded
+        # Net::HTTP re-raises what interrupts a connect with the host and port in the message; ours is built afresh.
+        expired!
       rescue Timeout::Error
         expired! if @clock.call >= deadline
 

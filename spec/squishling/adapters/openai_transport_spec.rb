@@ -376,6 +376,13 @@ RSpec.describe Squishling::Adapters::OpenAITransport do # rubocop:disable RSpec/
       end
     end
 
+    it "doesn't let Net::HTTP's connect error put the host in the message when the deadline fires while connecting" do
+      allow(TCPSocket).to receive(:open) { sleep 5 }
+
+      expect { transport_to(URI.parse("http://127.0.0.1:9/v1"), open_timeout: 10, total_timeout: 0.2).post("{}", {}) }
+        .to raise_error(described_class::DeadlineExceeded, "the request ran past total_timeout (0.2s)")
+    end
+
     it "refuses a gzip response instead of inflating it" do
       body = Zlib.gzip("x" * 100_000)
       head = "HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: #{body.bytesize}\r\n\r\n"
