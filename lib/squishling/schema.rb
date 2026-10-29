@@ -8,8 +8,11 @@ module Squishling
     # collected along with their schemas. A Hash compares by content, which yields the same schema.
     CACHE = ObjectSpace::WeakKeyMap.new
     CACHE_LOCK = Mutex.new
-    # What json_schemer raises for a $ref it can't resolve. Its default resolver refuses remote URIs: none is fetched.
-    REF_ERRORS = [JSONSchemer::UnknownRef, JSONSchemer::InvalidRefResolution, JSONSchemer::InvalidRefPointer].freeze
+    # What building a validator raises for a $ref (or $schema) it can't resolve. json_schemer's default resolver
+    # refuses remote URIs, so none is fetched.
+    REF_ERRORS = [
+      JSONSchemer::UnknownRef, JSONSchemer::InvalidRefResolution, JSONSchemer::InvalidRefPointer, URI::InvalidURIError
+    ].freeze
 
     # Conditional keywords (Schematist's `given` and `dependent`) that providers' strict modes don't support.
     # They're validated locally and kept out of the schema sent to the LLM.
@@ -21,7 +24,7 @@ module Squishling
 
     class << self
       def for(raw)
-        CACHE_LOCK.synchronize { CACHE[raw] || (CACHE[raw] = new(raw)) }
+        CACHE_LOCK.synchronize { CACHE[raw] ||= new(raw) }
       end
 
       # Deep-convert to plain JSON types (string keys), as the LLM would return them.
@@ -53,8 +56,7 @@ module Squishling
         "schema" => provider_schema(@json_schema),
         "strict" => true
       }.compact
-      @validator = JSONSchemer.schema(@json_schema)
-      resolve_refs!(@validator)
+      @validator = validator_for(@json_schema)
       # Built now so a property name the result can't take fails here, not on the first response.
       @result_class = Result.build(@json_schema)
     end
@@ -72,16 +74,27 @@ module Squishling
 
     private
 
-    # Resolves every $ref now, so one that points nowhere (a remote URI is never fetched; a missing $defs entry)
-    # fails at build and in Squishling.verify, not on the first response.
-    def resolve_refs!(schema)
-      schema.parsed.each_value do |keyword|
-        keyword.ref_schema if keyword.respond_to?(:ref_schema)
-        subschemas(keyword.parsed).each { |subschema| resolve_refs!(subschema) }
-      end
+    # The json_schemer validator, with every $ref resolved now, so one that points nowhere (a remote URI, a missing
+    # $defs entry) fails at build and in Squishling.verify, not on the first response.
+    def validator_for(json_schema)
+      validator = JSONSchemer.schema(json_schema)
+      resolve_refs!(validator, {}.compare_by_identity)
+      validator
     rescue *REF_ERRORS => e
       raise ConfigurationError, "output_schema has a $ref that can't be resolved (#{e.message}); " \
                                 "only references within the schema are supported"
+    end
+
+    # Walks the parsed schema (json_schemer's Schema#parsed and Keyword#ref_schema) and into each target a $ref
+    # resolves to, so a reference inside a subschema kept under any keyword is checked too. seen stops cycles.
+    def resolve_refs!(schema, seen)
+      return if seen.key?(schema)
+
+      seen[schema] = true
+      schema.parsed.each_value do |keyword|
+        resolve_refs!(keyword.ref_schema, seen) if keyword.respond_to?(:ref_schema)
+        subschemas(keyword.parsed).each { |subschema| resolve_refs!(subschema, seen) }
+      end
     end
 
     # The Schema objects directly under a parsed keyword: itself, in a list, or in a map of names.

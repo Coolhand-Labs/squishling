@@ -51,6 +51,19 @@ RSpec.describe Squishling::Schema do
         .to raise_error(Squishling::ConfigurationError, /\$ref that can't be resolved/)
     end
 
+    it "finds an unresolvable $ref in a subschema kept under a keyword json_schemer doesn't know" do
+      unknown = { "tag" => { "properties" => { "b" => { "$ref" => "#/nope" } } } }
+      raw = with_ref("#/x-defs/tag").merge("x-defs" => unknown)
+
+      expect { described_class.new(raw) }.to raise_error(Squishling::ConfigurationError, /can't be resolved/)
+    end
+
+    it "raises a ConfigurationError for a malformed $ref or a remote $schema" do
+      expect { described_class.new(with_ref("not a uri")) }.to raise_error(Squishling::ConfigurationError)
+      expect { described_class.new(json_schema.merge("$schema" => "https://example.com/meta")) }
+        .to raise_error(Squishling::ConfigurationError)
+    end
+
     it "finds an unresolvable $ref nested in a subschema" do
       raw = { "type" => "object", "additionalProperties" => false, "required" => ["list"],
               "properties" => { "list" => { "type" => "array", "items" => { "$ref" => "http://example.com/x" } } } }
@@ -60,8 +73,9 @@ RSpec.describe Squishling::Schema do
   end
 
   describe ".for" do
-    it "returns the same Schema for the same raw schema" do
+    it "returns the same Schema for the same raw schema, and for a copy of it" do
       expect(described_class.for(json_schema)).to equal(described_class.for(json_schema))
+      expect(described_class.for(json_schema)).to equal(described_class.for(Marshal.load(Marshal.dump(json_schema))))
     end
 
     it "holds raw schemas weakly, so a reloaded schema class can be collected" do
