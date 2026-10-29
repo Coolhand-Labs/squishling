@@ -92,7 +92,7 @@ end
 - `purpose:` (replaces the class's)
 - `append_to_purpose:` (added to the class's, see [Appending to the purpose](#appending-to-the-purpose))
 - `output_schema:` (or a schema block)
-- `model:` or `escalation:`, `provider:`, and `params:` (generation params; see [Configuration](configuration.md))
+- `model:` or `escalation:`, `provider:`, `params:` (generation params), and `cache:` (prompt caching); see [Configuration](configuration.md)
 - `harness:` (see [Harnesses](harnesses.md), including your own)
 - `max_total_output_tokens:` and `max_total_input_tokens:` (see [Capping a call's cost](failures.md#capping-a-calls-cost-token-budgets))
 - `when:`, a predicate proc
@@ -137,6 +137,7 @@ end
 | `append_to_purpose:` | Added to the declared sections; `false` (alone or first in an Array) drops them for this call |
 | `purpose:` | Replaces the purpose |
 | `model:` or `escalation:`, `provider:`, `params:` | E.g. send this call to a stronger model, or a whole [escalation](configuration.md#models-and-escalation), when Ruby fails. A `provider:` needs a `model:` or `escalation:`; `params:` merge key by key over the declared ones. |
+| `cache:` | Replaces the declared [prompt caching](configuration.md#prompt-caching) setting; `false` turns it off for this call |
 | `harness:` | Replaces the declared [harness](harnesses.md), e.g. `harness: :judged_squishsum` to double-check a hand-off |
 | `max_total_output_tokens:`, `max_total_input_tokens:` | Cap what this call may spend, e.g. a tighter budget for a hand-off; `false` lifts a declared cap. See [Capping a call's cost](failures.md#capping-a-calls-cost-token-budgets). |
 

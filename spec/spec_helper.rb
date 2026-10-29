@@ -9,13 +9,14 @@ require "squishling"
 class FakeChat
   Response = Struct.new(:content, :model, :tokens, :finish_reason)
 
-  attr_reader :model, :provider, :params, :instructions, :schema, :transcript
+  attr_reader :model, :provider, :params, :cache, :instructions, :schema, :transcript
   attr_accessor :pending
 
   def initialize(request)
     @model = request.model
     @provider = request.provider
     @params = request.params
+    @cache = request.cache
     @instructions = request.instructions
     @schema = request.schema
     @transcript = []

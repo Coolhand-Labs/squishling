@@ -70,7 +70,7 @@ module Squishling
       end
 
       step = Harness::OptionTypes.check(:step, declaration, label, :"harness step")
-      ModelPath.steps([step], provider: nil, params: @definition.params).freeze
+      ModelPath.steps([step], provider: nil, params: @definition.params, cache: @definition.cache).freeze
     end
 
     # Makes each attempt of the stages in order (the escalation's steps when none are given) until an output

@@ -155,6 +155,21 @@ RSpec.describe Squishling::Observer do
         model: "claude-haiku-4-5")])
     end
 
+    it "carries the prompt cache's token counts, nil when the provider reports none" do
+      seen = []
+      observer = Object.new
+      observer.define_singleton_method(:around) { |_call, &block| seen << block.call }
+      Squishling.configure { |c| c.observer = observer }
+      tokens = { input_tokens: 20, output_tokens: 3, cache_read_tokens: 100, cache_write_tokens: 0 }
+      stub_llm(FakeChat::Response.new(high, "claude-haiku-4-5", tokens), high)
+
+      klass.call(text: "x")
+      klass.call(text: "y")
+
+      expect(seen.first).to have_attributes(cache_read_tokens: 100, cache_write_tokens: 0)
+      expect(seen.last).to have_attributes(cache_read_tokens: nil, cache_write_tokens: nil)
+    end
+
     it "reports unreported counts as nil, and ignores what the observer returns" do
       seen = []
       observer = Object.new

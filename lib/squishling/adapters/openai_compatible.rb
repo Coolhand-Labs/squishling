@@ -285,12 +285,23 @@ module Squishling
       def tokens_of(usage)
         return {} unless usage.is_a?(Hash)
 
+        cached = detail(usage, "prompt_tokens_details", "cached_tokens")
+        written = detail(usage, "prompt_tokens_details", "cache_write_tokens")
         {
-          input_tokens: usage["prompt_tokens"],
+          input_tokens: uncached(usage["prompt_tokens"], cached, written),
           output_tokens: usage["completion_tokens"],
-          cache_read_tokens: detail(usage, "prompt_tokens_details", "cached_tokens"),
+          cache_read_tokens: cached,
+          cache_write_tokens: written,
           thinking_tokens: detail(usage, "completion_tokens_details", "reasoning_tokens")
         }.select { |_, count| count.is_a?(Integer) }
+      end
+
+      # prompt_tokens counts the tokens read from and written to the cache; input_tokens is the rest, as every adapter
+      # reports it (see Adapter::Response), so they aren't counted twice.
+      def uncached(prompt_tokens, *cached)
+        return prompt_tokens unless prompt_tokens.is_a?(Integer)
+
+        [prompt_tokens - cached.grep(Integer).sum, 0].max
       end
 
       # A count inside a usage sub-object, which a server might send in any shape.

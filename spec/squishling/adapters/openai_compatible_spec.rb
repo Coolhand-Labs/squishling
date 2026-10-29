@@ -97,13 +97,28 @@ RSpec.describe Squishling::Adapters::OpenAICompatible do # rubocop:disable RSpec
         "json_schema")).to include("name" => "Ticket_triage_", "description" => "Triage")
     end
 
+    it "leaves the cache tokens out of input_tokens, never below zero, and passes it through when none are reported" do
+      tokens = lambda do |usage|
+        stub_post.to_return(reply(completion(usage:)))
+        adapter.complete(adapter_request).tokens
+      end
+
+      expect(tokens.call(prompt_tokens: 30, completion_tokens: 1,
+        prompt_tokens_details: { cached_tokens: 8, cache_write_tokens: 10 }))
+        .to include(input_tokens: 12, cache_read_tokens: 8, cache_write_tokens: 10)
+      expect(tokens.call(prompt_tokens: 5, completion_tokens: 1, prompt_tokens_details: { cached_tokens: 9 }))
+        .to include(input_tokens: 0)
+      expect(tokens.call(prompt_tokens: 7, completion_tokens: 1)).to include(input_tokens: 7)
+      expect(tokens.call(completion_tokens: 1)).not_to have_key(:input_tokens)
+    end
+
     it "parses token details when the server reports them" do
       usage = { prompt_tokens: 20, completion_tokens: 9, prompt_tokens_details: { cached_tokens: 8 },
                 completion_tokens_details: { reasoning_tokens: 3 } }
       stub_post.to_return(reply(completion(usage:)))
 
       expect(adapter.complete(adapter_request).tokens)
-        .to eq(input_tokens: 20, output_tokens: 9, cache_read_tokens: 8, thinking_tokens: 3)
+        .to eq(input_tokens: 12, output_tokens: 9, cache_read_tokens: 8, thinking_tokens: 3)
     end
 
     it "falls back to the requested model and no tokens when the server reports neither" do

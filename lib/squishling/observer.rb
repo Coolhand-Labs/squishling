@@ -17,8 +17,13 @@ module Squishling
       :request)
 
     # What an observer's block returns: the request's token usage and the model that answered, never the content.
-    # A count the provider didn't report is nil.
-    Usage = Data.define(:input_tokens, :output_tokens, :model)
+    # A count the provider didn't report is nil. cache_read_tokens and cache_write_tokens are the input tokens served
+    # from, and written to, the provider's prompt cache (see Cache), so a hit is visible.
+    Usage = Data.define(:input_tokens, :output_tokens, :model, :cache_read_tokens, :cache_write_tokens) do
+      def initialize(input_tokens:, output_tokens:, model:, cache_read_tokens: nil, cache_write_tokens: nil)
+        super
+      end
+    end
 
     BUILT_IN = %i[coolhand].freeze
 
@@ -96,6 +101,8 @@ module Squishling
       model = response.respond_to?(:model) ? response.model : nil
       Usage.new(input_tokens: token_count(tokens, :input_tokens, :input),
         output_tokens: token_count(tokens, :output_tokens, :output),
+        cache_read_tokens: token_count(tokens, :cache_read_tokens, :cache_read),
+        cache_write_tokens: token_count(tokens, :cache_write_tokens, :cache_write),
         model: model.respond_to?(:id) ? model.id : model)
     end
 

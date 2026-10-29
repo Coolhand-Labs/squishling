@@ -141,19 +141,23 @@ Flag any change that breaks one of these; they are behavior contracts, not style
 
 The public surface is `Squishling.configure`/`config`, the adapter plugin point (`config.adapter`,
 `Squishling.register_adapter`/`adapters`/`reset_adapters!`, `Squishling::Adapter::Base` (`complete`, and the optional
-`judgments?`/`judge`/`capture_context`/`with_context`), `Adapter::Request`, `Adapter::Response`, and the built-in
+`judgments?`/`judge`/`capture_context`/`with_context`), `Adapter::Request` (with `cache`), `Adapter::Response`, and the
+built-in
 `Adapters::RubyLLM` and `Adapters::OpenAICompatible` with their options), the `include Squishling` DSL
 (`squishling` — including its
-`model:`/`escalation:` (steps with `model:`, `attempts:`, `priority:`, `rotate:`, `provider:`, `params:`,
-`forward_rejected:`, `retry_temperature:`, `include_when:`)/`provider:`/`params:`/
+`model:`/`escalation:` (steps with `model:`, `attempts:`, `priority:`, `rotate:`, `provider:`, `params:`, `cache:`,
+`forward_rejected:`, `retry_temperature:`, `include_when:`)/`provider:`/`params:`/`cache:`/
 `harness:` (`type:`, `compare:`, `judge:` (a step, plus `type: :chat | :judgment` and `min_confidence:`),
 `judge_instructions:`)/`append_to_purpose:`/`squawk:`/`squawk_on:` options — `purpose`, `append_to_purpose`,
-`output_schema`, `squish_when`, `squish_context`, `squish` (including `validate:`/`harness:`/`squawk:`/`squawk_on:`),
+`output_schema`, `squish_when`, `squish_context`, `squish` (including `validate:`/`cache:`/`harness:`/`squawk:`/
+`squawk_on:`),
 `squish_validate`, `squish_fallback`, `result`/`squishling_result`, `squish!` (including
-`model:`/`escalation:`/`harness:`), and the `max_total_output_tokens:`/`max_total_input_tokens:` options of
+`model:`/`escalation:`/`cache:`/`harness:`), and the `max_total_output_tokens:`/`max_total_input_tokens:` options of
 `squishling`, `squish`, and `squish!`), `Squishling::Configuration` options (including `default_harness`,
+`default_cache`,
 `default_max_total_output_tokens`/`default_max_total_input_tokens`, `observer`, `squawk_on`, and `squawk`, whose
-`output:`/`metadata:`/`error:` keywords are public), `Squishling::Observer::Call`/`Usage`,
+`output:`/`metadata:`/`error:` keywords are public), `Squishling::Observer::Call`/`Usage`
+(with `cache_read_tokens`/`cache_write_tokens`),
 `Squishling::Harness::DEFAULT_JUDGE_INSTRUCTIONS`, result objects (`squished?`, `to_h`, `[]`), and the error classes
 (including `InvalidOutputError#error_details` (`InvalidOutputError::Detail`: `message`, `source`,
 `model_derived?`), `InvalidOutputError#models`, `DisagreementError#candidates`/`verdict`/`reason`,

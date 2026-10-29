@@ -967,7 +967,8 @@ RSpec.describe "Squishling custom harnesses" do
     it "lets a step carry extra keys for its caller, and still rejects any others" do
       step = Squishling::ModelPath.normalize_step({ "model" => "x", "tag" => 1 }, "X", extras: %i[tag])
 
-      expect(step).to eq(model: "x", provider: nil, params: nil, attempts: 1, forward_rejected: true, tag: 1)
+      expect(step).to eq(model: "x", provider: nil, params: nil, cache: nil, attempts: 1, forward_rejected: true,
+        tag: 1)
       expect { Squishling::ModelPath.normalize_step({ model: "x", other: 1 }, "X", extras: %i[tag]) }
         .to raise_error(Squishling::ConfigurationError, /unknown step option\(s\) other/)
     end

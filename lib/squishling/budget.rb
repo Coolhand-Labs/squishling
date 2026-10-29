@@ -39,11 +39,13 @@ module Squishling
         @lock = Mutex.new
       end
 
-      # Counts a response's tokens: an Adapter::Response, or a judgment (see Observer.usage).
+      # Counts a response's tokens: an Adapter::Response, or a judgment (see Observer.usage). The input total includes
+      # the tokens read from and written to the prompt cache, which adapters report apart from input_tokens.
       def add(response)
         usage = Observer.usage(response)
         @lock.synchronize do
-          @used[:input_tokens] += count(usage.input_tokens)
+          @used[:input_tokens] += count(usage.input_tokens) + count(usage.cache_read_tokens) +
+                                  count(usage.cache_write_tokens)
           @used[:output_tokens] += count(usage.output_tokens)
         end
         response

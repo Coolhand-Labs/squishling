@@ -89,7 +89,8 @@ can meter spend knowing which method, escalation level, sample, or judge made th
 ```ruby
 class SpendObserver
   def around(call)
-    usage = yield # input_tokens, output_tokens (nil if unreported), and model; never the content
+    usage = yield # input_tokens (not counting cached ones), output_tokens, cache_read_tokens, cache_write_tokens
+                  # (each nil if unreported), and model; never the content
     tags = ["label:#{call.label}", "role:#{call.role || 'squish'}", "model:#{usage.model}"]
     Metrics.increment("squishling.tokens.in", usage.input_tokens.to_i, tags:)
     Metrics.increment("squishling.tokens.out", usage.output_tokens.to_i, tags:)

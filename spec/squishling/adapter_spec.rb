@@ -367,7 +367,7 @@ RSpec.describe Squishling::Adapter do
     it "gives the adapter no inputs beyond the request" do
       klass.call(text: "secret")
 
-      expect(adapter.requests.first.to_h.keys).to eq(%i[label model provider instructions messages schema params])
+      expect(adapter.requests.first.to_h.keys).to eq(%i[label model provider instructions messages schema params cache])
     end
 
     it "tells the observer the model and tokens the adapter reported, nothing else" do

@@ -26,7 +26,8 @@ raises `ConfigurationError`.
 
 ## What `yield` returns
 
-The block returns a `Squishling::Observer::Usage`: the request's `input_tokens` and `output_tokens` (nil when the
+The block returns a `Squishling::Observer::Usage`: the request's `input_tokens` and `output_tokens`, the
+`cache_read_tokens` and `cache_write_tokens` of [prompt caching](configuration.md#prompt-caching) (each nil when the
 provider didn't report them) and the `model` that answered. That is enough to meter spend:
 
 ```ruby

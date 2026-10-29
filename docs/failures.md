@@ -134,7 +134,9 @@ Things to know:
   limit by one request (for the squishsum harnesses, one round of samples).
 - Tokens are the counts the [adapter](adapters.md) reports (`output_tokens` includes a reasoning model's thinking
   tokens for providers that count them that way). A request that failed reports none, and a provider that reports no
-  usage never exhausts a budget.
+  usage never exhausts a budget. The input total includes the tokens read from and written to the prompt cache
+  (`cache_read_tokens` and `cache_write_tokens`), which adapters report apart from `input_tokens`; with
+  [prompt caching](configuration.md#prompt-caching) on, a request that reads or writes a cached prompt counts all of it.
 - The limits are positive Integers. Set them with `Squishling.configure` (`default_max_total_output_tokens`,
   `default_max_total_input_tokens`), `squishling`, `squish :method, ...`, or a [`squish!`](routing.md#handing-off-to-the-llm-with-squish) call.
   The more specific level wins, limit by limit, and `false` lifts a limit set at a wider level.
