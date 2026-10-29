@@ -78,7 +78,7 @@ the request body as given. Squishling's own keys (`model`, `messages`, `response
 `provider:` has no meaning here and is ignored.
 
 **Failures.** The HTTP status decides (see [the status mapping](#the-error-contract)): 408, 413, 429, 5xx, timeouts, and
-connection errors raise `LLMError` once the adapter's own retries are used up; 401, 403, 402, 404, and a redirect raise
+connection errors raise `LLMError` once the adapter's own retries are used up; 401, 402, 403, 404, and a redirect raise
 `ConfigurationError`; any other 4xx (400, 409, 422, …) raises `RequestRejectedError`, never retried or escalated. The
 one exception is a 400 that reports an overlong context, which is an `LLMError` too, since it depends on the input (a
 bigger model may take it). This adapter recognizes one when the error's `code` or `type` is `context_length_exceeded`, or,
@@ -126,8 +126,9 @@ class AcmeAdapter < Squishling::Adapter::Base
 
   # Optional: what an overlong prompt looks like for Acme. The default (super) already recognizes a 400 whose error
   # code or type is "context_length_exceeded"; add whatever else Acme's errors tell you, without reading its message.
+  # body is the provider's error body, a JSON String or a Hash (or nil); ErrorBody.error reads either safely.
   def context_length?(status:, body:)
-    super || (status == 400 && JSON.parse(body).dig("error", "code") == "prompt_too_long")
+    super || (status == 400 && Squishling::Adapter::ErrorBody.error(body)&.[]("code") == "prompt_too_long")
   end
 end
 

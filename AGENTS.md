@@ -60,7 +60,8 @@ Flag any change that breaks one of these; they are behavior contracts, not style
     timeout, connection, a prompt too long for the model), `ConfigurationError` (credentials, billing, model or
     endpoint), or `RequestRejectedError` (the provider refused the request). Only it knows its provider's status codes,
     error bodies, and wording for an overlong prompt. `Adapter::Base#http_failure` is the shared status mapping
-    (408/413/429/5xx → `LLMError`; 401/402/403/404/3xx → `ConfigurationError`; every other 4xx → `RequestRejectedError`),
+    (408/413/429/5xx → `LLMError`; 401/402/403/404/3xx → `ConfigurationError`; every other 4xx →
+    `RequestRejectedError`),
     and `Adapter::Base#context_length?` is the hook where an adapter decides a rejection is an overlong prompt (the
     default reads only the structured `context_length_exceeded` code or type). An adapter may match a provider's
     documented wording for an overflow (the OpenAI-compatible one does, narrowly; a match is never repeated), but
@@ -93,8 +94,8 @@ Flag any change that breaks one of these; they are behavior contracts, not style
   `BudgetExhaustedError`, an `InvalidOutputError`, so `squish_fallback` and the "no second rescue path" rule hold.
 - **Error taxonomy.** Everything Squishling raises inherits `Squishling::Error`: `ConfigurationError`
   (setup mistakes; never retried, escalated, or passed to fallbacks; a provider 400 or other rejected 4xx is its
-  `RequestRejectedError` subclass), `InvalidOutputError` (bad output after every attempt in the escalation; `BudgetExhaustedError` is its
-  subclass for a spent token budget), `LLMError` (provider/transport failure after the adapter's HTTP retries,
+  `RequestRejectedError` subclass), `InvalidOutputError` (bad output after every attempt in the escalation;
+  `BudgetExhaustedError` is its subclass for a spent token budget), `LLMError` (provider/transport failure after the adapter's HTTP retries,
   original as `cause`). Never wrap or swallow exceptions raised by the user's own Ruby code.
 - **Model output leaves the process only through `InvalidOutputError#raw` and the opt-in `squawk` hook.** Error
   messages and `config.logger` lines carry parse positions and schema paths, never the response itself (the
@@ -157,7 +158,8 @@ Flag any change that breaks one of these; they are behavior contracts, not style
 The public surface is `Squishling.configure`/`config`, the adapter plugin point (`config.adapter`,
 `Squishling.register_adapter`/`adapters`/`reset_adapters!`, `Squishling::Adapter::Base` (`complete`, the optional
 `judgments?`/`judge`/`capture_context`/`with_context`, and the `http_failure`/`context_length?` classification
-helpers), `Adapter::Request`, `Adapter::Response`, and the built-in `Adapters::RubyLLM` and `Adapters::OpenAICompatible` with their options), the `include Squishling` DSL
+helpers), `Adapter::Request`, `Adapter::Response`, and the built-in `Adapters::RubyLLM` and
+`Adapters::OpenAICompatible` with their options), the `include Squishling` DSL
 (`squishling` — including its
 `model:`/`escalation:` (steps with `model:`, `attempts:`, `priority:`, `rotate:`, `provider:`, `params:`,
 `forward_rejected:`, `retry_temperature:`, `include_when:`)/`provider:`/`params:`/

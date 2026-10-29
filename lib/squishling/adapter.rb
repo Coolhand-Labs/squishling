@@ -133,11 +133,11 @@ module Squishling
       # nothing a retry fixes); every other 4xx is a RequestRejectedError, unless #context_length? says the input
       # outgrew the model, which is an LLMError too (a bigger model may take it). via names how it failed (the error
       # class, the HTTP status) and is all of the failure that is repeated, with a rejection's status and code tokens.
-      # body is the provider's error body, as for #rejected_request_error. A nil status (no HTTP response) is an
-      # LLMError.
+      # body is the provider's error body, as for #rejected_request_error. A nil status (no HTTP response) or a
+      # success status (a reply that was unusable) is an LLMError.
       def http_failure(request, status:, body:, via:)
         case status
-        when nil, 408, 413, 429, 500.. then llm_error(request, via)
+        when nil, 100..299, 408, 413, 429, 500.. then llm_error(request, via)
         when 401, 403 then configuration_error(request, "the provider refused the credentials (#{via})")
         when 402 then configuration_error(request, "#{via}: the provider reports a billing or quota problem")
         when 404 then configuration_error(request, "#{via}: check the model name and the endpoint")

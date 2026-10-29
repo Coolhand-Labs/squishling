@@ -35,8 +35,7 @@ RSpec.describe "Provider failure classification" do # rubocop:disable RSpec/Desc
 
         expect { adapter.complete(adapter_request) }.to raise_error(error_class, /\AKlass#call: .*#{status}/) do |e|
           expect(e.message).not_to include("sk-test", "Jane Doe", "Incorrect")
-          expect(e).to be_a(Squishling::RequestRejectedError) if error_class == Squishling::RequestRejectedError
-          expect(e).not_to be_a(Squishling::RequestRejectedError) unless error_class == Squishling::RequestRejectedError
+          expect(e.is_a?(Squishling::RequestRejectedError)).to eq(error_class == Squishling::RequestRejectedError)
         end
       end
     end
@@ -135,6 +134,12 @@ RSpec.describe "Provider failure classification" do # rubocop:disable RSpec/Desc
         expect { adapter.complete(adapter_request) }
           .to raise_error(Squishling::RequestRejectedError, /#{type.name}, HTTP 400/) { |e| expect(e.cause).to equal(error) }
       end
+    end
+
+    it "treats an unusable reply that came with a success status as an LLMError" do
+      fail_with(200, "", RubyLLM::ServerError)
+
+      expect { adapter.complete(adapter_request) }.to raise_error(Squishling::LLMError, /ServerError, HTTP 200/)
     end
 
     it "honors RubyLLM's own context-length error, which knows its provider's wording" do
