@@ -161,10 +161,10 @@ module Squishling
         rejected_request_error(request, via:, body:, http_status: status)
       end
 
-      # A RequestRejectedError for a request the provider rejected (a 400). via names how it failed (the error class,
-      # the HTTP status); body is the provider's error body (a JSON String, or a Hash with String keys), of which only
-      # the status and code tokens are repeated, never its message. http_status, when given, drops a code that only
-      # repeats it. The params are pointed at only when the provider named one of them.
+      # A RequestRejectedError for a request the provider rejected (a 400, or another 4xx). via names how it failed
+      # (the error class, the HTTP status); body is the provider's error body (a JSON String, or a Hash with String
+      # keys), of which only the status and code tokens are repeated, never its message. http_status, when given, drops
+      # a code that only repeats it. The params are pointed at only when the provider named one of them.
       def rejected_request_error(request, via:, body:, http_status: nil)
         found = ErrorBody.read(body, http_status:)
         tokens = found.values_at(:status, :code).compact
