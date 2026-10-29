@@ -31,9 +31,11 @@ RSpec.describe Squishling::Adapters::OpenAITransport do # rubocop:disable RSpec/
       expect(WebMock).not_to have_requested(:post, lan_url)
     end
 
-    it "refuses an Authorization header in any letter case" do
-      expect { adapter_class.new(base_url: lan, headers: { "authorization" => "Bearer abc" }) }
-        .to raise_error(Squishling::ConfigurationError, /won't send credentials/)
+    %w[authorization Authorization Proxy-Authorization api-key X-API-KEY].each do |name|
+      it "refuses a #{name} header" do
+        expect { adapter_class.new(base_url: lan, headers: { name => "abc" }) }
+          .to raise_error(Squishling::ConfigurationError, /won't send credentials/)
+      end
     end
 
     it "refuses a key from a callable when the request is made, labelled with the call" do
@@ -304,7 +306,7 @@ RSpec.describe Squishling::Adapters::OpenAITransport do # rubocop:disable RSpec/
       received = +""
       thread = Thread.new do
         client = server.accept
-        received << client.readpartial(65_536)
+        read_request(client, received)
         script.call(client)
       rescue SystemCallError, IOError
         nil # the transport hung up, as it should
@@ -315,6 +317,15 @@ RSpec.describe Squishling::Adapters::OpenAITransport do # rubocop:disable RSpec/
     ensure
       thread&.kill
       server&.close
+    end
+
+    # All of the request, body included: closing a socket with unread data resets the connection, which can drop the
+    # response the client hasn't read yet.
+    def read_request(client, received)
+      received << client.readpartial(65_536) until received.include?("\r\n\r\n")
+      head, body = received.split("\r\n\r\n", 2)
+      missing = head[/^content-length: (\d+)/i, 1].to_i - body.bytesize
+      received << client.read(missing) if missing.positive?
     end
 
     def transport_to(endpoint, **options)

@@ -11,9 +11,11 @@ module Squishling
       # The URL itself is never in the message: it may carry credentials.
       INVALID_BASE_URL = "adapter :openai_compatible base_url must be an http(s) URL without credentials (use " \
                          "api_key:), a query, or a fragment"
-      CLEARTEXT_CREDENTIAL = "adapter :openai_compatible won't send credentials (the api_key or an Authorization " \
-                             "header) over plain http to a host that isn't this machine; use https, or pass " \
-                             "allow_insecure_http: true to accept the risk on a network you trust"
+      # Headers that carry a secret as a matter of course (OpenAI-style, Azure OpenAI, and proxies).
+      CREDENTIAL_HEADERS = %w[authorization proxy-authorization api-key x-api-key].freeze
+      CLEARTEXT_CREDENTIAL = "adapter :openai_compatible won't send credentials (the api_key or a header such as " \
+                             "Authorization or api-key) over plain http to a host that isn't this machine; use " \
+                             "https, or pass allow_insecure_http: true to accept the risk on a network you trust"
       INVALID_HEADER = "adapter :openai_compatible headers (and the api_key) can't contain line breaks or NUL"
 
       module_function
@@ -62,7 +64,7 @@ module Squishling
       def cleartext_credential?(endpoint, key, headers)
         return false unless cleartext?(endpoint)
 
-        !key.to_s.strip.empty? || headers.each_key.any? { |name| name.casecmp?("authorization") }
+        !key.to_s.strip.empty? || headers.each_key.any? { |name| CREDENTIAL_HEADERS.include?(name.downcase) }
       end
 
       def flag(name, value)
