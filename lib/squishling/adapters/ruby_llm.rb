@@ -134,10 +134,12 @@ module Squishling
       # means the request we built is invalid (an unsupported param, a schema the provider rejects), so it's a
       # setup mistake: escalating or a fallback would otherwise hide it on every call.
       # A provider's or transport's own message never goes into ours: a provider can echo request content or part of
-      # an API key in it, and ours reach logs and error trackers. The original stays as #cause for whoever
-      # chooses to read it. RubyLLM's own ConfigurationError is local (it names a missing setting), so it is kept.
+      # an API key in it, and ours reach logs and error trackers.
       # Error trackers report the whole cause chain, and RubyLLM's error message and response hold the provider's
-      # response body, so #cause is a sanitized stand-in (class, HTTP status, backtrace) unless keep_cause: is set.
+      # response body, so #cause is a sanitized stand-in (class, HTTP status, backtrace); the original is there only
+      # with keep_cause: true. RubyLLM's own ConfigurationError, and the errors #build_chat, #apply_params, and #judge
+      # convert, are local (they name a missing setting or a bad param and hold no provider response), so they are
+      # raised as they are and Ruby sets the original as their #cause.
       def guarded(request)
         yield
       rescue ::RubyLLM::ConfigurationError => e

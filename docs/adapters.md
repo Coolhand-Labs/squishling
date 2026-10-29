@@ -159,8 +159,8 @@ Keep the provider's own message out of both: it can echo request content or part
 error trackers, and so do trackers that walk the `cause` chain. If the provider's exception carries a response body
 (an HTTP client error), don't leave it as the `cause` that raising inside a `rescue` sets: pass
 `cause: sanitized_cause(error, status: …)`, which builds a stand-in with only the class, the status, and the
-backtrace. An exception that carries no body (a timeout, a refused connection) can stay as the `cause`. Any other exception
-propagates unwrapped and is never retried, so map your transport's errors. Return anything but an
+backtrace. An exception that carries no body (a timeout, a refused connection) can stay as the `cause`. Any other
+exception propagates unwrapped and is never retried, so map your transport's errors. Return anything but an
 `Adapter::Response` and Squishling raises `ConfigurationError`.
 
 ### Optional hooks

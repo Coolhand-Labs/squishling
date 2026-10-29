@@ -468,6 +468,19 @@ RSpec.describe Squishling::Adapters::RubyLLM do
 
       expect { judge }.to raise_error(Squishling::LLMError, /Klass#call: RubyLLM::ServerError/)
     end
+
+    it "gives a failed judgment request a sanitized cause, the original with keep_cause: true" do
+      response = Struct.new(:status, :body).new(500, "echoed Jane Doe")
+      error = RubyLLM::ServerError.new("echoed Jane Doe", response:)
+      allow(RubyLLM).to receive(:judge).and_raise(error)
+
+      expect { judge }.to raise_error(Squishling::LLMError) do |e|
+        expect(e.cause).to be_a(Squishling::Adapter::ProviderFailure)
+        expect(e.cause.message).to eq("RubyLLM::ServerError, HTTP 500")
+      end
+      expect { described_class.new(keep_cause: true).judge({}, questions: {}, step:, label: "Klass#call") }
+        .to raise_error(Squishling::LLMError) { |e| expect(e.cause).to equal(error) }
+    end
   end
 
   describe "request context on worker threads" do

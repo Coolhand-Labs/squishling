@@ -83,15 +83,18 @@ module Squishling
     #     rescue MyClient::Unauthorized
     #       raise configuration_error(request, "MyClient rejected the credentials")
     #     rescue MyClient::Error => e
-    #       raise llm_error(request, "MyClient failed (#{e.class})")
+    #       raise llm_error(request, "MyClient failed (#{e.class})"), cause: sanitized_cause(e, status: e.status)
     #     end
     #   end
     #
     # ConfigurationError is for setup mistakes (bad credentials, an invalid request, an unknown model): it is never
     # retried or escalated. LLMError is for failures worth another attempt (rate limits, 5xx, timeouts, connection
     # errors): the next attempt, or the last one's caller, sees it. Keep the provider's own message out of both: it can
-    # echo request content or part of a key. Any other exception propagates unwrapped. Adapters are called from worker
-    # threads when a harness takes samples, so they must not share unsynchronized state.
+    # echo request content or part of a key. The same goes for the exception it came from, which error trackers
+    # report as the error's #cause: pass `cause: sanitized_cause(e, status:)` rather than letting a raise inside a
+    # rescue set a provider exception that carries a response body. Any other exception propagates unwrapped.
+    # Adapters are called from worker threads when a harness takes samples, so they must not share unsynchronized
+    # state.
     class Base
       # One completion. Returns an Adapter::Response.
       def complete(_request)

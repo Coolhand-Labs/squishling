@@ -80,7 +80,8 @@ Flag any change that breaks one of these; they are behavior contracts, not style
   (setup mistakes; never retried, escalated, or passed to fallbacks; a provider 400 is its `RequestRejectedError`
   subclass), `InvalidOutputError` (bad output after every attempt in the escalation; `BudgetExhaustedError` is its
   subclass for a spent token budget), `LLMError` (provider/transport failure after the adapter's HTTP retries,
-  `cause` per the adapter, see the invariant on provider text below). Never wrap or swallow exceptions raised by the user's own Ruby code.
+  `cause` per the adapter, see the invariant on provider text below). Never wrap or swallow exceptions raised by the
+  user's own Ruby code.
 - **Model output leaves the process only through `InvalidOutputError#raw` and the opt-in `squawk` hook.** Error
   messages and `config.logger` lines carry parse positions and schema paths, never the response itself (the
   documented exceptions are model-chosen extra key names, which `InvalidOutputError#error_details` tags
