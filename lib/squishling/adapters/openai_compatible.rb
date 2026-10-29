@@ -49,7 +49,7 @@ module Squishling
         read_timeout: 120, max_retries: 2, max_tokens_param: :max_completion_tokens, structured_output: :json_schema)
         super()
         @endpoint = Options.endpoint(base_url)
-        @api_key = Secret.new(api_key) unless api_key.nil?
+        @api_key = (Secret.new(api_key) unless api_key.nil?)
         @headers = Secret.new(Options.headers(headers))
         @default_model = Options.default_model(default_model)
         @open_timeout = Options.number(:open_timeout, open_timeout)

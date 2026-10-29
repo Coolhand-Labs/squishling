@@ -88,6 +88,13 @@ RSpec.describe Squishling::Adapters::OpenAICompatible do # rubocop:disable RSpec
       expect(instance_values_json(secret_adapter).values).to include("[REDACTED]")
     end
 
+    it "holds no instance variable that is the key, a header value, or the headers themselves" do
+      values = secret_adapter.instance_variables.map { |name| secret_adapter.instance_variable_get(name) }
+
+      expect(values.grep(String)).not_to include("sk-SECRETKEY")
+      expect(values.grep(Hash).flat_map(&:values)).not_to include("hdr-SECRETHEADER")
+    end
+
     it "still sends the key and headers" do
       stub = stub_post(headers: { "Authorization" => "Bearer sk-SECRETKEY", "api-key" => "hdr-SECRETHEADER" })
         .to_return(reply)
