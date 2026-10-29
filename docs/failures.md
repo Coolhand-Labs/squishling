@@ -200,9 +200,9 @@ report, whatever `squawk_on:` is set to:
 
 - `error` is the `BudgetExhaustedError` or `DisagreementError`, `output` is `nil` (nothing was sent), `metadata[:final]`
   is `true`, and `metadata[:stopped]` is `:budget` or `:disagreement` (it is `nil` for every attempt's report).
-- `attempt` and `attempts` are the attempts the error counts (`error.attempts`: `0` for a disagreement, or for a budget
-  that ran out before a sample or judge made its first attempt; a stop before a retry counts the attempts already
-  made), `model` is the last of `error.models`, and `provider`, `params`, `usage`, `role`, and `sample` are `nil`.
+- `attempt` and `attempts` are `error.attempts`, or `0` when that is `nil` (a disagreement, or a budget that ran out
+  before a sample or judge made its first attempt); a stop before a retry counts the attempts already made. `model` is
+  the last of `error.models`, and `provider`, `params`, `usage`, `role`, and `sample` are `nil`.
 - It is sent once, after the attempts that led to it and before `squish_fallback` runs, for the built-in harnesses and
   for a [custom one](harnesses.md#reporting-to-squawk) that raises either error. A call to another squished method
   from your own code (a `squish_validate`, say) reports its own stop, and the outer call does not report that error
