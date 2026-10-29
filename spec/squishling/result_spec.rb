@@ -122,6 +122,12 @@ RSpec.describe Squishling::Result do
       expect { Squishling::Schema.new(raw) }.to raise_error(Squishling::ConfigurationError, message)
     end
 
+    it "rejects a type that excludes object" do
+      other = untyped.merge("type" => %w[string null])
+
+      expect { Squishling::Schema.new(root_with(other)) }.to raise_error(Squishling::ConfigurationError, message)
+    end
+
     it "rejects the root" do
       expect { Squishling::Schema.new(untyped) }.to raise_error(Squishling::ConfigurationError, message)
     end
