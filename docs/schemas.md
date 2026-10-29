@@ -30,6 +30,11 @@ output_schema(
 )
 ```
 
+A raw schema's `$ref`s must point inside the schema (`"#/$defs/address"`). Squishling resolves them when it builds the
+schema, so one that points nowhere (a remote URI, which is never fetched, or a `$defs` entry that doesn't exist)
+raises `Squishling::ConfigurationError` then, and [`Squishling.verify`](verifying.md) reports it, instead of failing on
+the first response.
+
 ## Describing fields
 
 Every DSL type, and `optional`, takes a `description:`. It is sent to the provider as guidance for that field

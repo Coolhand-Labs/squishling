@@ -103,6 +103,22 @@ RSpec.describe Squishling, ".verify" do
       expect(messages(klass)).not_to be_empty
     end
 
+    it "reports a remote $ref, which would otherwise raise on the first response" do
+      schema = { type: "object", properties: { a: { "$ref": "https://example.com/a.json" } }, required: ["a"],
+                 additionalProperties: false }
+      klass = squishling_class { squishling purpose: "p", output_schema: schema }
+
+      expect(messages(klass)).to contain_exactly(%r{\$ref that can't be resolved.*example\.com/a\.json})
+    end
+
+    it "accepts a $ref to a local $defs entry" do
+      schema = { type: "object", properties: { a: { "$ref": "#/$defs/tag" } }, required: ["a"],
+                 additionalProperties: false, "$defs": { tag: { type: "string" } } }
+      klass = squishling_class { squishling purpose: "p", output_schema: schema }
+
+      expect(Squishling.verify(klass)).to be_ok
+    end
+
     it "accepts a purpose given as a Proc" do
       klass = squishling_class do
         squishling purpose: -> { "dynamic" }

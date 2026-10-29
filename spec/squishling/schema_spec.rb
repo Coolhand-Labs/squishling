@@ -20,6 +20,61 @@ RSpec.describe Squishling::Schema do
     end
   end
 
+  describe "eager $ref resolution" do
+    def with_ref(ref, defs: { "tag" => { "type" => "string" } })
+      { "type" => "object", "properties" => { "label" => { "$ref" => ref } }, "required" => ["label"],
+        "additionalProperties" => false, "$defs" => defs }
+    end
+
+    it "keeps working for a reference to a local $defs entry" do
+      schema = described_class.new(with_ref("#/$defs/tag"))
+
+      expect(schema.validate({ "label" => "ok" })).to be_empty
+      expect(schema.validate({ "label" => 1 })).not_to be_empty
+    end
+
+    it "resolves a $ref inside $defs and a recursive definition" do
+      defs = { "tag" => { "type" => "string" },
+               "node" => { "type" => "object", "properties" => { "next" => { "$ref" => "#/$defs/node" } } } }
+      raw = with_ref("#/$defs/tag", defs:).merge("allOf" => [{ "$ref" => "#/$defs/node" }])
+
+      expect { described_class.new(raw) }.not_to raise_error
+    end
+
+    it "raises a ConfigurationError for a remote $ref at build, without fetching it" do
+      expect { described_class.new(with_ref("https://example.com/schemas/tag.json")) }
+        .to raise_error(Squishling::ConfigurationError, %r{\$ref that can.t be resolved.*schemas/tag\.json})
+    end
+
+    it "raises a ConfigurationError for a $ref to a $defs entry that doesn't exist" do
+      expect { described_class.new(with_ref("#/$defs/missing")) }
+        .to raise_error(Squishling::ConfigurationError, /\$ref that can't be resolved/)
+    end
+
+    it "finds an unresolvable $ref nested in a subschema" do
+      raw = { "type" => "object", "additionalProperties" => false, "required" => ["list"],
+              "properties" => { "list" => { "type" => "array", "items" => { "$ref" => "http://example.com/x" } } } }
+
+      expect { described_class.new(raw) }.to raise_error(Squishling::ConfigurationError)
+    end
+  end
+
+  describe ".for" do
+    it "returns the same Schema for the same raw schema" do
+      expect(described_class.for(json_schema)).to equal(described_class.for(json_schema))
+    end
+
+    it "holds raw schemas weakly, so a reloaded schema class can be collected" do
+      expect(described_class::CACHE).to be_a(ObjectSpace::WeakKeyMap)
+    end
+
+    it "does not cache a schema that failed to build" do
+      bad = { "type" => "object", "properties" => { "a" => { "$ref" => "http://example.com/x" } } }
+
+      2.times { expect { described_class.for(bad) }.to raise_error(Squishling::ConfigurationError) }
+    end
+  end
+
   describe "accepted output_schema forms" do
     it "accepts any object that responds to to_json_schema" do
       duck = Struct.new(:schema) { def to_json_schema = schema }.new(json_schema)
@@ -153,22 +208,18 @@ RSpec.describe Squishling::Schema do
       )
     end
 
-    it "leaves values untyped for a non-local or dangling ref instead of failing" do
-      schema = {
-        "type" => "object",
-        "properties" => {
-          "remote" => { "$ref" => "https://example.com/address.json" },
-          "missing" => { "$ref" => "#/$defs/nope" }
-        },
-        "required" => %w[remote missing],
-        "additionalProperties" => false
-      }
-      data = { "remote" => { "city" => "Oslo" }, "missing" => { "city" => "Rome" } }
+    it "fails at build for a non-local or dangling ref, rather than leaving values untyped" do
+      %w[https://example.com/address.json #/$defs/nope].each do |ref|
+        schema = {
+          "type" => "object",
+          "properties" => { "home" => { "$ref" => ref } },
+          "required" => ["home"],
+          "additionalProperties" => false
+        }
 
-      result = build(schema, data)
-
-      expect(result.remote).to eq({ city: "Oslo" })
-      expect(result.missing).to eq({ city: "Rome" })
+        expect { build(schema, { "home" => { "city" => "Oslo" } }) }
+          .to raise_error(Squishling::ConfigurationError, /\$ref that can't be resolved/)
+      end
     end
 
     it "still validates referenced objects against the full schema" do

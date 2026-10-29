@@ -70,14 +70,24 @@ module Squishling
     end
 
     # Exceptions are sent as their class and message. Plain JSON would send only the message, and with
-    # json/add/exception loaded it would also send the backtrace, which exposes file paths.
-    def describe(value)
+    # json/add/exception loaded it would also send the backtrace, which exposes file paths. path is the Hashes and
+    # Arrays being walked: one that contains itself is a ConfigurationError rather than a SystemStackError.
+    def describe(value, path = [])
       case value
       when Exception then { class: exception_class_name(value.class), message: value.message }
-      when Hash then value.transform_values { |item| describe(item) }
-      when Array then value.map { |item| describe(item) }
+      when Hash then within(value, path) { |inner| value.transform_values { |item| describe(item, inner) } }
+      when Array then within(value, path) { |inner| value.map { |item| describe(item, inner) } }
       else value
       end
+    end
+
+    def within(container, path)
+      if path.any? { |ancestor| ancestor.equal?(container) }
+        raise ConfigurationError, "#{@definition.label}: an argument or context value contains itself, " \
+                                  "so it can't be sent as JSON"
+      end
+
+      yield path + [container]
     end
 
     # An anonymous error class (Class.new(StandardError)) is named after its closest named ancestor.

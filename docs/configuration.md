@@ -242,7 +242,7 @@ end
 
 - Keys that Squishling or the adapter control (`model`, `messages`, `input`, `instructions`, `system`, `stream`,
   `response_format`, `text`, `output_config`, `tools`, `tool_choice`, `functions`, `function_call`, `schema`, and the camelCase and plural
-  spellings other providers use, such as `systemInstruction`, `toolConfig`/`tool_config`, `outputConfig`, `inputs`, …)
+  spellings other providers use, such as `systemInstruction`, `cachedContent`/`cached_content`, `toolConfig`/`tool_config`, `outputConfig`, `inputs`, …)
   raise `ConfigurationError`, because they would override the model, the conversation, or the strict output format.
 - **Nested containers** such as Gemini's `generationConfig` (and `generation_config` for Gemini Interactions) and
   Mistral Conversations' `completion_args` accept ordinary settings, but reject the keys inside them that carry the

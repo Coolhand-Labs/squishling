@@ -41,7 +41,9 @@ module Squishling
       @produced = {}.compare_by_identity
     end
 
-    # Whether value is a result one of this run's primitives returned (not one built by hand).
+    # Whether value is a result one of this run's primitives returned (not one built by hand). By identity, so it
+    # tells results that are objects (the typed Data of an object schema) apart; a schema that isn't an object
+    # returns the bare JSON value, and an immediate such as 1 or true is the same object in every run.
     def produced?(value)
       @produced.key?(value)
     end

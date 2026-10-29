@@ -4,8 +4,12 @@ module Squishling
   # Normalizes the supported output-schema forms into a JSON Schema, validates data against it,
   # and builds typed results.
   class Schema
-    CACHE = {}.compare_by_identity
+    # Held weakly by the raw schema (a Schematist class, a Hash), so classes replaced by code reloading can be
+    # collected along with their schemas. A Hash compares by content, which yields the same schema.
+    CACHE = ObjectSpace::WeakKeyMap.new
     CACHE_LOCK = Mutex.new
+    # What json_schemer raises for a $ref it can't resolve. Its default resolver refuses remote URIs: none is fetched.
+    REF_ERRORS = [JSONSchemer::UnknownRef, JSONSchemer::InvalidRefResolution, JSONSchemer::InvalidRefPointer].freeze
 
     # Conditional keywords (Schematist's `given` and `dependent`) that providers' strict modes don't support.
     # They're validated locally and kept out of the schema sent to the LLM.
@@ -17,7 +21,7 @@ module Squishling
 
     class << self
       def for(raw)
-        CACHE_LOCK.synchronize { CACHE[raw] ||= new(raw) }
+        CACHE_LOCK.synchronize { CACHE[raw] || (CACHE[raw] = new(raw)) }
       end
 
       # Deep-convert to plain JSON types (string keys), as the LLM would return them.
@@ -50,6 +54,7 @@ module Squishling
         "strict" => true
       }.compact
       @validator = JSONSchemer.schema(@json_schema)
+      resolve_refs!(@validator)
       # Built now so a property name the result can't take fails here, not on the first response.
       @result_class = Result.build(@json_schema)
     end
@@ -66,6 +71,28 @@ module Squishling
     end
 
     private
+
+    # Resolves every $ref now, so one that points nowhere (a remote URI is never fetched; a missing $defs entry)
+    # fails at build and in Squishling.verify, not on the first response.
+    def resolve_refs!(schema)
+      schema.parsed.each_value do |keyword|
+        keyword.ref_schema if keyword.respond_to?(:ref_schema)
+        subschemas(keyword.parsed).each { |subschema| resolve_refs!(subschema) }
+      end
+    rescue *REF_ERRORS => e
+      raise ConfigurationError, "output_schema has a $ref that can't be resolved (#{e.message}); " \
+                                "only references within the schema are supported"
+    end
+
+    # The Schema objects directly under a parsed keyword: itself, in a list, or in a map of names.
+    def subschemas(parsed)
+      case parsed
+      when JSONSchemer::Schema then [parsed]
+      when Array then parsed.grep(JSONSchemer::Schema)
+      when Hash then parsed.values.grep(JSONSchemer::Schema)
+      else []
+      end
+    end
 
     def to_hash(raw)
       case raw
