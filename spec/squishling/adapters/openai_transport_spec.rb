@@ -230,9 +230,9 @@ RSpec.describe Squishling::Adapters::OpenAITransport do # rubocop:disable RSpec/
         max_response_bytes: 1000, clock:, **options)
     end
 
+    # Each reading of the clock gives the next time, and the last one from then on.
     def clock_of(*times)
-      ticks = times.each
-      -> { ticks.next }
+      -> { times.size > 1 ? times.shift : times.first }
     end
 
     it "defaults to open_timeout plus twice read_timeout" do
@@ -246,31 +246,30 @@ RSpec.describe Squishling::Adapters::OpenAITransport do # rubocop:disable RSpec/
       expect(described_class).to have_received(:new).with(hash_including(total_timeout: 5))
     end
 
-    it "bounds the connection's timeouts by what is left, and returns what it read" do
-      stub_post.to_return(status: 200, body: reply_body)
+    it "returns what it read, with the connection's own timeouts" do
+      stub_post.to_return(status: 200, body: reply_body, headers: { "Retry-After" => "3" })
       connections = []
       allow(Net::HTTP).to(receive(:new).and_wrap_original { |m, *args| m.call(*args).tap { |h| connections << h } })
 
-      reply = transport(clock: clock_of(0.0, 25.0, 25.0, 25.0), total_timeout: 30).post("{}", {})
+      reply = transport(clock: clock_of(0.0)).post("{}", {})
 
       expect(reply).to be_success
-      expect(reply.body).to eq(reply_body)
-      # 5 seconds were left for the first read, and the same again once the body was in
-      expect(connections.map { |http| [http.open_timeout, http.read_timeout] }).to eq([[10, 5.0]])
+      expect([reply.code, reply.body, reply.retry_after]).to eq(["200", reply_body, "3"])
+      expect(connections.map { |http| [http.open_timeout, http.read_timeout, http.write_timeout] })
+        .to eq([[10, 120, 120]])
     end
 
     it "stops reading once the deadline has passed, at the first chunk" do
       stub_post.to_return(status: 200, body: reply_body)
 
-      expect { transport(clock: clock_of(0.0, 1.0, 100.0)).post("{}", {}) }
+      expect { transport(clock: clock_of(0.0, 100.0)).post("{}", {}) }
         .to raise_error(described_class::DeadlineExceeded, /total_timeout \(30s\)/)
     end
 
     it "treats a timeout after the deadline as the deadline, and one before it as a timeout" do
       stub_post.to_timeout
 
-      expect { transport(clock: clock_of(0.0, 1.0, 100.0)).post("{}", {}) }
-        .to raise_error(described_class::DeadlineExceeded)
+      expect { transport(clock: clock_of(0.0, 100.0)).post("{}", {}) }.to raise_error(described_class::DeadlineExceeded)
       expect { transport(clock: -> { 0.0 }).post("{}", {}) }.to raise_error(Net::OpenTimeout)
     end
 
@@ -278,14 +277,102 @@ RSpec.describe Squishling::Adapters::OpenAITransport do # rubocop:disable RSpec/
       stub_post.to_return(status: 200, body: reply_body)
       retrying = adapter_class.new(api_key: "sk-test", max_retries: 2, total_timeout: 30)
       allow(retrying).to receive(:sleep)
-      ticks = [0.0, 1.0, 100.0].each
+      ticks = [0.0, 100.0]
       allow(Process).to receive(:clock_gettime).and_wrap_original do |original, *args|
-        args == [Process::CLOCK_MONOTONIC] ? ticks.next : original.call(*args)
+        next original.call(*args) unless args == [Process::CLOCK_MONOTONIC]
+
+        ticks.size > 1 ? ticks.shift : ticks.first
       end
 
       expect { retrying.complete(adapter_request) }
         .to raise_error(Squishling::LLMError, /\AKlass#call: the request ran past total_timeout \(30s\)/)
       expect(WebMock).to have_requested(:post, url).once
+    end
+  end
+
+  # The Net::HTTP behavior the limits rely on (headers read before the response is yielded, chunked bodies, no
+  # decoding when Accept-Encoding is set) is checked against a real socket, on this machine only.
+  describe "against a real socket" do
+    before { WebMock.disable_net_connect!(allow: "127.0.0.1") }
+
+    after { WebMock.disable_net_connect! }
+
+    # Runs the block with the endpoint of a one-connection server on 127.0.0.1 that writes what the script says, and
+    # the request text it received. The server is closed afterwards.
+    def with_server(script)
+      server = TCPServer.new("127.0.0.1", 0)
+      received = +""
+      thread = Thread.new do
+        client = server.accept
+        received << client.readpartial(65_536)
+        script.call(client)
+      rescue SystemCallError, IOError
+        nil # the transport hung up, as it should
+      ensure
+        client&.close
+      end
+      yield URI.parse("http://127.0.0.1:#{server.addr[1]}/v1/chat/completions"), received
+    ensure
+      thread&.kill
+      server&.close
+    end
+
+    def transport_to(endpoint, **options)
+      described_class.new(endpoint:, open_timeout: 2, read_timeout: 5, total_timeout: 5, max_response_bytes: 1000,
+        **options)
+    end
+
+    def chunked(*parts)
+      head = "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nContent-Type: application/json\r\n\r\n"
+      [head, *parts.map { |part| "#{part.bytesize.to_s(16)}\r\n#{part}\r\n" }, "0\r\n\r\n"]
+    end
+
+    it "cuts off headers that are dripped one at a time past total_timeout, though no read times out" do
+      script = lambda do |client|
+        client.write("HTTP/1.1 200 OK\r\n")
+        100.times do
+          sleep 0.1
+          client.write("X-Drip: 1\r\n")
+        end
+      end
+
+      with_server(script) do |endpoint, _received|
+        started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+
+        expect { transport_to(endpoint, total_timeout: 0.5).post("{}", {}) }
+          .to raise_error(described_class::DeadlineExceeded, /total_timeout \(0.5s\)/)
+        expect(Process.clock_gettime(Process::CLOCK_MONOTONIC) - started).to be < 4
+      end
+    end
+
+    it "reads a chunked body, and sends the identity encoding it was given" do
+      script = ->(client) { chunked('{"a":', "1}").each { |piece| client.write(piece) } }
+
+      with_server(script) do |endpoint, received|
+        reply = transport_to(endpoint).post("{}", { "Accept-Encoding" => "identity" })
+
+        expect(reply).to be_success
+        expect(reply.body).to eq('{"a":1}')
+        expect(received).to match(/^accept-encoding: identity\r$/i)
+      end
+    end
+
+    it "stops a chunked body that has no declared length once it passes the cap" do
+      script = ->(client) { chunked(*Array.new(20) { "x" * 100 }).each { |piece| client.write(piece) } }
+
+      with_server(script) do |endpoint, _received|
+        expect { transport_to(endpoint).post("{}", {}) }.to raise_error(described_class::ResponseTooLarge)
+      end
+    end
+
+    it "refuses a gzip response instead of inflating it" do
+      body = Zlib.gzip("x" * 100_000)
+      head = "HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: #{body.bytesize}\r\n\r\n"
+
+      with_server(->(client) { client.write(head + body) }) do |endpoint, _received|
+        expect { transport_to(endpoint).post("{}", { "Accept-Encoding" => "identity" }) }
+          .to raise_error(described_class::UnexpectedEncoding)
+      end
     end
   end
 end
