@@ -168,7 +168,47 @@ RSpec.describe Squishling do
 
       klass.new.call("x")
 
-      expect(caught.backtrace_locations[1].absolute_path).to eq(Squishling::Wrapper::FILE)
+      expect(caught.backtrace_locations[1].absolute_path).to eq(Squishling::Wrapper.const_get(:FILE, false))
+    end
+
+    it "fails closed when the error carries no backtrace locations" do
+      error = NotImplementedError.new("stub")
+
+      expect(Squishling::Wrapper.stub?(error)).to be(false)
+      expect(Squishling::Wrapper.stub?(error.tap { |e| e.set_backtrace(["wrapper.rb:1"]) })).to be(false)
+    end
+
+    it "falls back to the LLM when a stub in a squished parent is reached through super" do
+      parent = Class.new do
+        include Squishling
+
+        purpose "Parse."
+        output_schema { string :parsed }
+
+        def call(text) = raise(NotImplementedError, text)
+      end
+      child = Class.new(parent) { def call(text) = super.then { |result| result } }
+      stub_llm({ "parsed" => "x" })
+
+      expect(child.new.call("x").parsed).to eq("x")
+    end
+
+    it "propagates a stub raised after squish! instead of making a second LLM call" do
+      klass = Class.new do
+        include Squishling
+
+        purpose "Parse."
+        output_schema { string :parsed }
+
+        def call(text)
+          squish!
+          raise NotImplementedError, text
+        end
+      end
+      chats = stub_llm({ "parsed" => "x" }, { "parsed" => "y" })
+
+      expect { klass.new.call("x") }.to raise_error(NotImplementedError, "x")
+      expect(chats.size).to eq(1)
     end
 
     it "falls back to the LLM when the method is not defined at all" do

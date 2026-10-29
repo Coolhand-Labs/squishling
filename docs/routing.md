@@ -42,9 +42,10 @@ already has a `result` (see [Naming and collisions](naming.md)). Invalid determi
 `Squishling::InvalidOutputError` too, so a hardened path can't silently drift from the contract.
 
 Only the method's own stub routes: a `NotImplementedError` raised directly in the method body (`raise
-NotImplementedError` in a `def`, a `define_method` block, or a prepended module). One raised by code the method
-calls (a helper, another object, a block, or a `super` chain) is a bug in that code, not a missing
-implementation, so it propagates and nothing is sent to the provider.
+NotImplementedError` in a `def` or a `define_method` block, including one in a module prepended before
+`include Squishling`, or in a squished parent reached through `super`). One raised by code the method calls
+(a helper, another object, a block, or a `super` into a parent that isn't squished) is a bug in that code, not a
+missing implementation, so it propagates and nothing is sent to the provider.
 
 Each call is routed on its own, including a squished method that calls itself on smaller inputs (those
 recursive calls must return schema-valid values too). A subclass

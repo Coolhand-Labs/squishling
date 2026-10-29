@@ -26,8 +26,8 @@ module Squishling
             frame.phase = :ruby
             value = impl.call
           rescue NotImplementedError => e
-            # After squish!, the error came from the LLM path (a fallback, a proc), not a missing implementation.
-            # Otherwise only the method's own stub routes; one raised by code it calls propagates.
+            # Not a missing implementation, so it propagates: after squish! it came from the LLM path (a fallback,
+            # a proc), and otherwise from code the method calls.
             raise if frame.handed_off || !Wrapper.stub?(e)
 
             return route_to_llm(frame, definition, "not implemented")

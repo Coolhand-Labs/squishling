@@ -4,7 +4,9 @@ module Squishling
   # Module prepended to a squishling class. It intercepts squished methods regardless of
   # whether they're defined before or after the `squish` declaration (or at all).
   class Wrapper < Module
-    FILE = __FILE__
+    # Backtrace locations report real paths, so resolve this one too (a symlinked install keeps __FILE__ as given).
+    FILE = File.realpath(__FILE__)
+    private_constant :FILE
 
     # Raised by the wrapper when a squished method has no implementation at all.
     class NoImplementation < NotImplementedError; end
@@ -13,7 +15,8 @@ module Squishling
     # Whether a NotImplementedError is the "no implementation" signal rather than an error from called code: the
     # wrapper's own, or one raised directly in the method's own frame (`def x = raise NotImplementedError`). The
     # implementation lambda below sits one frame above the method, so anything raised deeper (a helper, a block,
-    # another object, a `super` chain) has more frames in between. A missing backtrace fails closed.
+    # another object, a `super` into an unsquished parent) has more frames in between. A missing backtrace fails
+    # closed; an exception re-raised or reused keeps the backtrace of its first raise.
     def self.stub?(error)
       error.is_a?(NoImplementation) || error.backtrace_locations&.at(1)&.absolute_path == FILE
     end
