@@ -87,6 +87,14 @@
   ul.plain { padding-left: 1.2rem; margin: 0 0 1rem; }
   ul.plain li { margin-bottom: 0.5rem; }
 
+  /* Latest release callout, rewritten by /prep-release each release */
+  .release { margin: 1.75rem 0 0; background: var(--card); border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 0 10px 10px 0; padding: 0.9rem 1.1rem; font-size: 0.95rem; }
+  .release .kicker { color: var(--accent); }
+  .release p { margin: 0 0 0.6rem; }
+  .release ul { list-style: none; margin: 0 0 0.6rem; padding: 0; }
+  .release li { margin-bottom: 0.3rem; }
+  .release .more { margin: 0; font-size: 0.85rem; color: var(--muted); }
+
   /* A measured run: pass rate and cost */
   .run { display: grid; grid-template-columns: 1fr auto; gap: 0.75rem 1.25rem; align-items: center; background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 0.85rem 1.1rem; margin: 0 0 1.25rem; }
   .run .pass b, .run .cost b { font-size: 1.5rem; line-height: 1.1; font-variant-numeric: tabular-nums; }
@@ -233,6 +241,21 @@
   </p>
   <p class="small">Join the discussion on <a href="https://news.ycombinator.com/item?id=50105742">Hacker News</a>.</p>
 </header>
+
+<aside class="release" id="latest-release" aria-label="Latest release">
+  <p class="kicker">Latest release · v0.5.0 · <time datetime="2026-10-28">October 28, 2026</time></p>
+  <p>Squishling turns any Ruby class into a hybrid of code and LLM inference working together. v0.5.0 is about making sure
+  it doesn't get too magical in production.</p>
+  <ul>
+    <li>💰 <strong>Token budget caps:</strong> limit what one call can spend across every retry, escalation and judge</li>
+    <li>✅ <strong><code>Squishling.verify</code>:</strong> checks every squished class (schemas, models, params) in CI without a single LLM request</li>
+    <li>🔍 <strong>Clearer errors:</strong> tell when the model was cut off by its token limit versus actually answering wrong</li>
+    <li>🧪 <strong>A scripted test adapter,</strong> so your unit tests never hit a provider</li>
+    <li>🔌 <strong>RubyLLM is now an optional adapter:</strong> add <code>gem "ruby_llm"</code> to your Gemfile, or use any OpenAI-compatible endpoint or your own</li>
+  </ul>
+  <p class="more"><a href="https://github.com/Coolhand-Labs/squishling/releases/tag/v0.5.0">Release notes</a> ·
+  <a href="https://github.com/Coolhand-Labs/squishling/blob/main/CHANGELOG.md">Changelog</a></p>
+</aside>
 
 <details class="toc-inline"><summary>On this page</summary><ol id="tocInline"></ol></details>
 
