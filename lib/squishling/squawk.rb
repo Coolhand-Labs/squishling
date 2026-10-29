@@ -12,7 +12,8 @@ module Squishling
     KEYWORD_CAPTURE_TYPES = %i[key keyreq keyrest].freeze
     KEYWORDS = %i[output metadata error].freeze
     # The squawk_on: conditions, each answering "does the hook run for this attempt?" from the attempt's 1-based
-    # number (the one its metadata carries), its error (nil when accepted), and whether it is the last one.
+    # number (the one its metadata carries), its error (nil when accepted), and whether it is the last one. A stopped
+    # call's report has an error and is final, so it passes every condition whatever its attempt number (0 or more).
     CONDITIONS = {
       all: ->(_attempt, _error, _final) { true },
       rejections: ->(_attempt, error, _final) { !error.nil? },

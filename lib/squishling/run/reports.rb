@@ -5,6 +5,10 @@ module Squishling
     # What a Run tells the squawk hook (see Squawk): the report of each attempt, and the one final report of a call that
     # a token budget or a disagreement stopped.
     module Reports
+      # Set on a stop error once it has been reported (see #report_stop).
+      REPORTED = :@squawk_reported
+      private_constant :REPORTED
+
       # Reports to squawk the BudgetExhaustedError or DisagreementError that stopped the call: one final report with
       # the error, for an ending that no attempt of its own reported (the attempt before a budget stop was already
       # reported, as not final, and a disagreement's samples were both accepted). Nothing was sent, so there is no
@@ -13,11 +17,14 @@ module Squishling
       def report_stop(error)
         hook = @definition.squawk
         attempts = error.attempts.to_i
-        return unless hook && Squawk.report?(@definition.squawk_on, attempts, error, true)
+        return if error.instance_variable_get(REPORTED) || !hook
+        return unless Squawk.report?(@definition.squawk_on, attempts, error, true)
 
+        # Marked first, so an error that comes back through an outer squished call (or a second report_stop) is not
+        # reported again, and a hook that raises doesn't get the same error again either.
+        error.instance_variable_set(REPORTED, true)
         metadata = squawk_metadata(
-          attempt: attempts, attempts:, final: true, repeated: false, model: error.models&.last, provider: nil,
-          params: nil, input: @prompt.input, response: nil, role: nil, sample: nil,
+          attempt: attempts, attempts:, final: true, model: error.models&.last, input: @prompt.input,
           stopped: error.is_a?(BudgetExhaustedError) ? :budget : :disagreement
         )
         Squawk.call(hook, output: nil, metadata:, error:)
@@ -44,8 +51,8 @@ module Squishling
         Squawk.call(hook, output: response&.content, metadata:, error:)
       end
 
-      def squawk_metadata(attempt:, attempts:, final:, repeated:, model:, provider:, params:, input:, response:,
-        role:, sample:, stopped: nil)
+      def squawk_metadata(attempt:, attempts:, final:, model:, input:, repeated: false, provider: nil, params: nil,
+        response: nil, role: nil, sample: nil, stopped: nil)
         {
           label:, attempt:, attempts:, final:, repeated:, model:, provider:, params:, input:,
           usage: response&.usage, finish_reason: response&.finish_reason, role:, sample:, stopped:

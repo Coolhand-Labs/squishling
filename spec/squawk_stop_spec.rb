@@ -208,6 +208,55 @@ RSpec.describe "Squishling squawk when a call is stopped" do
     end
   end
 
+  describe "reported once" do
+    it "doesn't report again an error that passes through an outer squished call" do
+      Squishling.register_harness(:calls_inner) do
+        def call(run)
+          run.receiver.class.inner.call(text: "x")
+        end
+      end
+      inner = sampler
+      outer = Class.new do
+        include Squishling
+
+        squishling harness: :calls_inner, model: "claude-haiku-4-5"
+        purpose "Outer."
+        output_schema { string :priority }
+      end
+      outer.define_singleton_method(:inner) { inner }
+      stub_llm_chats([high], [low])
+
+      expect { outer.call(text: "x") }.to raise_error(Squishling::DisagreementError)
+      stops = calls.select { |call| call[:metadata][:stopped] }
+      expect(stops.map { |call| call[:metadata][:label] }).to eq(["#{inner}#call"])
+    end
+
+    it "ignores a second report_stop for the same error" do
+      sampler.squishling(squawk_on: :final)
+      stub_llm_chats([high], [low])
+      error = nil
+
+      expect { sampler.call(text: "x") }.to raise_error(Squishling::DisagreementError) { |raised| error = raised }
+      run = Squishling::Run.allocate
+      run.instance_variable_set(:@definition, sampler.squishling_definition(:call))
+      run.report_stop(error)
+
+      expect(calls.size).to eq(1)
+    end
+
+    it "lets an exception from the hook replace the stop error, which stays as its cause" do
+      fallback = []
+      sampler.squishling(squawk: ->(**) { raise ArgumentError, "tracker down" }, squawk_on: :final)
+      sampler.squish_fallback { |error, **| fallback << error }
+      stub_llm_chats([high], [low])
+
+      expect { sampler.call(text: "x") }.to raise_error(ArgumentError, "tracker down") { |error|
+        expect(error.cause).to be_a(Squishling::DisagreementError)
+      }
+      expect(fallback).to be_empty
+    end
+  end
+
   describe "what is not a stop" do
     it "adds no report when a call ends on its last invalid attempt, which already carried final: true" do
       stub_llm(invalid, invalid, invalid, invalid)
