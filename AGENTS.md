@@ -134,7 +134,8 @@ Flag any change that breaks one of these; they are behavior contracts, not style
   and a second interlock share can deadlock against a pending code reload.
 - **Observers see metadata and usage, around the request.** `config.observer` (`Squishling::Observer`) wraps each
   provider request (`LLMClient#ask`/`#judge`) on the thread that makes it, so a sample's observer runs on its worker
-  thread. The `Observer::Call` it receives holds label, purpose, harness, `handed_off` (whether `squish!` sent the
+  thread. The `Observer::Call` it receives holds label, purpose (the fully rendered system prompt, so as sensitive as the
+  prompt itself), harness, `handed_off` (whether `squish!` sent the
   call), role/sample, attempt/attempts, model/provider, and request type; the block's `yield` returns an
   `Observer::Usage` (token counts and model). Never
   inputs, context, or output: the observer's return value is ignored and the real response goes to Squishling's own

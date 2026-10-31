@@ -299,7 +299,10 @@ results, the same type the deterministic path returns.
 | `run.log(message)` | A warning to `config.logger`, prefixed with `"[Squishling] Class#method"` |
 
 `call` returns the accepted result: one a primitive of this run returned. Returning anything else (a Hash, `nil`, a
-result you built or copied with `with`) raises `ConfigurationError`, so a harness can't skip validation.
+result you built or copied with `with`) raises `ConfigurationError`, so a harness can't skip validation. The check is
+by object identity, which suits the typed results of an object schema. When the schema isn't an object, a result is a
+bare JSON value, and an immediate such as `1` or `true` counts as produced whatever its source, so there the check can't
+catch a hand-built value.
 
 ### When a custom harness fails
 

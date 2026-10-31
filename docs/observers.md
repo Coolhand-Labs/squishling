@@ -60,7 +60,7 @@ Anything else raises `ConfigurationError` when you assign it.
 | Field | |
 |---|---|
 | `label` | `"Class#method"` |
-| `purpose` | The purpose text sent as the system prompt (after `purpose` procs and `append_to_purpose` sections are resolved) |
+| `purpose` | The purpose text sent as the system prompt (after `purpose` procs and `append_to_purpose` sections are resolved). It is the whole prompt, including any source you pass to `append_to_purpose` and whatever your `purpose` procs return, so treat it as sensitive: don't log it to a place the prompt itself shouldn't go |
 | `handed_off` | `true` when a `squish!` call sent the call to the LLM (typically from a `rescue`), `false` when `squish_when` or a missing implementation did |
 | `harness` | The harness type (`:escalation`, `:squishsum`, `:judged_squishsum`, or a [custom one](harnesses.md#custom-harnesses)) |
 | `role` | `nil` for an escalation attempt, `:sample` or `:judge`, as in `squawk`'s `metadata` |
@@ -69,8 +69,8 @@ Anything else raises `ConfigurationError` when you assign it.
 | `model`, `provider` | The step's model and provider (`provider` is `nil` unless declared) |
 | `request` | `:chat`, or `:judgment` for a System One judge |
 
-It carries metadata only. The method's inputs, its context, and the model's output never reach an observer: it gets
-the request's token [`Usage`](#what-yield-returns) back, and `squawk` is the route for output.
+It carries metadata, plus the rendered `purpose`. The method's inputs, its context, and the model's output never reach an
+observer: it gets the request's token [`Usage`](#what-yield-returns) back, and `squawk` is the route for output.
 
 ## Errors
 

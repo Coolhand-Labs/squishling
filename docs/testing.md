@@ -18,7 +18,8 @@ Both give your tests the helpers below and put back, after each test, whatever t
 still hold what the helpers set), so the rest of your `Squishling.configure` survives.
 
 The helpers change global state (`Squishling.config` and the stubbed classes), so tests that use them must not run
-in parallel threads.
+in parallel threads. That includes `no_llm_call` / `assert_no_llm_call`, which swap the process-wide `config.adapter`
+for the block: a request another thread makes meanwhile is forbidden too, and may be counted in the block's calls.
 
 ## Scripting the model
 
@@ -132,8 +133,8 @@ stub_squishling_error(PatternGenerator, :llm_error)           # also :configurat
 Attributes that don't satisfy the method's `output_schema` raise `Squishling::Testing::SetupError` when you stub, so a
 stand-in can't drift from the real result type. Pass `method: :triage` for another squished method. The stubs are
 removed after each test. A stub applies to that class only, not to its subclasses, which keep their own behavior. The
-hook that makes a stub possible stays on the class for the life of the process, so stub the classes of your suite, not
-one per test.
+hook that makes a stub possible stays on the class for the life of the process, even after `Testing.reset!` has
+removed the stub (it is inert, but keeps the class alive), so stub the classes of your suite, not one per test.
 
 ## Running parts of a method without a model
 

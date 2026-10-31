@@ -9,8 +9,8 @@ module Squishling
     # adapter builds, so these would silently replace the model, the conversation, or the strict output format.
     RESERVED_KEYS = %i[
       model messages input inputs instructions contents system system_instruction systemInstruction cachedContent
-      stream stream_options store include response_format text output_config outputConfig tools tool_choice
-      toolConfig tool_config schema functions function_call
+      cached_content stream stream_options store include response_format text output_config outputConfig tools
+      tool_choice toolConfig tool_config schema functions function_call
     ].freeze
 
     # Some protocols carry the structured-output format (or tool selection) inside a container that is
