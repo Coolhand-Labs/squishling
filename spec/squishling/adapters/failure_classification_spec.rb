@@ -132,7 +132,7 @@ RSpec.describe "Provider failure classification" do # rubocop:disable RSpec/Desc
         error = fail_with(400, body_with, type)
 
         expect { adapter.complete(adapter_request) }
-          .to raise_error(Squishling::RequestRejectedError, /#{type.name}, HTTP 400/) { |e| expect(e.cause).to equal(error) }
+          .to raise_error(Squishling::RequestRejectedError, /#{type.name}, HTTP 400/) { |e| expect_sanitized_cause(e, error) }
       end
     end
 
@@ -148,8 +148,18 @@ RSpec.describe "Provider failure classification" do # rubocop:disable RSpec/Desc
       expect { adapter.complete(adapter_request) }
         .to raise_error(Squishling::LLMError, /ContextLengthExceededError, HTTP 400/) do |e|
           expect(e.message).not_to include("Jane Doe")
-          expect(e.cause).to equal(error)
+          expect_sanitized_cause(e, error)
         end
+    end
+
+    it "keeps RubyLLM's original error as the cause of every classification with keep_cause: true" do
+      adapter = described_class.new(keep_cause: true)
+      [[400, Squishling::RequestRejectedError], [401, Squishling::ConfigurationError], [429, Squishling::LLMError],
+       [200, Squishling::LLMError]].each do |status, error_class|
+        error = fail_with(status, body_with)
+
+        expect { adapter.complete(adapter_request) }.to raise_error(error_class) { |e| expect(e.cause).to equal(error) }
+      end
     end
 
     {
@@ -166,9 +176,16 @@ RSpec.describe "Provider failure classification" do # rubocop:disable RSpec/Desc
         message = /\AKlass#call: .*#{type.name}\b/
         expect { adapter.complete(adapter_request) }.to raise_error(error_class, message) do |e|
           expect(e.message).not_to include("Jane Doe")
-          expect(e.cause).to equal(error)
+          expect_sanitized_cause(e, error)
         end
       end
+    end
+
+    # The cause is a stand-in with the class (and status), never RubyLLM's own error with the provider's body.
+    def expect_sanitized_cause(raised, original)
+      expect(raised.cause).to be_a(Squishling::Adapter::ProviderFailure)
+        .and have_attributes(message: /\A#{original.class}(, HTTP \d+)?\z/, backtrace: original.backtrace)
+      expect(raised.cause.message).not_to include("Jane Doe")
     end
   end
 end

@@ -8,9 +8,9 @@ A failed attempt moves on to the next one; once the last fails, the error is rai
 
 | Failure | What Squishling does |
 |---|---|
-| Rate limit, 5xx, overload, timeout, connection error | The [adapter](adapters.md) retries at the HTTP level first (RubyLLM: `RubyLLM.config.max_retries`, default 3; OpenAI-compatible: `max_retries:`, default 2). If it still fails, moves to the next attempt in a fresh chat; on the last attempt, raises `Squishling::LLMError` with the original exception as its `cause` (when the adapter has one: the RubyLLM adapter always does; the OpenAI-compatible adapter for transport errors, not for HTTP statuses). |
+| Rate limit, 5xx, overload, timeout, connection error | The [adapter](adapters.md) retries at the HTTP level first (RubyLLM: `RubyLLM.config.max_retries`, default 3; OpenAI-compatible: `max_retries:`, default 2). If it still fails, moves to the next attempt in a fresh chat; on the last attempt, raises `Squishling::LLMError` with a `cause` when the adapter has one: the RubyLLM adapter always does, a [sanitized stand-in](#the-cause-of-a-provider-failure); the OpenAI-compatible adapter only for transport errors (the error itself, which carries no response body), not for HTTP statuses. |
 | Bad API key, billing or quota problem (402), unknown model or endpoint (404), missing provider config | Raises `Squishling::ConfigurationError`. Never escalated, never sent to the fallback. |
-| Provider rejects the request (400 Bad Request, or another 4xx such as 409 or 422), e.g. an unsupported `temperature` or a schema it won't accept | Raises `Squishling::RequestRejectedError` (a `ConfigurationError`) naming the error class, the HTTP status, and the provider's error status/code when its body carries one (`INVALID_ARGUMENT`, `invalid_request_error`). They are also on `error.provider_status` and `error.provider_code` (nil when absent); only plain tokens are kept, never the provider's message. The message points at a param only when the provider named it, and otherwise says the params, output schema, or input may be invalid. The provider's own message is on `cause` when the adapter has one (RubyLLM's does; with the OpenAI-compatible adapter `cause` carries only the status). It is never retried, so if you know a given code means "this input was bad", rescue it and decide for yourself. A 400 that reports an overlong input is the exception: the adapter raises an `LLMError` for it (the built-in adapters recognize the structured `context_length_exceeded` code; RubyLLM's own `ContextLengthExceededError` is honored too, and the OpenAI-compatible adapter also recognizes the usual wording of servers that send none), since a bigger model may take it. Which of the two a failure is, is the adapter's call (see [the error contract](adapters.md#the-error-contract)); a wording it doesn't recognize stays a rejected request. Never escalated, never sent to the fallback, so a setup mistake can't be silently covered up on every call. |
+| Provider rejects the request (400 Bad Request, or another 4xx such as 409 or 422), e.g. an unsupported `temperature` or a schema it won't accept | Raises `Squishling::RequestRejectedError` (a `ConfigurationError`) naming the error class, the HTTP status, and the provider's error status/code when its body carries one (`INVALID_ARGUMENT`, `invalid_request_error`). They are also on `error.provider_status` and `error.provider_code` (nil when absent); only plain tokens are kept, never the provider's message. The message points at a param only when the provider named it, and otherwise says the params, output schema, or input may be invalid. The provider's own message is not on `cause` either unless you opt in (see [the cause of a provider failure](#the-cause-of-a-provider-failure)). It is never retried, so if you know a given code means "this input was bad", rescue it and decide for yourself. A 400 that reports an overlong input is the exception: the adapter raises an `LLMError` for it (the built-in adapters recognize the structured `context_length_exceeded` code; RubyLLM's own `ContextLengthExceededError` is honored too, and the OpenAI-compatible adapter also recognizes the usual wording of servers that send none), since a bigger model may take it. Which of the two a failure is, is the adapter's call (see [the error contract](adapters.md#the-error-contract)); a wording it doesn't recognize stays a rejected request. Never escalated, never sent to the fallback, so a setup mistake can't be silently covered up on every call. |
 | Empty or `nil` response (e.g. a refusal or a max-tokens cutoff) | Moves to the next attempt, then raises `Squishling::InvalidOutputError`. When the provider reported a max-tokens cutoff, the error says so and [`truncated?`](#a-cutoff-or-a-wrong-answer) is true. |
 | Malformed or truncated JSON | Moves to the next attempt, then raises `InvalidOutputError`. JSON wrapped in a markdown code fence is accepted. |
 | JSON that doesn't match the schema (wrong types, missing or extra keys, `null` in a non-`optional` field, a broken [conditional rule](schemas.md#contracts-beyond-the-schema), root not an object) | Moves to the next attempt with the validation errors, then raises `InvalidOutputError` |
@@ -67,7 +67,8 @@ Model output can echo sensitive input, so the raw response is kept in one place:
   with invalid UTF-8).
 - For a failed provider request (`LLMError`, and the `ConfigurationError` for a rejected request, bad credentials, or a forbidden
   key), only the error class and HTTP status, plus a rejection's provider status and code when they are plain tokens. The provider's own message can echo request content or part of an API
-  key, so it stays on `cause` (`error.cause.message`) for you to read or log deliberately.
+  key, and error trackers report the whole `cause` chain, so it is not on `cause` either unless you
+  [opt in](#the-cause-of-a-provider-failure).
 - At most the first 20 of these errors, plus a count of the rest, so a very large malformed response can't flood
   the retry message or the log.
 - For a [`DisagreementError`](harnesses.md#when-the-harness-fails), only what Squishling wrote: a `:judgment` judge's
@@ -98,6 +99,26 @@ end
 The same applies to anything you log yourself, such as `error.message` in a [fallback](#fallbacks). Use `error.raw`
 only where you are willing to store model output. To send the output of every attempt somewhere on purpose, use
 [`squawk`](#observing-every-attempt-squawk).
+
+### The cause of a provider failure
+
+A provider's own exception (RubyLLM's, say) carries the provider's response body in its message and `response`, and the
+body can echo your request. Error trackers such as Sentry report the whole `cause` chain, so an `LLMError`,
+`ConfigurationError`, or `RequestRejectedError` raised for a failed request does not carry that exception as its
+`cause`. The [RubyLLM adapter](adapters.md#ruby_llm) puts a `Squishling::Adapter::ProviderFailure` there instead: its
+message is the original's class and HTTP status (`RubyLLM::RateLimitError, HTTP 429`), and it has the original's
+backtrace, but none of its message, response, or other state. Transport errors that carry no body (the OpenAI-compatible
+adapter's timeouts and connection failures) are passed through as they are.
+
+To get the original back for debugging, accept that it reaches your tracker and set `keep_cause: true`:
+
+```ruby
+Squishling.configure do |config|
+  config.adapter = { type: :ruby_llm, keep_cause: true }
+end
+```
+
+Then `error.cause` is the `RubyLLM::Error` itself, with its message and `response`.
 
 ## Capping a call's cost (token budgets)
 
@@ -250,7 +271,7 @@ end
 | `Squishling::InvalidOutputError` | LLM output still invalid (schema or `squish_validate`) after every attempt in the escalation, or a deterministic/fallback return that doesn't match the schema |
 | `Squishling::DisagreementError` | A subclass of `InvalidOutputError`: a [squishsum harness](harnesses.md#when-the-harness-fails)'s samples disagreed and no judge accepted either. `candidates`, `verdict`, and `reason` describe what happened |
 | `Squishling::BudgetExhaustedError` | A subclass of `InvalidOutputError`: the call used up its [token budget](#capping-a-calls-cost-token-budgets) before an attempt was accepted. `limit`, `max`, and `used` describe the budget |
-| `Squishling::LLMError` | The provider call failed on the last attempt in the escalation, after the adapter's own retries, including context-length errors (`cause` holds the original, when the adapter has one) |
+| `Squishling::LLMError` | The provider call failed on the last attempt in the escalation, after the adapter's own retries, including context-length errors (`cause` holds a [sanitized stand-in](#the-cause-of-a-provider-failure), when the adapter has one) |
 
 Errors raised by your own Ruby code are not wrapped.
 

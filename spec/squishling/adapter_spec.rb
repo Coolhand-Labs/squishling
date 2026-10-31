@@ -114,6 +114,52 @@ RSpec.describe Squishling::Adapter do
       expect(error.message).to include("(Acme, INVALID_ARGUMENT)")
     end
 
+    describe "#sanitized_cause" do
+      let(:original) do
+        stub_const("Acme", Module.new)
+        stub_const("Acme::Boom", Class.new(StandardError) do
+          attr_reader :response
+
+          def initialize(message, response)
+            super(message)
+            @response = response
+          end
+        end)
+        begin
+          raise Acme::Boom.new("echoed secret", { body: "echoed secret" })
+        rescue StandardError => e
+          e
+        end
+      end
+
+      it "stands in for a provider exception with its class, HTTP status, and backtrace, and nothing else" do
+        cause = base.send(:sanitized_cause, original, status: 502)
+
+        expect(cause).to be_a(Squishling::Adapter::ProviderFailure).and have_attributes(message: "Acme::Boom, HTTP 502")
+        expect(cause.backtrace).to eq(original.backtrace)
+        expect(cause.instance_variables).to be_empty
+        expect(cause.cause).to be_nil
+      end
+
+      it "names only the class when there is no status" do
+        expect(base.send(:sanitized_cause, original).message).to eq("Acme::Boom")
+      end
+
+      it "is not a Squishling::Error, so nothing rescues it by accident" do
+        expect(Squishling::Adapter::ProviderFailure.ancestors).not_to include(Squishling::Error)
+      end
+
+      it "can be set as the cause of a raised Squishling error" do
+        error = begin
+          raise Squishling::LLMError, "K#m: failed", cause: base.send(:sanitized_cause, original)
+        rescue Squishling::LLMError => e
+          e
+        end
+
+        expect(error.cause.message).to eq("Acme::Boom")
+      end
+    end
+
     describe "#http_failure" do
       let(:request) do
         Squishling::Adapter::Request.new(label: "K#m", model: nil, provider: nil, instructions: nil, messages: [],

@@ -37,14 +37,18 @@ Everything works as it did before adapters: configure provider API keys with `Ru
 use `provider:` for models missing from RubyLLM's registry. See [Configuration](configuration.md). Transport-level
 retries are RubyLLM's (`RubyLLM.config.max_retries`, `request_timeout`).
 
+| Option | Default | Description |
+|---|---|---|
+| `keep_cause` | `false` | RubyLLM's exception holds the provider's response body, which can echo your request, and error trackers report the whole `cause` chain. By default the errors the adapter raises carry a sanitized `cause` (the class and HTTP status only). `true` keeps RubyLLM's original exception there. See [the cause of a provider failure](failures.md#the-cause-of-a-provider-failure). |
+
 **Failures** are sorted by the HTTP status of the error's response, the same way as for the OpenAI-compatible adapter
 below (an error with no response, such as a timeout, is sorted by its class). RubyLLM's own error classes are not what
 decides: on a 400 its middleware picks a class from the provider's message text, so a bad parameter whose message says
 "per day" would otherwise look like a rate limit. The one RubyLLM class that is honored over the status is
 `RubyLLM::ContextLengthExceededError`, an `LLMError`, since RubyLLM is where each provider's wording for an overlong
 prompt is known. RubyLLM picks that class from the message on a 400, with wording broader than the OpenAI-compatible
-adapter's, so a bad parameter whose message happens to match is retried as an overflow rather than rejected. The
-original error is on `cause`.
+adapter's, so a bad parameter whose message happens to match is retried as an overflow rather than rejected. Each of
+these errors carries a sanitized `cause` (see `keep_cause` above).
 
 This is the only built-in adapter that supports `type: :judgment` judges ([System One decision models](harnesses.md#the-judge)).
 
@@ -201,7 +205,10 @@ long for the model should be an `LLMError`, since a bigger model may take it. `h
 sends. Where the adapter can't tell, leave it: the failure stays a `RequestRejectedError`, which is never absorbed.
 
 Keep the provider's own message out of every error you raise: it can echo request content or part of a key, and ours
-reach logs and error trackers. Put the original on `cause` (raising inside a `rescue` does that for you). Any other
+reach logs and error trackers, and so do trackers that walk the `cause` chain. If the provider's exception carries a
+response body (an HTTP client error), don't leave it as the `cause` that raising inside a `rescue` sets: pass
+`cause: sanitized_cause(error, status: …)`, which builds a stand-in with only the class, the status, and the
+backtrace. An exception that carries no body (a timeout, a refused connection) can stay as the `cause`. Any other
 exception propagates unwrapped and is never retried, so map your transport's errors. Return anything but an
 `Adapter::Response` and Squishling raises `ConfigurationError`.
 
