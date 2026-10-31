@@ -3,12 +3,14 @@
 An **adapter** is how Squishling reaches a model. Squishling builds the request (system prompt, conversation so far,
 strict output schema, generation params), the adapter makes one completion and returns the model's output, and
 Squishling does the rest: validation, `squish_validate`, retries and escalation, harnesses, `squawk`, and fallbacks.
-Two adapters ship, and you can write your own.
+Two adapters ship, separate gems add more (below), and you can write your own.
 
 | Adapter | Reaches | Needs |
 |---|---|---|
 | [`:ruby_llm`](#ruby_llm) | OpenAI, Anthropic Claude, Google Gemini, AWS Bedrock, OpenRouter, and every provider [RubyLLM](https://rubyllm.com) supports | `gem "ruby_llm"` |
 | [`:openai_compatible`](#openai-compatible-endpoints) | Any server that speaks OpenAI's Chat Completions API: OpenAI, Ollama, vLLM, LM Studio, llama.cpp, Together, Groq, … | nothing (Ruby's `Net::HTTP`) |
+| [`squishling-apple_fm`](https://github.com/Coolhand-Labs/squishling-apple-fm-adapter) (separate gem) | The on-device model built into macOS (Apple Intelligence): free and offline, for development | `gem "squishling-apple_fm"`, macOS 26+ on Apple Silicon |
+| [`squishling-claude_code`](https://github.com/Coolhand-Labs/squishling-claude-code-adapter) (separate gem) | Your local Claude Code CLI (`claude -p`), on your own Claude subscription instead of API billing, for development | `gem "squishling-claude_code"`, Claude Code installed and logged in |
 | [Your own](#writing-your-own) | Anything | a class with one method |
 
 Squishling itself depends on neither RubyLLM nor any provider SDK.
