@@ -7,6 +7,75 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-10-31
+
+The v0.5.0 red-team follow-ups (#70): data-egress, secret-leakage, and misclassification fixes. Several of them change
+behavior that used to work, so read **Changed** before upgrading.
+
+### Added
+
+- The OpenAI-compatible adapter takes `allow_insecure_http:` (default `false`), `max_response_bytes:` (default 8 MiB), and
+  `total_timeout:` (default `open_timeout + 2 * read_timeout`, per attempt). See **Changed** for what they guard.
+  (#74, #86)
+- `keep_cause: true` on the RubyLLM adapter keeps the provider's original exception as `cause`. (#76, #84)
+- `Adapter::Base#http_failure(request, status:, body:, via:)`, an overridable `context_length?(status:, body:)` hook, and
+  `sanitized_cause(error, status:)` for custom adapters: one shared mapping from an HTTP status to `LLMError`,
+  `ConfigurationError`, or `RequestRejectedError`, and a body-free `cause`. See [Adapters](docs/adapters.md). (#72, #76,
+  #84, #88)
+- `squawk` metadata gains `stopped:` (`:budget`, `:disagreement`, or `nil` for an ordinary attempt). (#73, #87)
+
+### Changed
+
+- **Behavior change:** a `NotImplementedError` raised by code a squished method calls (an abstract method on another
+  object, a helper, a block) now propagates instead of sending the method's arguments to the provider. Only the
+  method's own stub routes to the LLM: `def x = raise NotImplementedError`, `define_method`, a prepended module, and an
+  undefined method. To use the LLM from a rescue deeper in the stack, call `squish!` in the method. (#71, #83)
+- **Behavior change:** `error.cause` from the RubyLLM adapter is now an `Adapter::ProviderFailure` that names only the
+  original's class and HTTP status (`RubyLLM::RateLimitError, HTTP 429`) and keeps its backtrace, because the original's
+  message is the provider's response body, which can echo request content and which error trackers such as Sentry report
+  from the cause chain. This reverses 0.4.0's choice to keep the original: code that read `e.cause.message` or
+  `e.cause.is_a?(RubyLLM::...)` needs `keep_cause: true`. The OpenAI-compatible adapter's transport causes carry no body
+  and are unchanged. (#76, #84)
+- **Behavior change:** a provider failure is classified by the adapter from its HTTP status and structured error
+  `code`/`type`, no longer from the provider's message text. Both adapters now agree: 408, 413, 429, and 5xx are
+  `LLMError`; 401, 402, 403, 404, and 3xx are `ConfigurationError`; every other 4xx is a `RequestRejectedError`. On
+  RubyLLM, 402, 404, and 422 were retryable `LLMError`s. A context overflow is an `LLMError` (so it retries and
+  escalates) only when the body's `code`/`type` is `context_length_exceeded`, the adapter recognizes it (the
+  OpenAI-compatible adapter still matches the usual wordings, no longer a bare "maximum ... tokens"), or RubyLLM raised
+  its `ContextLengthExceededError`; one that is only in the message text now raises `RequestRejectedError`. (#72, #88)
+- **Behavior change:** the OpenAI-compatible adapter refuses to send an `api_key` or `Authorization` header over
+  `http://` to a host that isn't loopback (`localhost`, `*.localhost`, `127.0.0.0/8`, `::1`), raising
+  `ConfigurationError`. A LAN or Docker setup such as `http://ollama:11434/v1` needs `allow_insecure_http: true`.
+  Responses over `max_response_bytes` raise `LLMError`, requests send `Accept-Encoding: identity` and a compressed
+  reply is refused, and `total_timeout:` bounds a whole attempt, not each read. None of those is retried by the adapter.
+  (#74, #86)
+- **Behavior change:** a hand-written Hash `output_schema` with `properties` but no `type: "object"`, at the root or
+  nested (a property, array `items`, an `optional` branch, a `$ref` target), now raises `ConfigurationError` when the
+  schema is built, and `Squishling.verify` reports it. Add `type: "object"` (or a union that includes it). Schematist
+  schemas are unaffected. (#77, #81)
+- **Behavior change:** a schema with a remote or unresolvable `$ref` now raises `ConfigurationError` when it is built
+  (and in `verify`), not a raw `JSONSchemer::UnknownRef` on the first reply. A Hash or Array argument that contains
+  itself raises `ConfigurationError`, not `SystemStackError`. `cached_content` joins the reserved `params` keys. (#78,
+  #85)
+- **Behavior change:** the `squawk` hook now also runs once when a call ends on `BudgetExhaustedError` or
+  `DisagreementError`, with `output: nil`, `final: true`, and `stopped:` set, so `squawk_on: :final` and `:rejections`
+  see those endings. A hook that assumes every call has output or usage should skip calls where `metadata[:stopped]` is
+  set. (#73, #87)
+- `Marshal.dump` of an `OpenAICompatible` adapter (or a config holding one) now raises `TypeError`, and its API key and
+  header values show as `[REDACTED]` in `to_yaml` and `as_json`, as they already did in `inspect`. Rebuild the adapter
+  from its options instead of caching a dump. (#75, #82)
+
+### Fixed
+
+- `Schema::CACHE` holds its keys weakly, so schema classes replaced by a Rails code reload can be collected. Two equal
+  Hash schemas now share one cached `Schema`. (#78, #85)
+
+### Documented
+
+- `Observer::Call#purpose` is the fully rendered system prompt, including `append_to_purpose` source and procs: treat it
+  as sensitive. `Testing::Stubs` hooks persist after `Testing.reset!`; `Testing.no_llm_call` swaps the process-wide
+  adapter, so it is not safe under parallel test threads; `Run#produced?` compares by identity. (#78, #85)
+
 ## [0.5.0] - 2026-10-28
 
 ### Added
