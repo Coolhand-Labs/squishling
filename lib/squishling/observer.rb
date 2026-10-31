@@ -33,12 +33,12 @@ module Squishling
         return observer if BUILT_IN.include?(observer)
 
         raise ConfigurationError, "#{where} observer must be one of #{BUILT_IN.map(&:inspect).join(', ')}, " \
-                                  "an object that responds to around, or false, got #{observer.inspect}"
+                                  "an object that responds to around, or false, got #{Appendices.describe(observer)}"
       end
       return observer if observer.respond_to?(:around)
 
       raise ConfigurationError, "#{where} observer must respond to around(call) { ... } (or be false), " \
-                                "got #{observer.inspect}"
+                                "got #{Appendices.describe(observer)}"
     end
 
     # The observer that wraps a request: the configured one, the Coolhand observer when nothing is configured and

@@ -504,6 +504,13 @@ RSpec.describe "Squishling squawk" do
   end
 
   describe "validation" do
+    it "names the class of a rejected hook, never its instance variables" do
+      client = Class.new { def initialize = @access_token = "sk-LIVEKEY" }.new
+
+      expect { Squishling.configure { |c| c.squawk = client } }
+        .to raise_error(Squishling::ConfigurationError, /got an instance of/) { |e| expect(e.message).not_to include("sk-LIVEKEY") }
+    end
+
     it "rejects a hook that can't be called" do
       expect { Squishling.configure { |c| c.squawk = "log it" } }
         .to raise_error(Squishling::ConfigurationError, /squawk must respond to call/)

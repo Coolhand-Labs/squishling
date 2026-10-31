@@ -512,6 +512,13 @@ RSpec.describe Squishling::Adapters::OpenAICompatible do # rubocop:disable RSpec
       expect { adapter.complete(adapter_request) }.to raise_error(Squishling::RequestRejectedError, /HTTP 400/)
     end
 
+    it "treats a 400 whose message and code aren't valid UTF-8 as a rejected request, not an ArgumentError" do
+      body = %({"error":{"message":"echo cut mid-character \xE2\x82","code":"bad\xFF","type":"invalid_request_error"}})
+      stub_post.to_return(reply(body.b, status: 400))
+
+      expect { adapter.complete(adapter_request) }.to raise_error(Squishling::RequestRejectedError, /HTTP 400/)
+    end
+
     it "words the hint neutrally when the server named no configured param, and exposes the code" do
       stub_post.to_return(reply(error_body(code: "unsupported_value", param: "messages[0].content"), status: 400))
 

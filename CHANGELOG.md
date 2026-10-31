@@ -67,6 +67,10 @@ behavior that used to work, so read **Changed** before upgrading.
 
 ### Fixed
 
+- A provider 400 whose error `message`, `code`, or `type` is not valid UTF-8 (for example an echo cut mid-character) now
+  raises `RequestRejectedError` like any other 400, instead of a bare `ArgumentError` that is not a Squishling error.
+- A `ConfigurationError` for a rejected `config.adapter`, `observer`, or `squawk` now names the object's class instead of
+  its `inspect` output, which could print an instance variable such as an access token.
 - `Schema::CACHE` holds its keys weakly, so schema classes replaced by a Rails code reload can be collected. Two equal
   Hash schemas now share one cached `Schema`. (#78, #85)
 

@@ -101,7 +101,7 @@ module Squishling
       end
 
       def expired!
-        raise DeadlineExceeded, expired_message
+        raise DeadlineExceeded, expired_message, cause: nil
       end
 
       def expired_message

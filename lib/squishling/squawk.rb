@@ -51,7 +51,7 @@ module Squishling
       return hook if hook.nil? || hook == false
 
       unless hook.respond_to?(:call)
-        raise ConfigurationError, "#{where} squawk must respond to call (or be false), got #{hook.inspect}"
+        raise ConfigurationError, "#{where} squawk must respond to call (or be false), got #{Appendices.describe(hook)}"
       end
       if positional_only?(parameters(hook))
         raise ConfigurationError,

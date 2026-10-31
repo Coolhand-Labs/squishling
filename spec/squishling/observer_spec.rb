@@ -67,6 +67,13 @@ RSpec.describe Squishling::Observer do
       end
     end
 
+    it "names the class of a rejected object, never its instance variables" do
+      client = Class.new { def initialize = @access_token = "sk-LIVEKEY" }.new
+
+      expect { Squishling.configure { |c| c.observer = client } }
+        .to raise_error(Squishling::ConfigurationError, /got an instance of/) { |e| expect(e.message).not_to include("sk-LIVEKEY") }
+    end
+
     it "rejects anything else at setup" do
       expect { Squishling.configure { |c| c.observer = :datadog } }
         .to raise_error(Squishling::ConfigurationError, /observer must be one of :coolhand/)

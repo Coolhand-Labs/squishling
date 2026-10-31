@@ -31,11 +31,19 @@ RSpec.describe Squishling::Adapters::OpenAITransport do # rubocop:disable RSpec/
       expect(WebMock).not_to have_requested(:post, lan_url)
     end
 
-    %w[authorization Authorization Proxy-Authorization api-key X-API-KEY].each do |name|
+    %w[
+      authorization Authorization Proxy-Authorization api-key X-API-KEY x-goog-api-key Ocp-Apim-Subscription-Key
+      X-Auth-Token x-api-token Cookie
+    ].each do |name|
       it "refuses a #{name} header" do
         expect { adapter_class.new(base_url: lan, headers: { name => "abc" }) }
           .to raise_error(Squishling::ConfigurationError, /won't send credentials/)
       end
+    end
+
+    it "doesn't take a header that only looks like a key for a credential" do
+      expect { adapter_class.new(base_url: lan, headers: { "Idempotency-Key" => "abc", "X-Request-Id" => "1" }) }
+        .not_to raise_error
     end
 
     it "reads the headers through their Secret and never puts a header value in the error" do
@@ -287,6 +295,17 @@ RSpec.describe Squishling::Adapters::OpenAITransport do # rubocop:disable RSpec/
 
       expect { transport(clock: clock_of(0.0, 100.0)).post("{}", {}) }.to raise_error(described_class::DeadlineExceeded)
       expect { transport(clock: -> { 0.0 }).post("{}", {}) }.to raise_error(Net::OpenTimeout)
+    end
+
+    it "doesn't carry the interrupted connect's host and port as the deadline's cause" do
+      interrupted = Net::OpenTimeout.new("Failed to open TCP connection to internal-llm.corp.example:8443 (timeout)")
+      stub_post.to_raise(interrupted)
+
+      expect { transport(clock: clock_of(0.0, 100.0)).post("{}", {}) }
+        .to raise_error(described_class::DeadlineExceeded) do |e|
+          expect(e.cause).to be_nil
+          expect(e.message).not_to include("internal-llm.corp.example")
+        end
     end
 
     it "fails the call as an LLMError, once, without the adapter retrying it" do
