@@ -74,6 +74,7 @@ module Squishling
 
         return @classes[schema] if @classes.key?(schema)
 
+        require_object_type!(schema)
         klass = @classes[schema] = define_class(schema)
         # Memoized first so recursive schemas stop; typing the fields builds nested classes now, so a bad
         # property name in any object the result types (nested, array items, resolved $refs) raises at schema build.
@@ -82,6 +83,18 @@ module Squishling
       end
 
       private
+
+      # `properties` alone constrains objects only, so a schema without `type: "object"` accepts a String or Array
+      # that would then sit in the typed result where a nested result is expected. A raw Hash schema must say so.
+      def require_object_type!(schema)
+        type = schema["type"]
+        return if type == "object" || (type.is_a?(Array) && type.include?("object"))
+
+        raise ConfigurationError,
+          "output_schema has a schema with `properties` whose `type` isn't \"object\" (or missing), so a non-object " \
+          "value would pass validation and end up in the typed result. Set `type: \"object\"` on it " \
+          "(a union such as [\"object\", \"null\"] is also fine)"
+      end
 
       def fields_for(schema)
         schema["properties"].to_h { |key, property| [key.to_sym, converter_for(property)] }

@@ -11,8 +11,10 @@ RSpec.describe Squishling::Schema do
   end
 
   describe "#validate" do
-    it "rejects a non-object when a raw Hash schema omits type: object" do
-      schema = described_class.new(json_schema.except("type"))
+    # A root without any object type is refused when the schema is built; a union that includes "object" still
+    # lets a non-object through validation, so #validate catches it.
+    it "rejects a non-object when a raw Hash schema's type is a union that includes object" do
+      schema = described_class.new(json_schema.merge("type" => %w[object string array]))
 
       expect(schema.validate("hello")).to eq(["root must be an object"])
       expect(schema.validate([1, 2])).to eq(["root must be an object"])
@@ -62,6 +64,15 @@ RSpec.describe Squishling::Schema do
       expect { described_class.new(with_ref("not a uri")) }.to raise_error(Squishling::ConfigurationError)
       expect { described_class.new(json_schema.merge("$schema" => "https://example.com/meta")) }
         .to raise_error(Squishling::ConfigurationError)
+    end
+
+    it "reports the unresolvable $ref before a missing type: object, and each error on its own" do
+      untyped = with_ref("#/$defs/tag").except("type")
+
+      expect { described_class.new(untyped.merge("properties" => { "a" => { "$ref" => "http://example.com/x" } })) }
+        .to raise_error(Squishling::ConfigurationError, /can't be resolved/)
+      expect { described_class.new(untyped) }
+        .to raise_error(Squishling::ConfigurationError, /type: "object"/)
     end
 
     it "finds an unresolvable $ref nested in a subschema" do

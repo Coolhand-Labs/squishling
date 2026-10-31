@@ -22,8 +22,8 @@ module Squishling
     # max_total_output_tokens:/max_total_input_tokens: cap the tokens one call may use across all its requests
     # (see Budget); false lifts a cap inherited from the parent class or the configuration:
     #   squishling max_total_output_tokens: 25_000
-    # squawk: is called after each LLM attempt (narrowed by squawk_on:) with the raw output (see
-    # Configuration#squawk); false silences
+    # squawk: is called after each LLM attempt (narrowed by squawk_on:), and once more when a token budget or a
+    # disagreement stops the call, with the raw output (see Configuration#squawk); false silences
     # an inherited one:
     #   squishling squawk: ->(output:, metadata:, error:) { Tracer.record(output, metadata, error) }
     # squawk_on: limits which attempts reach the hook: :all (the default), :rejections, :retries, :final, or a

@@ -55,6 +55,22 @@ Flag any change that breaks one of these; they are behavior contracts, not style
   and API key never go into an error or log. Adapters run on worker threads for samples, so they hold no
   unsynchronized state. Built-in and custom adapters share one `Adapter::Registry`; there is no private path for the
   built-ins. `config.adapter` is process-wide (not per class or step); unset, it auto-detects `ruby_llm`.
+- **Classifying a provider failure is the adapter's job; what happens next is Squishling's.** The line is fixed:
+  - *The adapter defines* which error a provider failure is: `LLMError` (worth another attempt: rate limit, 5xx,
+    timeout, connection, a prompt too long for the model), `ConfigurationError` (credentials, billing, model or
+    endpoint), or `RequestRejectedError` (the provider refused the request). Only it knows its provider's status codes,
+    error bodies, and wording for an overlong prompt. `Adapter::Base#http_failure` is the shared status mapping
+    (408/413/429/5xx, no status, or a success status → `LLMError`; 401/402/403/404/3xx → `ConfigurationError`; every
+    other 4xx → `RequestRejectedError`), and `Adapter::Base#context_length?` is the hook where an adapter decides a
+    rejection is an overlong prompt (the default reads only the structured `context_length_exceeded` code or type).
+    An adapter may match a provider's documented wording for an overflow (the OpenAI-compatible one does, narrowly; a
+    match is never repeated), but
+    where it can't tell it raises the general error, which errs toward `RequestRejectedError`: that is never
+    absorbed by a fallback, so a misjudged setup mistake can't be hidden.
+  - *Squishling manages* what follows from the class it is given: retry and escalation (`LLMError` and invalid
+    output move on; `ConfigurationError` never does), `squish_fallback` (absorbs `LLMError`, never a
+    `ConfigurationError`), the token budget, and `squawk`. Squishling core never inspects a provider's status,
+    code, or message; it sees only the adapter's error classes.
 - **Same type from both paths.** Deterministic returns (and fallback returns) are validated against the
   schema and typed exactly like LLM results.
 - **Validate everything that comes back.** Adapters do not validate structured output and some providers
@@ -77,10 +93,10 @@ Flag any change that breaks one of these; they are behavior contracts, not style
   can end above the limit by one request; a response without token counts adds nothing. It raises
   `BudgetExhaustedError`, an `InvalidOutputError`, so `squish_fallback` and the "no second rescue path" rule hold.
 - **Error taxonomy.** Everything Squishling raises inherits `Squishling::Error`: `ConfigurationError`
-  (setup mistakes; never retried, escalated, or passed to fallbacks; a provider 400 is its `RequestRejectedError`
-  subclass), `InvalidOutputError` (bad output after every attempt in the escalation; `BudgetExhaustedError` is its
-  subclass for a spent token budget), `LLMError` (provider/transport failure after the adapter's HTTP retries,
-  original as `cause`). Never wrap or swallow exceptions raised by the user's own Ruby code.
+  (setup mistakes; never retried, escalated, or passed to fallbacks; a provider 400 or other rejected 4xx is its
+  `RequestRejectedError` subclass), `InvalidOutputError` (bad output after every attempt in the escalation;
+  `BudgetExhaustedError` is its subclass for a spent token budget), `LLMError` (provider/transport failure after the
+  adapter's HTTP retries, original as `cause`). Never wrap or swallow exceptions raised by the user's own Ruby code.
 - **Model output leaves the process only through `InvalidOutputError#raw` and the opt-in `squawk` hook.** Error
   messages and `config.logger` lines carry parse positions and schema paths, never the response itself (the
   documented exceptions are model-chosen extra key names, which `InvalidOutputError#error_details` tags
@@ -88,6 +104,10 @@ Flag any change that breaks one of these; they are behavior contracts, not style
   A provider's or transport's own message is the same: ours carry the error class and HTTP status (a 400's
   `RequestRejectedError` adds the body's status and code when they are plain tokens, as `provider_status` and
   `provider_code`), and the original stays on `cause`.
+- **A stopped call is reported to `squawk` once.** A `BudgetExhaustedError` or `DisagreementError` ends a call with no
+  attempt of its own to report, so `Invoker` sends one final report for it (`stopped:`, `final: true`, no output), for
+  built-in and custom harnesses alike, before `squish_fallback` runs. Each error is reported once, even when it passes
+  through an outer squished call.
 - **Only named context leaves the process.** The LLM sees method arguments, `squish_context` values, a
   `squish!` call's `context:`, and source the developer explicitly passes to `append_to_purpose` — never
   instance variables wholesale. Exceptions in context are sent as class and message only. The one model-generated
@@ -141,9 +161,10 @@ Flag any change that breaks one of these; they are behavior contracts, not style
 ## Public API
 
 The public surface is `Squishling.configure`/`config`, the adapter plugin point (`config.adapter`,
-`Squishling.register_adapter`/`adapters`/`reset_adapters!`, `Squishling::Adapter::Base` (`complete`, and the optional
-`judgments?`/`judge`/`capture_context`/`with_context`), `Adapter::Request`, `Adapter::Response`, and the built-in
-`Adapters::RubyLLM` and `Adapters::OpenAICompatible` with their options), the `include Squishling` DSL
+`Squishling.register_adapter`/`adapters`/`reset_adapters!`, `Squishling::Adapter::Base` (`complete`, the optional
+`judgments?`/`judge`/`capture_context`/`with_context`, and the `http_failure`/`context_length?` classification
+helpers), `Adapter::Request`, `Adapter::Response`, and the built-in `Adapters::RubyLLM` and
+`Adapters::OpenAICompatible` with their options), the `include Squishling` DSL
 (`squishling` — including its
 `model:`/`escalation:` (steps with `model:`, `attempts:`, `priority:`, `rotate:`, `provider:`, `params:`,
 `forward_rejected:`, `retry_temperature:`, `include_when:`)/`provider:`/`params:`/
@@ -165,12 +186,12 @@ The public surface is `Squishling.configure`/`config`, the adapter plugin point 
 `Squishling.register_harness`/`harnesses`/`reset_harnesses!`, `Squishling::Harness::Base` (`option` and its types,
 `call(run, **options)`, `validate_options!`), the `Squishling::Run` primitives a harness gets (`receiver`, `inputs`,
 `label`, `steps`, `stages`, `stage`, `escalate`, `samples`, `judge`, `agree?`, `log`) with
-`Squishling::Judge::Verdict`, and the squawk `metadata` keys `role:`/`sample:`/`repeated:`. The opt-in test support is public
-too: `Squishling::Testing` (`install`, `forbid_provider_calls!`, `no_llm_call`, `reset!`, `stub_result`/`stub_error`,
-`validate`/`fallback_for`/`preview`, `valid_reply_for`/`invalid_reply_for`, `capture_squawk`/`with_squawk`), its
-script DSL (`step`/`sample`/`judge`, `reply`/`fail`/`once`, `Reply`), `Testing::Adapter#requests`/`conversations` with
-`Testing::Request`, and the `Testing::Minitest` / `Testing::RSpec` mixins. Don't break it without a clear
-migration path in the changelog.
+`Squishling::Judge::Verdict`, and the squawk `metadata` keys `role:`/`sample:`/`repeated:`/`stopped:`. The opt-in test
+support is public too: `Squishling::Testing` (`install`, `forbid_provider_calls!`, `no_llm_call`, `reset!`,
+`stub_result`/`stub_error`, `validate`/`fallback_for`/`preview`, `valid_reply_for`/`invalid_reply_for`,
+`capture_squawk`/`with_squawk`), its script DSL (`step`/`sample`/`judge`, `reply`/`fail`/`once`, `Reply`),
+`Testing::Adapter#requests`/`conversations` with `Testing::Request`, and the `Testing::Minitest` / `Testing::RSpec`
+mixins. Don't break it without a clear migration path in the changelog.
 
 ## Changelog and versioning
 

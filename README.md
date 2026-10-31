@@ -151,7 +151,7 @@ A squishling class needs a **purpose** (the system prompt) and an **output schem
 validated on both paths). A squished call goes to the LLM when:
 
 - its `squish_when` predicate is truthy for these inputs,
-- the method has no implementation (it isn't defined, or raises `NotImplementedError`), or
+- the method has no implementation (it isn't defined, or its own body raises `NotImplementedError`), or
 - the Ruby implementation calls `squish!`.
 
 Otherwise the Ruby runs, and whatever it returns is validated and typed like LLM output.
@@ -210,8 +210,8 @@ sees it right where the value goes, and the purpose stays short and about the go
 - **Defined failure behavior**: provider errors become `Squishling::LLMError`, and `squish_fallback` lets you decide
   what to return when every attempt fails.
 - **Observability**: the opt-in [`squawk`](docs/failures.md#observing-every-attempt-squawk) hook sends each attempt's
-  raw output (or only the rejected and retried ones) to your error tracker. Model output stays out of
-  error messages and logs otherwise.
+  raw output (or only the rejected and retried ones), and the end of a call that a token budget or a disagreement
+  stopped, to your error tracker. Model output stays out of error messages and logs otherwise.
 - **Opt-in context**: only method arguments, the instance state you name with `squish_context`, the `context:` you
   pass to `squish!`, and the source you choose to append are sent to the provider. The one addition: when
   [escalation](docs/configuration.md#models-and-escalation) moves to the next step, that step also sees the previous

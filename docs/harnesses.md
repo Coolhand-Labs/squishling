@@ -331,6 +331,10 @@ and `attempts` count within that sample, judge, or escalation. `metadata[:repeat
 sent back the reply it was just rejected for; the primitive then skips the rest of that step's attempts (the next
 step's `attempt` jumps past them, and a sample ends with its `InvalidOutputError`).
 
+A call that ends on the token budget or on a `DisagreementError` (the built-in squishsum harnesses', or one your
+`call` raises) is reported once more, as [a stopped call](failures.md#a-call-that-is-stopped), with `metadata[:stopped]`
+set and no output. Squishling does it around your `call`, so a custom harness needs no code for it.
+
 ### Threads
 
 Only the provider requests inside `run.samples` run on worker threads. Your `call`, parsing, validation,

@@ -27,9 +27,10 @@ Squishling.verify(Triage, Invoice)    # just these classes
 For each squished method (inherited ones too, with the subclass's settings) it checks:
 
 - **The output schema:** that it builds (and is strict), is valid JSON Schema, and produces a typed result, so a
-  property name that can't be a result member (`total=`) is reported, and so is a `$ref` that doesn't resolve within
-  the schema (a remote URI is never fetched; a missing `$defs` entry). A method with no output schema or no purpose is
-  reported, because its LLM path would raise. The default `call` method is skipped when you don't implement or configure it.
+  property name that can't be a result member (`total=`), an object with `properties` but no `type: "object"`, or a
+  `$ref` that doesn't resolve within the schema (a remote URI is never fetched; a missing `$defs` entry) is reported.
+  A method with no output schema or no purpose is reported, because its LLM path would raise. The default `call`
+  method is skipped when you don't implement or configure it.
 - **What the layers resolve to:** the escalation, generation params and `squawk` that the method, its class and
   `Squishling.config` add up to.
 - **The harness:** that it is still registered (not removed or replaced since the class declared it), and that a

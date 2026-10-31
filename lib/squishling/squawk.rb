@@ -4,14 +4,16 @@ module Squishling
   # The opt-in observability hook: a callable run after every LLM attempt (or only the rejected and retried
   # ones, see squawk_on:) with the attempt's raw output, so it can be sent somewhere (an error tracker, a
   # tracing tool). It's the one sanctioned way for model output to leave the process; nothing runs unless one
-  # is configured.
+  # is configured. A call that a token budget or a disagreement stops gets one more report, with the error and no
+  # output (metadata's stopped:), since neither has an attempt of its own.
   module Squawk
     KEYWORD_TYPES = %i[key keyreq].freeze
     POSITIONAL_TYPES = %i[req opt].freeze
     KEYWORD_CAPTURE_TYPES = %i[key keyreq keyrest].freeze
     KEYWORDS = %i[output metadata error].freeze
     # The squawk_on: conditions, each answering "does the hook run for this attempt?" from the attempt's 1-based
-    # number (the one its metadata carries), its error (nil when accepted), and whether it is the last one.
+    # number (the one its metadata carries), its error (nil when accepted), and whether it is the last one. A stopped
+    # call's report has an error and is final, so it passes every condition whatever its attempt number (0 or more).
     CONDITIONS = {
       all: ->(_attempt, _error, _final) { true },
       rejections: ->(_attempt, error, _final) { !error.nil? },
@@ -25,7 +27,8 @@ module Squishling
     # Which attempts reach the hook (squawk_on:): one condition or a list of them, or nil to inherit. :all is
     # every attempt, :rejections only the ones that errored, :retries those plus any accepted attempt after the
     # first, and :final the last attempt the escalation allows (metadata's final:), however it ended; an earlier
-    # accepted attempt is not final. A list runs the hook when any of them holds.
+    # accepted attempt is not final. The report of a stopped call is final and has an error, so every
+    # condition lets it through. A list runs the hook when any of them holds.
     def validate_on(value, where)
       return value if value.nil?
 
