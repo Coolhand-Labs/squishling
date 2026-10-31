@@ -104,6 +104,10 @@ Flag any change that breaks one of these; they are behavior contracts, not style
   A provider's or transport's own message is the same: ours carry the error class and HTTP status (a 400's
   `RequestRejectedError` adds the body's status and code when they are plain tokens, as `provider_status` and
   `provider_code`), and the original stays on `cause`.
+- **A stopped call is reported to `squawk` once.** A `BudgetExhaustedError` or `DisagreementError` ends a call with no
+  attempt of its own to report, so `Invoker` sends one final report for it (`stopped:`, `final: true`, no output), for
+  built-in and custom harnesses alike, before `squish_fallback` runs. Each error is reported once, even when it passes
+  through an outer squished call.
 - **Only named context leaves the process.** The LLM sees method arguments, `squish_context` values, a
   `squish!` call's `context:`, and source the developer explicitly passes to `append_to_purpose` — never
   instance variables wholesale. Exceptions in context are sent as class and message only. The one model-generated
@@ -181,12 +185,12 @@ helpers), `Adapter::Request`, `Adapter::Response`, and the built-in `Adapters::R
 `Squishling.register_harness`/`harnesses`/`reset_harnesses!`, `Squishling::Harness::Base` (`option` and its types,
 `call(run, **options)`, `validate_options!`), the `Squishling::Run` primitives a harness gets (`receiver`, `inputs`,
 `label`, `steps`, `stages`, `stage`, `escalate`, `samples`, `judge`, `agree?`, `log`) with
-`Squishling::Judge::Verdict`, and the squawk `metadata` keys `role:`/`sample:`/`repeated:`. The opt-in test support is public
-too: `Squishling::Testing` (`install`, `forbid_provider_calls!`, `no_llm_call`, `reset!`, `stub_result`/`stub_error`,
-`validate`/`fallback_for`/`preview`, `valid_reply_for`/`invalid_reply_for`, `capture_squawk`/`with_squawk`), its
-script DSL (`step`/`sample`/`judge`, `reply`/`fail`/`once`, `Reply`), `Testing::Adapter#requests`/`conversations` with
-`Testing::Request`, and the `Testing::Minitest` / `Testing::RSpec` mixins. Don't break it without a clear
-migration path in the changelog.
+`Squishling::Judge::Verdict`, and the squawk `metadata` keys `role:`/`sample:`/`repeated:`/`stopped:`. The opt-in test
+support is public too: `Squishling::Testing` (`install`, `forbid_provider_calls!`, `no_llm_call`, `reset!`,
+`stub_result`/`stub_error`, `validate`/`fallback_for`/`preview`, `valid_reply_for`/`invalid_reply_for`,
+`capture_squawk`/`with_squawk`), its script DSL (`step`/`sample`/`judge`, `reply`/`fail`/`once`, `Reply`),
+`Testing::Adapter#requests`/`conversations` with `Testing::Request`, and the `Testing::Minitest` / `Testing::RSpec`
+mixins. Don't break it without a clear migration path in the changelog.
 
 ## Changelog and versioning
 

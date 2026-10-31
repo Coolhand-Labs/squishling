@@ -171,6 +171,9 @@ capture.calls.map { |call| call.metadata[:attempt] }    # output:, error:, and m
 `with_squawk` swaps `config.squawk` for the block and puts the previous hook back, so an app-wide hook that enqueues
 a job isn't run in tests. A `squawk:` set on a class or method still takes precedence over the configured one.
 
+The capture also records the [report of a stopped call](failures.md#a-call-that-is-stopped) (`metadata[:stopped]` is
+`:budget` or `:disagreement`). `stub_error` replaces the method without running Squishling, so it reports nothing.
+
 An observer you configured *before* `fake_squishling` keeps working while the fake is installed (it is chained behind
 the fake's own). Configure it first: one assigned afterwards replaces the fake's, and then sample and judge scripts
 can't tell which request is which.

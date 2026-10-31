@@ -143,8 +143,8 @@ Things to know:
 ## Observing every attempt (`squawk`)
 
 `squawk` is an opt-in hook for sending what the model returned to an error tracker or tracing tool. It runs after
-every LLM attempt, accepted or rejected (unless you narrow it with `squawk_on:`, below), and does nothing unless you
-set it:
+every LLM attempt, accepted or rejected (unless you narrow it with `squawk_on:`, below), and once more when a token
+budget or a disagreement stops the call. It does nothing unless you set it:
 
 ```ruby
 Squishling.configure do |config|
@@ -157,8 +157,8 @@ end
 | Keyword | Value |
 |---|---|
 | `output` | The raw response: a Hash or String, or `nil` when the provider call itself failed |
-| `error` | `nil` for an accepted attempt. Otherwise the `InvalidOutputError` (with `errors` and `raw`) or `LLMError` that ended the attempt |
-| `metadata` | `label` (`"Class#method"`), `attempt`, `attempts` (the escalation's length; `attempt` jumps past the attempts a repeated reply skips; under a harness, the sample's or judge's own attempts), `final` (the last attempt, or a rejection after which none follows), `repeated` (`true` when the attempt returned the same reply as the one before it, in the same chat, which skips the step's remaining attempts), `model`, `provider`, `params`, `input` (the JSON sent: arguments and named context only), `usage` (token counts, when the adapter reports them), `finish_reason` (why the provider stopped, e.g. `:stop` or `:max_tokens`; `nil` when unknown or the call failed), `role` (`nil` for an escalation attempt, `:sample`, or `:judge`), `sample` (`"a"`, `"b"`, ... for a sample's attempt, else `nil`) |
+| `error` | `nil` for an accepted attempt. Otherwise the `InvalidOutputError` (with `errors` and `raw`) or `LLMError` that ended the attempt, or the `BudgetExhaustedError` or `DisagreementError` that stopped the call |
+| `metadata` | `label` (`"Class#method"`), `attempt`, `attempts` (the escalation's length, or for a [stopped call](#a-call-that-is-stopped) the attempts made; `attempt` jumps past the attempts a repeated reply skips; under a harness, the sample's or judge's own attempts), `final` (the last attempt, or a rejection after which none follows), `repeated` (`true` when the attempt returned the same reply as the one before it, in the same chat, which skips the step's remaining attempts), `model`, `provider`, `params`, `input` (the JSON sent: arguments and named context only), `usage` (token counts, when the adapter reports them), `finish_reason` (why the provider stopped, e.g. `:stop` or `:max_tokens`; `nil` when unknown or the call failed), `role` (`nil` for an escalation attempt, `:sample`, or `:judge`), `sample` (`"a"`, `"b"`, ... for a sample's attempt, else `nil`), `stopped` (`nil` for an attempt; `:budget` or `:disagreement` for the [stopped call's report](#a-call-that-is-stopped)) |
 
 - Set it globally with `config.squawk`, per class with `squishling squawk: ...`, or per method with
   `squish :triage, squawk: ...`. The method's hook wins over the class's, which wins over the configured one;
@@ -190,6 +190,28 @@ end
   `role`/`sample` say which one it was. A [custom harness](harnesses.md#reporting-to-squawk) reports the same way.
 - It isn't called for a `ConfigurationError`, for deterministic and fallback returns, or for an attempt where your own
   `squish_validate` raises (that exception propagates first).
+
+### A call that is stopped
+
+A call that a [token budget](#capping-a-calls-cost-token-budgets) or a
+[disagreement](harnesses.md#when-the-harness-fails) stops has no attempt of its own to report: the attempt before a
+budget stop was reported as not final, and a disagreement's samples were both accepted. So the call gets one more
+report, whatever `squawk_on:` is set to:
+
+- `error` is the `BudgetExhaustedError` or `DisagreementError`, `output` is `nil` (nothing was sent), `metadata[:final]`
+  is `true`, and `metadata[:stopped]` is `:budget` or `:disagreement` (it is `nil` for every attempt's report).
+- `attempt` and `attempts` are `error.attempts`, or `0` when that is `nil` (a disagreement, or a budget that ran out
+  before a sample or judge made its first attempt); a stop before a retry counts the attempts already made. `model` is
+  the last of `error.models`, and `provider`, `params`, `usage`, `role`, and `sample` are `nil`.
+- It is sent once, after the attempts that led to it and before `squish_fallback` runs, for the built-in harnesses and
+  for a [custom one](harnesses.md#reporting-to-squawk) that raises either error. A call to another squished method
+  from your own code (a `squish_validate`, say) reports its own stop, and the outer call does not report that error
+  again. The attempts before it keep `final: false`, so `squawk_on: :final` sees a budget or disagreement ending only
+  through this report.
+- Like any attempt's report, it runs your hook inline: an exception the hook raises propagates in place of the
+  `BudgetExhaustedError` or `DisagreementError` (which stays on `cause`), so `squish_fallback` does not run.
+- `squawk: false`, or no hook, sends nothing. Ending on the last invalid attempt is not a stop: that attempt already
+  carried `final: true`.
 
 ## Output checks (`squish_validate`)
 
