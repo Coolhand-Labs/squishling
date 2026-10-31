@@ -52,8 +52,12 @@ Flag any change that breaks one of these; they are behavior contracts, not style
 - **Adapters are the only code that talks to a provider.** An adapter (`Adapter::Base`, `#complete(request)`) is
   stateless: Squishling owns the conversation, validation, retries, and escalation. It raises `ConfigurationError`
   (never retried) or `LLMError`; any other exception propagates unwrapped. A provider's own message, response body,
-  and API key never go into an error or log. Adapters run on worker threads for samples, so they hold no
-  unsynchronized state. Built-in and custom adapters share one `Adapter::Registry`; there is no private path for the
+  and API key never go into an error or log. An adapter keeps its credentials (an API key, headers that may carry
+  one) in a `Secret`, not in plain instance variables, so no serializer can write them out. The OpenAI-compatible
+  adapter refuses to send a credential over plain `http` to a non-loopback host (unless `allow_insecure_http:`),
+  caps a response's size (`max_response_bytes`) and time (`total_timeout`), and refuses a compressed one; those
+  limits are non-retried `LLMError`s that name the limit, never the URL or the response. Adapters run on worker
+  threads for samples, so they hold no unsynchronized state. Built-in and custom adapters share one `Adapter::Registry`; there is no private path for the
   built-ins. `config.adapter` is process-wide (not per class or step); unset, it auto-detects `ruby_llm`.
 - **Classifying a provider failure is the adapter's job; what happens next is Squishling's.** The line is fixed:
   - *The adapter defines* which error a provider failure is: `LLMError` (worth another attempt: rate limit, 5xx,
