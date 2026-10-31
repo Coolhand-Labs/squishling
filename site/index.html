@@ -243,17 +243,17 @@
 </header>
 
 <aside class="release" id="latest-release" aria-label="Latest release">
-  <p class="kicker">Latest release · v0.5.0 · <time datetime="2026-10-28">October 28, 2026</time></p>
-  <p>Squishling turns any Ruby class into a hybrid of code and LLM inference working together. v0.5.0 is about making sure
-  it doesn't get too magical in production.</p>
+  <p class="kicker">Latest release · v0.5.1 · <time datetime="2026-10-31">October 31, 2026</time></p>
+  <p>Squishling turns any Ruby class into a hybrid of code and LLM inference working together. v0.5.1 is a hardening
+  release: it keeps your data and credentials where you put them, and stops errors from being misread.</p>
   <ul>
-    <li>💰 <strong>Token budget caps:</strong> limit what one call can spend across every retry, escalation and judge</li>
-    <li>✅ <strong><code>Squishling.verify</code>:</strong> checks every squished class (schemas, models, params) in CI without a single LLM request</li>
-    <li>🔍 <strong>Clearer errors:</strong> tell when the model was cut off by its token limit versus actually answering wrong</li>
-    <li>🧪 <strong>A scripted test adapter,</strong> so your unit tests never hit a provider</li>
-    <li>🔌 <strong>RubyLLM is now an optional adapter:</strong> add <code>gem "ruby_llm"</code> to your Gemfile, or use any OpenAI-compatible endpoint or your own</li>
+    <li>🔒 <strong>Secrets stay out of logs and trackers:</strong> API keys and headers are redacted from <code>to_yaml</code> and JSON, and a provider's error body no longer rides along on <code>cause</code> (use <code>keep_cause: true</code> on the RubyLLM adapter to keep it)</li>
+    <li>🛡️ <strong>Abstract methods can't leak your data:</strong> a <code>NotImplementedError</code> from code your method calls no longer sends its arguments to the LLM, only the method's own stub does</li>
+    <li>🌐 <strong>A safer OpenAI-compatible transport:</strong> credentials are refused over plain <code>http://</code> to non-local hosts (set <code>allow_insecure_http: true</code> for a trusted network), and responses are capped in size and time</li>
+    <li>🎯 <strong>Errors sorted by status, not by provider wording:</strong> a bad request is no longer mistaken for a retryable one, and <code>squawk</code> now sees calls that end on the token budget or a disagreement</li>
+    <li>🧱 <strong>Stricter hand-written schemas:</strong> an object schema with <code>properties</code> now needs <code>type: "object"</code>, and <code>Squishling.verify</code> flags it before a request</li>
   </ul>
-  <p class="more"><a href="https://github.com/Coolhand-Labs/squishling/releases/tag/v0.5.0">Release notes</a> ·
+  <p class="more"><a href="https://github.com/Coolhand-Labs/squishling/releases/tag/v0.5.1">Release notes</a> ·
   <a href="https://github.com/Coolhand-Labs/squishling/blob/main/CHANGELOG.md">Changelog</a></p>
 </aside>
 
