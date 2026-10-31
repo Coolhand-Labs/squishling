@@ -151,7 +151,7 @@ A squishling class needs a **purpose** (the system prompt) and an **output schem
 validated on both paths). A squished call goes to the LLM when:
 
 - its `squish_when` predicate is truthy for these inputs,
-- the method has no implementation (it isn't defined, or raises `NotImplementedError`), or
+- the method has no implementation (it isn't defined, or its own body raises `NotImplementedError`), or
 - the Ruby implementation calls `squish!`.
 
 Otherwise the Ruby runs, and whatever it returns is validated and typed like LLM output.
