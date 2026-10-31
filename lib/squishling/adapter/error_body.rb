@@ -47,7 +47,7 @@ module Squishling
 
       def token(value, pattern)
         value = value.to_s if value.is_a?(Integer)
-        value if value.is_a?(String) && value.match?(pattern)
+        value if value.is_a?(String) && value.valid_encoding? && value.match?(pattern)
       end
     end
   end

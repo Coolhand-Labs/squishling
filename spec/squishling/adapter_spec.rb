@@ -256,6 +256,13 @@ RSpec.describe Squishling::Adapter do
         .to raise_error(Squishling::ConfigurationError, /needs a type:/)
     end
 
+    it "names the class of a rejected object, never its instance variables" do
+      client = Class.new { def initialize = @access_token = "sk-LIVEKEY" }.new
+
+      expect { Squishling.configure { |c| c.adapter = client } }
+        .to raise_error(Squishling::ConfigurationError, /got an instance of/) { |e| expect(e.message).not_to include("sk-LIVEKEY") }
+    end
+
     it "lists the available adapters in the message for an unknown one" do
       expect { Squishling.configure { |c| c.adapter = :bogus } }
         .to raise_error(Squishling::ConfigurationError,

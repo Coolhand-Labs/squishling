@@ -272,7 +272,7 @@ module Squishling
         return value if value.respond_to?(:complete)
 
         raise ConfigurationError, "#{where} adapter must be an adapter (responding to complete), one of " \
-                                  "#{type_list}, or a Hash with type:, got #{value.inspect}"
+                                  "#{type_list}, or a Hash with type:, got #{Appendices.describe(value)}"
       end
     end
 

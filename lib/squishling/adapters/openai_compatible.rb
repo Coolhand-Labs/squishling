@@ -260,7 +260,7 @@ module Squishling
 
       # The structured code or type, as for any adapter, or the usual wording of a server that sends none (a 400).
       def context_length?(status:, body:)
-        super || (status == 400 && Adapter::ErrorBody.error(body)&.[]("message").to_s.match?(CONTEXT_LENGTH_MESSAGE))
+        super || (status == 400 && Adapter::ErrorBody.error(body)&.[]("message").to_s.scrub.match?(CONTEXT_LENGTH_MESSAGE))
       end
 
       def retry_delay(response, attempt)
