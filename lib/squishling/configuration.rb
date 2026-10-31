@@ -24,6 +24,10 @@ module Squishling
     # adapter for its provider; any other key (top_p, seed, ...) is passed to the provider as-is.
     attr_reader :default_params
 
+    # Whether requests ask the provider to cache the stable prompt: true (the default), false, or a Hash of options
+    # such as { ttl: "1h" } (see Cache). Overridable per class, per method, per escalation step, and per squish! call.
+    attr_reader :default_cache
+
     # How every squishling class that doesn't declare its own harness uses its escalation (see Harness):
     # :escalation (the default), :squishsum, :judged_squishsum, a harness you registered, or a Hash with type: and
     # its options.
@@ -66,6 +70,7 @@ module Squishling
       @default_model_path = nil
       @default_provider = nil
       @default_params = {}
+      @default_cache = true
       @default_harness = nil
       @logger = nil
       @squawk = nil
@@ -128,6 +133,11 @@ module Squishling
 
     def default_params=(params)
       @default_params = Params.normalize(params, "default_params")
+    end
+
+    # nil restores the default (true).
+    def default_cache=(cache)
+      @default_cache = cache.nil? || Cache.normalize(cache, "default_cache")
     end
 
     def default_harness=(harness)

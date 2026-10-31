@@ -172,7 +172,7 @@ sees it right where the value goes, and the purpose stays short and about the go
   the OpenAI-compatible adapter (OpenAI, Ollama, vLLM, LM Studio, Together, Groq, … over plain HTTP), or write your
   own in one method.
 - **Any provider and model**: set a universal, per-class, per-method, or per-call model, plus layered generation params (temperature,
-  reasoning effort, top_p, …).
+  reasoning effort, top_p, …) and [prompt caching](docs/configuration.md#prompt-caching) (on by default, opt out per class, method, or call).
 - **Model escalation**: declare an `escalation:` instead of a `model:`, with per-step `attempts:`, `priority:` (models tied on priority take turns going first), provider,
   params, `forward_rejected:`, `retry_temperature:`, and `include_when:` (leave a model out of calls where a Proc is falsy). Invalid output (with its errors fed back) or a provider failure moves on to the next attempt. Steps can
   cross providers, e.g. a local Qwen model on Ollama, then Anthropic Claude Haiku on AWS Bedrock, then Claude Opus:

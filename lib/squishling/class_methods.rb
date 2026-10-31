@@ -15,6 +15,9 @@ module Squishling
     # parent's provider.
     # params: are generation params merged over the configured defaults (see Configuration#default_params):
     #   squishling params: { temperature: 0.1, top_p: 0.9 }
+    # cache: asks the provider to cache the stable prompt (true by default, see Cache); false opts the class out, and
+    # a Hash such as { ttl: "1h" } passes options through:
+    #   squishling cache: false
     # append_to_purpose: adds sections after the purpose (see #append_to_purpose):
     #   squishling append_to_purpose: ["The Ruby that handles well-formed input:", self]
     # harness: chooses how the escalation is used (see Harness):
@@ -29,7 +32,7 @@ module Squishling
     # squawk_on: limits which attempts reach the hook: :all (the default), :rejections, :retries, :final, or a
     # list of them (any one holding runs the hook):
     #   squishling squawk: hook, squawk_on: %i[rejections final]
-    def squishling(model: nil, escalation: nil, provider: nil, params: nil, harness: nil, purpose: nil,
+    def squishling(model: nil, escalation: nil, provider: nil, params: nil, cache: nil, harness: nil, purpose: nil,
       append_to_purpose: nil, output_schema: nil, squawk: nil, squawk_on: nil, max_total_output_tokens: nil,
       max_total_input_tokens: nil)
       path = ModelPath.declare(model, escalation, to_s)
@@ -44,8 +47,7 @@ module Squishling
       # provider meant for its parent's.
       @squishling_model_path = path if path
       @squishling_provider = provider if provider || path
-      @squishling_params = Params.normalize(params, "#{self} params") if params
-      @squishling_harness = Harness.normalize(harness, to_s) unless harness.nil?
+      declare_generation(params, cache, harness)
       self.purpose(purpose) if purpose
       self.append_to_purpose(append_to_purpose) unless append_to_purpose.nil?
       self.output_schema(output_schema) if output_schema
@@ -74,6 +76,11 @@ module Squishling
 
     def squishling_provider
       squishling_lookup(:@squishling_provider)
+    end
+
+    # The class's (or nearest ancestor's) cache setting (see Cache), nil when none declared it.
+    def squishling_cache
+      squishling_lookup(:@squishling_cache)
     end
 
     def squishling_harness
@@ -171,13 +178,14 @@ module Squishling
     #     string :priority
     #   end
     def squish(*names, purpose: nil, append_to_purpose: nil, output_schema: nil, model: nil, escalation: nil,
-      provider: nil, params: nil, harness: nil, when: nil, fallback: nil, validate: nil, squawk: nil,
-      squawk_on: nil, max_total_output_tokens: nil, max_total_input_tokens: nil, &schema_block)
+      provider: nil, params: nil, cache: nil, harness: nil, when: nil, fallback: nil, validate: nil,
+      squawk: nil, squawk_on: nil, max_total_output_tokens: nil, max_total_input_tokens: nil, &schema_block)
       schema = schema_block ? Schematist::Schema.create(&schema_block) : output_schema
       model = ModelPath.declare(model, escalation, "#{self} squish")
       raise ConfigurationError, "#{self} squish: provider: needs a model: or escalation:" if provider && !model
 
       params &&= Params.normalize(params, "#{self} squish params")
+      cache = Cache.normalize(cache, "#{self} squish cache")
       harness = Harness.normalize(harness, "#{self} squish") unless harness.nil?
       unless append_to_purpose.nil?
         append_to_purpose = Appendices.normalize(append_to_purpose, "#{self} squish append_to_purpose")
@@ -185,7 +193,7 @@ module Squishling
       squawk = Squawk.validate(squawk, "#{self} squish")
       squawk_on = Squawk.validate_on(squawk_on, "#{self} squish")
       budget = Budget.build("#{self} squish", output: max_total_output_tokens, input: max_total_input_tokens)
-      options = { purpose:, append_to_purpose:, output_schema: schema, model:, provider:, params:, harness:,
+      options = { purpose:, append_to_purpose:, output_schema: schema, model:, provider:, params:, cache:, harness:,
                   predicate: binding.local_variable_get(:when), fallback:, validator: validate, squawk:,
                   squawk_on:, budget: }.compact
 
@@ -215,6 +223,13 @@ module Squishling
     end
 
     private
+
+    # nil leaves a level unset (so the parent's applies); false for cache: is stored, to opt the class out.
+    def declare_generation(params, cache, harness)
+      @squishling_params = Params.normalize(params, "#{self} params") if params
+      @squishling_cache = Cache.normalize(cache, "#{self} cache") unless cache.nil?
+      @squishling_harness = Harness.normalize(harness, to_s) unless harness.nil?
+    end
 
     # nil leaves a level unset (so the parent's applies); false for squawk: is stored, to silence it.
     def declare_squawk(squawk, squawk_on)

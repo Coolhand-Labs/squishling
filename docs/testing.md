@@ -91,7 +91,7 @@ and `#verdict` are the real ones; rescue them as you would in production.
 |---|---|
 | `arguments`, `context` | the method's arguments and the `squish_context` / `squish!` context the model was sent |
 | `system_prompt`, `output_schema` | the purpose (with `append_to_purpose` sections) and the strict schema |
-| `model`, `provider`, `params` | the step it went to |
+| `model`, `provider`, `params`, `cache` | the step it went to (`cache` is `false` when [prompt caching](configuration.md#prompt-caching) was off for it) |
 | `role`, `sample`, `attempt`, `attempts` | `nil`/`:sample`/`:judge`, `"a"`, and where it is in the escalation |
 | `conversation` | the chat it belongs to |
 | `errors` | the validation messages a retry or escalation carried back to the model |

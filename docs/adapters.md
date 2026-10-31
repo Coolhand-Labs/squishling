@@ -130,12 +130,13 @@ Squishling.register_adapter(:acme, AcmeAdapter)
 | `messages` | The conversation so far, ending with the user message to answer. After invalid output, Squishling appends your previous answer and a retry message; you never keep history. |
 | `schema` | `{ "name", "description", "schema", "strict" => true }`: the strict structured-output payload, without the conditional keywords providers can't take. |
 | `params` | The resolved [generation params](configuration.md#generation-params): the portable `:temperature`, `:max_output_tokens`, `:thinking`, plus provider-specific keys. Squishling has already rejected the keys it owns. Translate the portable ones for your provider; pass the rest through if it takes them. |
+| `cache` | The [prompt caching](configuration.md#prompt-caching) to ask for: `false` (none), or a Hash of options (`{}` for the provider's default, `{ ttl: "1h" }`). Ignore it if your provider has no prompt caching or caches on its own. |
 
 ### The response
 
 `Squishling::Adapter::Response.new(content:, model:, tokens:, finish_reason:)`. `content` is the model's output as a
 String, or a Hash if you parsed it; `nil` or empty counts as invalid output and is retried. `model` is the id the
-provider reports. `tokens` is a Hash (`:input_tokens`, `:output_tokens`, and anything else you have); `{}` when
+provider reports. `tokens` is a Hash (`:input_tokens`, which leaves out the tokens read from or written to the prompt cache, `:output_tokens`, `:cache_read_tokens`, `:cache_write_tokens`, and anything else you have); `{}` when
 unknown. These feed [`squawk`'s `usage`](failures.md#observing-every-attempt-squawk), the [observer](observers.md)'s `Usage`, and the
 [token budget](failures.md#capping-a-calls-cost-token-budgets), which counts `:input_tokens` and `:output_tokens`
 (a response with none never exhausts a budget).

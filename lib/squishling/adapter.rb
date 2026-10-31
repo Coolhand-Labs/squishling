@@ -12,15 +12,22 @@ module Squishling
     # structured-output payload ({ "name", "description", "schema", "strict" => true }). params is the resolved
     # generation params: the portable :temperature, :max_output_tokens, and :thinking, plus any provider-specific keys
     # (see Params). label ("Class#method") prefixes the adapter's error messages. model and provider are the step's
-    # (nil when it names none).
-    Request = Data.define(:label, :model, :provider, :instructions, :messages, :schema, :params)
+    # (nil when it names none). cache is the prompt caching to ask the provider for: false (none), or a Hash of options
+    # ({} for the provider's default, { ttl: "1h" }), see Cache. An adapter whose provider has no prompt caching, or
+    # caches on its own, ignores it.
+    Request = Data.define(:label, :model, :provider, :instructions, :messages, :schema, :params, :cache) do
+      def initialize(label:, model:, provider:, instructions:, messages:, schema:, params:, cache: false)
+        super
+      end
+    end
 
     # Stands in for an empty reply when the conversation is replayed: some servers reject an empty assistant message.
     EMPTY_REPLY = "(no output)"
 
     # What a completion returns. content is the model's output: the raw String, or a Hash the adapter already parsed.
-    # model is the model id the provider reports. tokens is a Hash of counts (:input_tokens, :output_tokens, and
-    # whatever else the provider reports, such as :cache_read_tokens and :thinking_tokens), empty when unknown.
+    # model is the model id the provider reports. tokens is a Hash of counts (:input_tokens, the input not read from or
+    # written to the prompt cache, :output_tokens, and whatever else the provider reports, such as :cache_read_tokens,
+    # :cache_write_tokens and :thinking_tokens), empty when unknown.
     # finish_reason is why the provider stopped, as a Symbol: :stop, :max_tokens (the output cap cut the reply off),
     # :content_filter, :tool_calls, or the provider's own spelling; nil when it reported none.
     Response = Data.define(:content, :model, :tokens, :finish_reason) do

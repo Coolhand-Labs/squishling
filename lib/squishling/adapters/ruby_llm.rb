@@ -31,7 +31,7 @@ module Squishling
         chat = build_chat(request)
         *history, last = request.messages
         history.each { |message| chat.add_message(role: message[:role], content: message[:content]) }
-        response = guarded(request) { chat.ask(last[:content]) }
+        response = guarded(request) { ask(chat, request, last[:content]) }
         Adapter::Response.new(content: response.content, model: response.model, tokens: tokens_of(response),
           finish_reason: response.finish_reason)
       end
@@ -75,6 +75,17 @@ module Squishling
 
       private
 
+      # RubyLLM checks a caching option against the provider when it renders the request, and raises ArgumentError for
+      # one it can't use. That is the developer's setting, so it is a setup mistake rather than a failed request.
+      def ask(chat, request, content)
+        chat.ask(content)
+      rescue ArgumentError => e
+        raise unless request.cache && e.message.match?(/caching/i) && raised_by_ruby_llm?(e)
+
+        raise configuration_error(request,
+          "RubyLLM rejected the request, cache #{request.cache.inspect} (#{e.message})")
+      end
+
       def tokens_of(response)
         response.tokens ? response.tokens.to_h : {}
       end
@@ -99,6 +110,7 @@ module Squishling
         chat.with_instructions(request.instructions)
         chat.with_schema(request.schema)
         apply_params(chat, request)
+        apply_cache(chat, request)
         chat
       rescue ::RubyLLM::ModelNotFoundError, ::RubyLLM::ConfigurationError => e
         raise configuration_error(request, e.message)
@@ -115,6 +127,12 @@ module Squishling
         chat.with_provider_options(rest) if rest.any?
       rescue ArgumentError => e
         raise configuration_error(request, "invalid params #{params.keys.inspect} (#{e.message})")
+      end
+
+      # Prompt caching is only asked for when the request carries it: off sends no cache controls. RubyLLM checks the
+      # options when it renders the request, so an unusable one is reported by #ask.
+      def apply_cache(chat, request)
+        chat.with_caching(request.cache) if request.cache
       end
 
       # true: the model's default thinking; false: off; a Hash: { effort:, budget:, display: }.

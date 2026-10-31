@@ -12,9 +12,14 @@ module Squishling
     # sent. For a judge they are those of the call being judged, and candidates holds the two samples. messages is
     # the conversation as sent (empty for a System One judgment, whose payload is the input). conversation is the
     # index of the chat in Adapter#conversations (nil for a judgment): a retry is the same conversation, an
-    # escalation a new one. reply is the Adapter::Response, or the error raised instead.
+    # escalation a new one. reply is the Adapter::Response, or the error raised instead. cache is the prompt caching
+    # asked for: false, or a Hash of options.
     Request = Data.define(:label, :type, :role, :sample, :attempt, :attempts, :model, :provider, :params,
-      :system_prompt, :output_schema, :messages, :conversation, :payload, :reply) do
+      :system_prompt, :output_schema, :messages, :conversation, :payload, :reply, :cache) do
+      def initialize(reply:, cache: false, **attributes)
+        super
+      end
+
       def arguments
         input["arguments"]
       end
