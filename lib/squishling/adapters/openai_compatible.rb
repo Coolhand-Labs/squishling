@@ -31,9 +31,10 @@ module Squishling
       NETWORK_ERRORS = [Timeout::Error, SocketError, EOFError, IOError, SystemCallError, Net::ProtocolError,
                         Net::HTTPBadResponse, Net::HTTPHeaderSyntaxError, OpenSSL::OpenSSLError, Zlib::Error].freeze
       MAX_RETRY_DELAY = 30
-      # How servers without OpenAI's error code (vLLM, Ollama, llama.cpp, ...) say a prompt is too long. The message is
-      # only matched against this, never repeated.
-      CONTEXT_LENGTH_MESSAGE = /context (length|window|size)|too many tokens|prompt is too long|maximum .{0,20}tokens/i
+      # How servers without OpenAI's error code (vLLM, Ollama, llama.cpp, ...) say a prompt is too long. Deliberately
+      # narrow (no bare "maximum ... tokens", which a bad max_tokens value also says): a wording that isn't here is a
+      # rejected request, which is the safe side. The message is only matched against this, never repeated.
+      CONTEXT_LENGTH_MESSAGE = /context (length|window|size)|too many tokens|prompt is too long/i
       private_constant :STRUCTURED_OUTPUT, :TOKEN_PARAMS, :PORTABLE_PARAMS, :NETWORK_ERRORS, :MAX_RETRY_DELAY,
         :CONTEXT_LENGTH_MESSAGE
 
@@ -219,9 +220,7 @@ module Squishling
         return transport_failure(request, error) if error
 
         status = response.code.to_i
-        return llm_error(request, "HTTP #{status}") if retryable?(response, nil) || too_large?(response, status)
-
-        rejection(request, response, status)
+        http_failure(request, status:, body: response.body.to_s, via: "HTTP #{status}")
       end
 
       # A certificate that doesn't verify is a setup mistake (base_url, CA store) that a retry can't fix.
@@ -238,28 +237,9 @@ module Squishling
         error.is_a?(OpenSSL::SSL::SSLError) && error.message.include?("certificate verify failed")
       end
 
-      def rejection(request, response, status)
-        case status
-        when 401, 403 then configuration_error(request, "the provider refused the credentials (HTTP #{status})")
-        when 404 then configuration_error(request, "HTTP 404: check base_url and the model name")
-        when 300..399 then configuration_error(request, "HTTP #{status}: redirects aren't followed; check base_url")
-        else rejected_request_error(request, via: "HTTP #{status}", body: response.body.to_s,
-          http_status: status)
-        end
-      end
-
-      # A request too long for the model's context (or for the server: 413) depends on the input and is worth another
-      # attempt (a bigger model may take it), unlike other 4xx. Only the error's code is read from the body.
-      def too_large?(response, status)
-        status == 413 || context_length?(response)
-      end
-
-      def context_length?(response)
-        return false unless response.code.to_i == 400
-
-        error = Adapter::ErrorBody.error(response.body.to_s)
-        error.is_a?(Hash) && (error.values_at("code", "type").include?("context_length_exceeded") ||
-          error["message"].to_s.match?(CONTEXT_LENGTH_MESSAGE))
+      # The structured code or type, as for any adapter, or the usual wording of a server that sends none (a 400).
+      def context_length?(status:, body:)
+        super || (status == 400 && Adapter::ErrorBody.error(body)&.[]("message").to_s.match?(CONTEXT_LENGTH_MESSAGE))
       end
 
       def retry_delay(response, attempt)
