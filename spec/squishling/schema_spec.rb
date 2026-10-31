@@ -11,8 +11,10 @@ RSpec.describe Squishling::Schema do
   end
 
   describe "#validate" do
-    it "rejects a non-object when a raw Hash schema omits type: object" do
-      schema = described_class.new(json_schema.except("type"))
+    # A root without any object type is refused when the schema is built; a union that includes "object" still
+    # lets a non-object through validation, so #validate catches it.
+    it "rejects a non-object when a raw Hash schema's type is a union that includes object" do
+      schema = described_class.new(json_schema.merge("type" => %w[object string array]))
 
       expect(schema.validate("hello")).to eq(["root must be an object"])
       expect(schema.validate([1, 2])).to eq(["root must be an object"])

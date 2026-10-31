@@ -38,6 +38,20 @@ RSpec.describe Squishling::Adapters::OpenAITransport do # rubocop:disable RSpec/
       end
     end
 
+    it "reads the headers through their Secret and never puts a header value in the error" do
+      expect { adapter_class.new(base_url: lan, headers: { "api-key" => "hdr-secret-value" }) }
+        .to raise_error(Squishling::ConfigurationError) { |e| expect(e.message).not_to include("hdr-secret-value") }
+    end
+
+    it "holds no raw key or header value anywhere in its state, the transport's included" do
+      adapter = adapter_class.new(base_url: lan, api_key: "sk-raw-key", headers: { "api-key" => "hdr-raw" },
+        allow_insecure_http: true)
+
+      dumped = [adapter.inspect, adapter.to_yaml, adapter.instance_variable_get(:@transport).to_yaml].join
+      expect(dumped).not_to include("sk-raw-key", "hdr-raw")
+      expect { Marshal.dump(adapter) }.to raise_error(TypeError)
+    end
+
     it "refuses a key from a callable when the request is made, labelled with the call" do
       stub = stub_post(lan_url).to_return(status: 200, body: reply_body)
       adapter = adapter_class.new(base_url: lan, api_key: -> { "sk-from-vault" })

@@ -37,7 +37,8 @@ module Squishling
     # Optional Logger for routing and escalation decisions.
     attr_accessor :logger
 
-    # Optional callable run after each LLM attempt (narrowed by squawk_on) with the raw output (see Squawk), e.g.
+    # Optional callable run after each LLM attempt (narrowed by squawk_on), and once more when a token budget or a
+    # disagreement stops the call, with the raw output (see Squawk), e.g.
     #   ->(output:, metadata:, error:) { Tracer.record(output, metadata, error) }
     attr_reader :squawk
 
