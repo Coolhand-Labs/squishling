@@ -9,8 +9,8 @@ A failed attempt moves on to the next one; once the last fails, the error is rai
 | Failure | What Squishling does |
 |---|---|
 | Rate limit, 5xx, overload, timeout, connection error | The [adapter](adapters.md) retries at the HTTP level first (RubyLLM: `RubyLLM.config.max_retries`, default 3; OpenAI-compatible: `max_retries:`, default 2). If it still fails, moves to the next attempt in a fresh chat; on the last attempt, raises `Squishling::LLMError` with a `cause` when the adapter has one: the RubyLLM adapter always does, a [sanitized stand-in](#the-cause-of-a-provider-failure); the OpenAI-compatible adapter only for transport errors (the error itself, which carries no response body), not for HTTP statuses. |
-| Bad API key, unknown model, missing provider config | Raises `Squishling::ConfigurationError`. Never escalated, never sent to the fallback. |
-| Provider rejects the request (400 Bad Request), e.g. an unsupported `temperature` or a schema it won't accept | Raises `Squishling::RequestRejectedError` (a `ConfigurationError`) naming the error class, the HTTP status, and the provider's error status/code when its body carries one (`INVALID_ARGUMENT`, `invalid_request_error`). They are also on `error.provider_status` and `error.provider_code` (nil when absent); only plain tokens are kept, never the provider's message. The message points at a param only when the provider named it, and otherwise says the params, output schema, or input may be invalid. The provider's own message is not on `cause` either unless you opt in (see [the cause of a provider failure](#the-cause-of-a-provider-failure)). It is never retried, so if you know a given code means "this input was bad", rescue it and decide for yourself. Never escalated, never sent to the fallback, so a setup mistake can't be silently covered up on every call. |
+| Bad API key, billing or quota problem (402), unknown model or endpoint (404), missing provider config | Raises `Squishling::ConfigurationError`. Never escalated, never sent to the fallback. |
+| Provider rejects the request (400 Bad Request, or another 4xx such as 409 or 422), e.g. an unsupported `temperature` or a schema it won't accept | Raises `Squishling::RequestRejectedError` (a `ConfigurationError`) naming the error class, the HTTP status, and the provider's error status/code when its body carries one (`INVALID_ARGUMENT`, `invalid_request_error`). They are also on `error.provider_status` and `error.provider_code` (nil when absent); only plain tokens are kept, never the provider's message. The message points at a param only when the provider named it, and otherwise says the params, output schema, or input may be invalid. The provider's own message is not on `cause` either unless you opt in (see [the cause of a provider failure](#the-cause-of-a-provider-failure)). It is never retried, so if you know a given code means "this input was bad", rescue it and decide for yourself. A 400 that reports an overlong input is the exception: the adapter raises an `LLMError` for it (the built-in adapters recognize the structured `context_length_exceeded` code; RubyLLM's own `ContextLengthExceededError` is honored too, and the OpenAI-compatible adapter also recognizes the usual wording of servers that send none), since a bigger model may take it. Which of the two a failure is, is the adapter's call (see [the error contract](adapters.md#the-error-contract)); a wording it doesn't recognize stays a rejected request. Never escalated, never sent to the fallback, so a setup mistake can't be silently covered up on every call. |
 | Empty or `nil` response (e.g. a refusal or a max-tokens cutoff) | Moves to the next attempt, then raises `Squishling::InvalidOutputError`. When the provider reported a max-tokens cutoff, the error says so and [`truncated?`](#a-cutoff-or-a-wrong-answer) is true. |
 | Malformed or truncated JSON | Moves to the next attempt, then raises `InvalidOutputError`. JSON wrapped in a markdown code fence is accepted. |
 | JSON that doesn't match the schema (wrong types, missing or extra keys, `null` in a non-`optional` field, a broken [conditional rule](schemas.md#contracts-beyond-the-schema), root not an object) | Moves to the next attempt with the validation errors, then raises `InvalidOutputError` |
@@ -65,8 +65,8 @@ Model output can echo sensitive input, so the raw response is kept in one place:
   the message, the logger, and the next attempt's prompt.
 - A fixed message when a response contains a value JSON can't represent (`1e400` parses to `Infinity`, or a string
   with invalid UTF-8).
-- For a failed provider request (`LLMError`, and the `ConfigurationError` for a 400, bad credentials, or a forbidden
-  key), only the error class and HTTP status, plus a 400's provider status and code when they are plain tokens. The provider's own message can echo request content or part of an API
+- For a failed provider request (`LLMError`, and the `ConfigurationError` for a rejected request, bad credentials, or a forbidden
+  key), only the error class and HTTP status, plus a rejection's provider status and code when they are plain tokens. The provider's own message can echo request content or part of an API
   key, and error trackers report the whole `cause` chain, so it is not on `cause` either unless you
   [opt in](#the-cause-of-a-provider-failure).
 - At most the first 20 of these errors, plus a count of the rest, so a very large malformed response can't flood
@@ -164,8 +164,8 @@ Things to know:
 ## Observing every attempt (`squawk`)
 
 `squawk` is an opt-in hook for sending what the model returned to an error tracker or tracing tool. It runs after
-every LLM attempt, accepted or rejected (unless you narrow it with `squawk_on:`, below), and does nothing unless you
-set it:
+every LLM attempt, accepted or rejected (unless you narrow it with `squawk_on:`, below), and once more when a token
+budget or a disagreement stops the call. It does nothing unless you set it:
 
 ```ruby
 Squishling.configure do |config|
@@ -178,8 +178,8 @@ end
 | Keyword | Value |
 |---|---|
 | `output` | The raw response: a Hash or String, or `nil` when the provider call itself failed |
-| `error` | `nil` for an accepted attempt. Otherwise the `InvalidOutputError` (with `errors` and `raw`) or `LLMError` that ended the attempt |
-| `metadata` | `label` (`"Class#method"`), `attempt`, `attempts` (the escalation's length; `attempt` jumps past the attempts a repeated reply skips; under a harness, the sample's or judge's own attempts), `final` (the last attempt, or a rejection after which none follows), `repeated` (`true` when the attempt returned the same reply as the one before it, in the same chat, which skips the step's remaining attempts), `model`, `provider`, `params`, `input` (the JSON sent: arguments and named context only), `usage` (token counts, when the adapter reports them), `finish_reason` (why the provider stopped, e.g. `:stop` or `:max_tokens`; `nil` when unknown or the call failed), `role` (`nil` for an escalation attempt, `:sample`, or `:judge`), `sample` (`"a"`, `"b"`, ... for a sample's attempt, else `nil`) |
+| `error` | `nil` for an accepted attempt. Otherwise the `InvalidOutputError` (with `errors` and `raw`) or `LLMError` that ended the attempt, or the `BudgetExhaustedError` or `DisagreementError` that stopped the call |
+| `metadata` | `label` (`"Class#method"`), `attempt`, `attempts` (the escalation's length, or for a [stopped call](#a-call-that-is-stopped) the attempts made; `attempt` jumps past the attempts a repeated reply skips; under a harness, the sample's or judge's own attempts), `final` (the last attempt, or a rejection after which none follows), `repeated` (`true` when the attempt returned the same reply as the one before it, in the same chat, which skips the step's remaining attempts), `model`, `provider`, `params`, `input` (the JSON sent: arguments and named context only), `usage` (token counts, when the adapter reports them), `finish_reason` (why the provider stopped, e.g. `:stop` or `:max_tokens`; `nil` when unknown or the call failed), `role` (`nil` for an escalation attempt, `:sample`, or `:judge`), `sample` (`"a"`, `"b"`, ... for a sample's attempt, else `nil`), `stopped` (`nil` for an attempt; `:budget` or `:disagreement` for the [stopped call's report](#a-call-that-is-stopped)) |
 
 - Set it globally with `config.squawk`, per class with `squishling squawk: ...`, or per method with
   `squish :triage, squawk: ...`. The method's hook wins over the class's, which wins over the configured one;
@@ -211,6 +211,28 @@ end
   `role`/`sample` say which one it was. A [custom harness](harnesses.md#reporting-to-squawk) reports the same way.
 - It isn't called for a `ConfigurationError`, for deterministic and fallback returns, or for an attempt where your own
   `squish_validate` raises (that exception propagates first).
+
+### A call that is stopped
+
+A call that a [token budget](#capping-a-calls-cost-token-budgets) or a
+[disagreement](harnesses.md#when-the-harness-fails) stops has no attempt of its own to report: the attempt before a
+budget stop was reported as not final, and a disagreement's samples were both accepted. So the call gets one more
+report, whatever `squawk_on:` is set to:
+
+- `error` is the `BudgetExhaustedError` or `DisagreementError`, `output` is `nil` (nothing was sent), `metadata[:final]`
+  is `true`, and `metadata[:stopped]` is `:budget` or `:disagreement` (it is `nil` for every attempt's report).
+- `attempt` and `attempts` are `error.attempts`, or `0` when that is `nil` (a disagreement, or a budget that ran out
+  before a sample or judge made its first attempt); a stop before a retry counts the attempts already made. `model` is
+  the last of `error.models`, and `provider`, `params`, `usage`, `role`, and `sample` are `nil`.
+- It is sent once, after the attempts that led to it and before `squish_fallback` runs, for the built-in harnesses and
+  for a [custom one](harnesses.md#reporting-to-squawk) that raises either error. A call to another squished method
+  from your own code (a `squish_validate`, say) reports its own stop, and the outer call does not report that error
+  again. The attempts before it keep `final: false`, so `squawk_on: :final` sees a budget or disagreement ending only
+  through this report.
+- Like any attempt's report, it runs your hook inline: an exception the hook raises propagates in place of the
+  `BudgetExhaustedError` or `DisagreementError` (which stays on `cause`), so `squish_fallback` does not run.
+- `squawk: false`, or no hook, sends nothing. Ending on the last invalid attempt is not a stop: that attempt already
+  carried `final: true`.
 
 ## Output checks (`squish_validate`)
 
@@ -245,7 +267,7 @@ end
 | Error | Raised when |
 |---|---|
 | `Squishling::Error` | Base class for everything below. Raised directly for misuse at call time, e.g. `result` or `squish!` called outside a squished method |
-| `Squishling::ConfigurationError` | Missing purpose or schema, a non-strict schema, invalid or reserved params, an invalid `model:`/`escalation:` declaration, an invalid `append_to_purpose` item or unavailable source, bad credentials, an unknown model, a request the provider rejects (400, as `RequestRejectedError`, with `provider_status` and `provider_code`) |
+| `Squishling::ConfigurationError` | Missing purpose or schema, a non-strict schema, invalid or reserved params, an invalid `model:`/`escalation:` declaration, an invalid `append_to_purpose` item or unavailable source, bad credentials, an unknown model, a request the provider rejects (a 400 or other rejected 4xx, as `RequestRejectedError`, with `provider_status` and `provider_code`) |
 | `Squishling::InvalidOutputError` | LLM output still invalid (schema or `squish_validate`) after every attempt in the escalation, or a deterministic/fallback return that doesn't match the schema |
 | `Squishling::DisagreementError` | A subclass of `InvalidOutputError`: a [squishsum harness](harnesses.md#when-the-harness-fails)'s samples disagreed and no judge accepted either. `candidates`, `verdict`, and `reason` describe what happened |
 | `Squishling::BudgetExhaustedError` | A subclass of `InvalidOutputError`: the call used up its [token budget](#capping-a-calls-cost-token-budgets) before an attempt was accepted. `limit`, `max`, and `used` describe the budget |

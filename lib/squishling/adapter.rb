@@ -89,12 +89,14 @@ module Squishling
     #
     # ConfigurationError is for setup mistakes (bad credentials, an invalid request, an unknown model): it is never
     # retried or escalated. LLMError is for failures worth another attempt (rate limits, 5xx, timeouts, connection
-    # errors): the next attempt, or the last one's caller, sees it. Keep the provider's own message out of both: it can
-    # echo request content or part of a key. The same goes for the exception it came from, which error trackers
-    # report as the error's #cause: pass `cause: sanitized_cause(e, status:)` rather than letting a raise inside a
-    # rescue set a provider exception that carries a response body. Any other exception propagates unwrapped.
-    # Adapters are called from worker threads when a harness takes samples, so they must not share unsynchronized
-    # state.
+    # errors, a prompt too long for the model): the next attempt, or the last one's caller, sees it. Keep the provider's
+    # own message out of both: it can echo request content or part of a key. The same goes for the exception it came
+    # from, which error trackers report as the error's #cause: pass `cause: sanitized_cause(e, status:)` rather than
+    # letting a raise inside a rescue set a provider exception that carries a response body. Any other exception
+    # propagates unwrapped.
+    # Which of the two a provider failure is, is the adapter's call (#http_failure maps HTTP statuses, and
+    # #context_length? is where an adapter recognizes an overlong prompt); what happens next is Squishling's.
+    # Adapters are called from worker threads when a harness takes samples, so they must not share unsynchronized state.
     class Base
       # One completion. Returns an Adapter::Response.
       def complete(_request)
@@ -144,10 +146,43 @@ module Squishling
           .tap { |failure| failure.set_backtrace(error.backtrace) }
       end
 
-      # A RequestRejectedError for a request the provider rejected (a 400). via names how it failed (the error class,
-      # the HTTP status); body is the provider's error body (a JSON String, or a Hash with String keys), of which only
-      # the status and code tokens are repeated, never its message. http_status, when given, drops a code that only
-      # repeats it. The params are pointed at only when the provider named one of them.
+      # Classifies a provider's HTTP failure, so adapters sort the same status the same way: 408, 413, 429, and 5xx are
+      # LLMErrors; 401, 402, 403, 404, and a redirect are ConfigurationErrors (credentials, billing, model or endpoint:
+      # nothing a retry fixes); every other 4xx is a RequestRejectedError, unless #context_length? says the input
+      # outgrew the model, which is an LLMError too (a bigger model may take it). via names how it failed (the error
+      # class, the HTTP status) and is all of the failure that is repeated, with a rejection's status and code tokens.
+      # body is the provider's error body, as for #rejected_request_error. A nil status (no HTTP response) or a
+      # success status (a reply that was unusable) is an LLMError.
+      def http_failure(request, status:, body:, via:)
+        case status
+        when nil, 100..299, 408, 413, 429, 500.. then llm_error(request, via)
+        when 401, 403 then configuration_error(request, "the provider refused the credentials (#{via})")
+        when 402 then configuration_error(request, "#{via}: the provider reports a billing or quota problem")
+        when 404 then configuration_error(request, "#{via}: check the model name and the endpoint")
+        when 300..399 then configuration_error(request, "#{via}: redirects aren't followed; check the endpoint")
+        else rejected_or_overlong(request, status:, body:, via:)
+        end
+      end
+
+      # Whether a rejected request (a 400, or another 4xx not otherwise classified) means the input was too long for the
+      # model, which makes it an LLMError rather than a RequestRejectedError. The adapter decides: only it knows how its
+      # provider says so. The default recognizes a 400 whose structured error code or type is "context_length_exceeded",
+      # never reading the message. Override it to recognize more (and call super); when an adapter can't tell, the
+      # failure stays a rejection. status and body are those given to #http_failure.
+      def context_length?(status:, body:)
+        status == 400 && ErrorBody.context_length?(body)
+      end
+
+      def rejected_or_overlong(request, status:, body:, via:)
+        return llm_error(request, via) if context_length?(status:, body:)
+
+        rejected_request_error(request, via:, body:, http_status: status)
+      end
+
+      # A RequestRejectedError for a request the provider rejected (a 400, or another 4xx). via names how it failed
+      # (the error class, the HTTP status); body is the provider's error body (a JSON String, or a Hash with String
+      # keys), of which only the status and code tokens are repeated, never its message. http_status, when given, drops
+      # a code that only repeats it. The params are pointed at only when the provider named one of them.
       def rejected_request_error(request, via:, body:, http_status: nil)
         found = ErrorBody.read(body, http_status:)
         tokens = found.values_at(:status, :code).compact

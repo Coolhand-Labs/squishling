@@ -14,8 +14,9 @@ module Squishling
   class Run
     include Messages
     include Rejections
+    include Reports
 
-    private_constant :Messages, :Rejections
+    private_constant :Messages, :Rejections, :Reports
 
     # One of #samples' outputs, between rounds.
     Sample = Struct.new(:name, :stage, :chat, :rejected, :result, :reask)
@@ -285,26 +286,6 @@ module Squishling
 
     def start_chat(step, prompt)
       @client.chat(step, instructions: prompt.instructions, schema: prompt.schema.llm_schema)
-    end
-
-    # Runs the observability hook, if any, with this attempt's raw output (nil when the call itself failed),
-    # the error that ended it (nil when it was accepted), and what was asked. role is nil for escalation
-    # attempts, :sample (with the sample's name) or :judge. reask is whether the attempt retried in the same chat,
-    # repeated whether it sent back the reply the attempt before it was rejected for, and final whether no attempt
-    # follows it.
-    def squawk(prompt, path, attempt, response, error, sample: nil, reask: false, repeated: false,
-      final: attempt == path.size)
-      hook = @definition.squawk
-      return unless hook && Squawk.report?(@definition.squawk_on, attempt, error, final)
-
-      step = path[attempt - 1]
-      metadata = {
-        label:, attempt:, attempts: path.size, final:, repeated:,
-        model: response&.model || step.model, provider: step.provider, params: step.request_params(reask),
-        input: prompt.input, usage: response&.usage, finish_reason: response&.finish_reason,
-        role: sample ? :sample : prompt.role, sample: sample&.name
-      }
-      Squawk.call(hook, output: response&.content, metadata:, error:)
     end
 
     # following is the attempt that comes next, which is not the next one when a repeated reply skips ahead.

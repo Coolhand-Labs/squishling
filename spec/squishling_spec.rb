@@ -70,6 +70,157 @@ RSpec.describe Squishling do
       expect(JSON.parse(chats.first.messages.first)).to eq("arguments" => { "text" => "long text" })
     end
 
+    it "falls back to the LLM when the stub is a define_method block or spans several lines" do
+      klass = Class.new do
+        include Squishling
+
+        purpose "Summarize."
+        output_schema { string :summary }
+        squish :from_block, :multi_line
+
+        define_method(:from_block) { |text| raise NotImplementedError, text }
+
+        def multi_line(text)
+          raise NotImplementedError,
+            "write me: #{text}"
+        end
+      end
+      stub_llm({ "summary" => "a" }, { "summary" => "b" })
+
+      expect(klass.new.from_block("x").summary).to eq("a")
+      expect(klass.new.multi_line("x").summary).to eq("b")
+    end
+
+    it "falls back to the LLM when a prepended module's stub is the implementation" do
+      stub = Module.new { def call(text) = raise(NotImplementedError) }
+      klass = Class.new do
+        prepend stub
+        include Squishling
+
+        purpose "Summarize."
+        output_schema { string :summary }
+      end
+      stub_llm({ "summary" => "short" })
+
+      expect(klass.call("long text").summary).to eq("short")
+    end
+
+    describe "a NotImplementedError from called code" do
+      let(:abstract_base) { Class.new { def parse(_value) = raise(NotImplementedError, "abstract") } }
+      let(:klass) do
+        base = abstract_base
+        Class.new do
+          include Squishling
+
+          purpose "Parse."
+          output_schema { string :parsed }
+          squish :via_object, :via_block, :via_helper
+
+          define_method(:via_object) { |ssn| base.new.parse(ssn) }
+          define_method(:via_block) { |ssn| proc { raise NotImplementedError, ssn }.call }
+          define_method(:via_helper) { |ssn| helper(ssn) }
+
+          def helper(_value) = raise(NotImplementedError)
+        end
+      end
+
+      %i[via_object via_block via_helper].each do |name|
+        it "propagates from #{name} and sends nothing to the provider" do
+          chats = stub_llm({ "parsed" => "x" })
+
+          expect { klass.new.public_send(name, "123-45-6789") }.to raise_error(NotImplementedError)
+          expect(chats).to be_empty
+        end
+      end
+
+      it "propagates when a stub sits behind a user super chain" do
+        parent = Class.new { def call(text) = raise(NotImplementedError, text) }
+        child = Class.new(parent) do
+          include Squishling
+
+          purpose "Parse."
+          output_schema { string :parsed }
+
+          def call(text) = super + text
+        end
+        chats = stub_llm({ "parsed" => "x" })
+
+        expect { child.new.call("secret") }.to raise_error(NotImplementedError, "secret")
+        expect(chats).to be_empty
+      end
+    end
+
+    it "relies on the implementation lambda being one frame above the method" do
+      caught = nil
+      klass = Class.new do
+        include Squishling
+
+        purpose "Parse."
+        output_schema { string :parsed }
+
+        define_method(:call) { |text| raise NotImplementedError, text }
+      end
+      allow(Squishling::Wrapper).to receive(:stub?).and_wrap_original do |original, error|
+        caught = error
+        original.call(error)
+      end
+      stub_llm({ "parsed" => "x" })
+
+      klass.new.call("x")
+
+      expect(caught.backtrace_locations[1].absolute_path).to eq(Squishling::Wrapper.const_get(:FILE, false))
+    end
+
+    it "fails closed when the error carries no backtrace locations" do
+      error = NotImplementedError.new("stub")
+
+      expect(Squishling::Wrapper.stub?(error)).to be(false)
+      expect(Squishling::Wrapper.stub?(error.tap { |e| e.set_backtrace(["wrapper.rb:1"]) })).to be(false)
+    end
+
+    it "does not take an error raised outside the wrapper's frames for a stub" do
+      error = begin
+        raise NotImplementedError, "helper"
+      rescue NotImplementedError => e
+        e
+      end
+
+      expect(Squishling::Wrapper.stub?(error)).to be(false)
+    end
+
+    it "falls back to the LLM when a stub in a squished parent is reached through super" do
+      parent = Class.new do
+        include Squishling
+
+        purpose "Parse."
+        output_schema { string :parsed }
+
+        def call(text) = raise(NotImplementedError, text)
+      end
+      child = Class.new(parent) { def call(text) = super.then { |result| result } }
+      stub_llm({ "parsed" => "x" })
+
+      expect(child.new.call("x").parsed).to eq("x")
+    end
+
+    it "propagates a stub raised after squish! instead of making a second LLM call" do
+      klass = Class.new do
+        include Squishling
+
+        purpose "Parse."
+        output_schema { string :parsed }
+
+        def call(text)
+          squish!
+          raise NotImplementedError, text
+        end
+      end
+      chats = stub_llm({ "parsed" => "x" }, { "parsed" => "y" })
+
+      expect { klass.new.call("x") }.to raise_error(NotImplementedError, "x")
+      expect(chats.size).to eq(1)
+    end
+
     it "falls back to the LLM when the method is not defined at all" do
       klass = Class.new do
         include Squishling

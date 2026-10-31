@@ -52,6 +52,80 @@ RSpec.describe Squishling::Adapters::OpenAICompatible do # rubocop:disable RSpec
       .not_to include("sk-secret")
   end
 
+  describe "serializing the adapter" do
+    let(:secret_adapter) do
+      described_class.new(api_key: "sk-SECRETKEY", headers: { "api-key" => "hdr-SECRETHEADER" }, default_model: "m")
+    end
+
+    # What ActiveSupport's Object#as_json does (it is not a dependency): walk the instance variables.
+    def instance_values_json(object)
+      object.instance_variables.to_h do |name|
+        value = object.instance_variable_get(name)
+        [name.to_s.delete_prefix("@"), value.respond_to?(:as_json) ? value.as_json : value.to_s]
+      end
+    end
+
+    it "keeps the key and header values out of to_yaml, also through the configuration" do
+      Squishling.configure { |config| config.adapter = secret_adapter }
+
+      [secret_adapter.to_yaml, Squishling.config.to_yaml].each do |yaml|
+        expect(yaml).not_to include("SECRETKEY")
+        expect(yaml).not_to include("SECRETHEADER")
+      end
+    end
+
+    it "refuses Marshal.dump without echoing the key" do
+      expect { Marshal.dump(secret_adapter) }.to raise_error(TypeError) { |error|
+        expect(error.message).not_to include("SECRET")
+      }
+    end
+
+    it "keeps the key out of inspect, pp, to_s, interpolation, and an instance_values-style JSON walk" do
+      shown = [secret_adapter.inspect, secret_adapter.pretty_inspect, secret_adapter.to_s, "key #{secret_adapter}",
+               JSON.generate(instance_values_json(secret_adapter))]
+
+      expect(shown.join).not_to include("SECRET")
+      expect(instance_values_json(secret_adapter).values).to include("[REDACTED]")
+    end
+
+    it "holds no instance variable that is the key, a header value, or the headers themselves" do
+      values = secret_adapter.instance_variables.map { |name| secret_adapter.instance_variable_get(name) }
+
+      expect(values.grep(String)).not_to include("sk-SECRETKEY")
+      expect(values.grep(Hash).flat_map(&:values)).not_to include("hdr-SECRETHEADER")
+    end
+
+    it "still sends the key and headers" do
+      stub = stub_post(headers: { "Authorization" => "Bearer sk-SECRETKEY", "api-key" => "hdr-SECRETHEADER" })
+        .to_return(reply)
+
+      secret_adapter.complete(adapter_request)
+
+      expect(stub).to have_been_requested
+    end
+  end
+
+  describe "credential headers" do
+    it "sends a callable's or the environment's key" do
+      from_proc = stub_post(headers: { "Authorization" => "Bearer from-proc" }).to_return(reply)
+      from_env = stub_post(headers: { "Authorization" => "Bearer from-env" }).to_return(reply)
+
+      described_class.new(api_key: -> { "from-proc" }, max_retries: 0).complete(adapter_request)
+      with_env("OPENAI_API_KEY" => "from-env") { described_class.new(max_retries: 0).complete(adapter_request) }
+
+      expect(from_proc).to have_been_requested
+      expect(from_env).to have_been_requested
+    end
+
+    it "sends no Authorization header for a blank key" do
+      stub = stub_post.with { |req| !req.headers.key?("Authorization") }.to_return(reply)
+
+      described_class.new(api_key: "  ", max_retries: 0).complete(adapter_request)
+
+      expect(stub).to have_been_requested
+    end
+  end
+
   it "doesn't support judgments" do
     expect(adapter.judgments?).to be(false)
   end
@@ -524,11 +598,11 @@ RSpec.describe Squishling::Adapters::OpenAICompatible do # rubocop:disable RSpec
         .to raise_error(Squishling::LLMError, "Klass#call: the response wasn't a JSON object (HTTP 200)")
     end
 
-    it "points 401 and 403 at the credentials and 404 at base_url, and only a 400 is a RequestRejectedError" do
+    it "points 401 and 403 at the credentials and 404 at the model, and only a 400 is a RequestRejectedError" do
       stub_post.to_return(reply("{}", status: 401), reply("{}", status: 403), reply("{}", status: 404),
         reply("{}", status: 400))
 
-      [[/refused the credentials/, 401], [/refused the credentials/, 403], [/check base_url/, 404]].each do |text, _|
+      [/refused the credentials/, /refused the credentials/, /check the model name and the endpoint/].each do |text|
         expect { adapter.complete(adapter_request) }.to raise_error(Squishling::ConfigurationError, text) do |e|
           expect(e).not_to be_a(Squishling::RequestRejectedError)
         end
