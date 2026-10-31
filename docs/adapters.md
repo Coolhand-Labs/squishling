@@ -64,6 +64,15 @@ end
 | `max_tokens_param` | `:max_completion_tokens` | The body key for `max_output_tokens`. Use `:max_tokens` for servers that don't know the newer name. |
 | `structured_output` | `:json_schema` | `:json_schema` asks for strict structured output. For servers without it use `:json_object`, or `:none`: the schema then goes into the system prompt in words. Squishling validates every answer itself either way. |
 
+**Credentials stay out of serializers.** The adapter holds the `api_key` and the `headers` (which may carry an
+`api-key` or `Authorization` value) in an opaque wrapper, not in plain instance variables, so logging or caching the
+adapter or `Squishling.config` can't write them out: `inspect`, `to_s`, `pp`, `to_yaml`, `as_json` (including
+ActiveSupport's `instance_values` walk) and `to_json` show `[REDACTED]`, and `Marshal.dump` raises a `TypeError`
+instead of dumping the key. This guards against accidental serialization (a logged config, an error tracker, a cache
+dump), not against code running in your process, which can still reach the value. If you write your own adapter,
+keep credentials out of plain instance variables the same way, or define `encode_with`, `as_json`, and
+`marshal_dump` to omit them.
+
 **How params map.** `temperature` → `temperature`; `max_output_tokens` → `max_tokens_param`; `thinking: { effort: }` →
 `reasoning_effort` (`true`/`false` leave the model's default, and a `budget:` or `display:` raises
 `ConfigurationError`, since Chat Completions has no field for them). Any other param (`top_p`, `seed`, …) goes into
