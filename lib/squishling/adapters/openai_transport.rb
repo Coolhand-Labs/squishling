@@ -76,6 +76,13 @@ module Squishling
       end
 
       def read(response, deadline)
+        Reply.new(response.code, body_of(response, deadline), response["retry-after"])
+      end
+
+      # The whole body, within the limits. On a failure status a body that is compressed or over the cap is dropped
+      # rather than refused: the status alone says what kind of failure it is (a proxy's gzipped 401 is still a
+      # credentials problem, not a transport one), and nothing in the body is read for it anyway.
+      def body_of(response, deadline)
         check_headers(response)
         body = String.new(encoding: Encoding::BINARY)
         response.read_body do |chunk|
@@ -83,7 +90,11 @@ module Squishling
           too_large! if body.bytesize + chunk.bytesize > @max_response_bytes
           body << chunk
         end
-        Reply.new(response.code, body, response["retry-after"])
+        body
+      rescue ResponseTooLarge, UnexpectedEncoding
+        raise if response.code.start_with?("2")
+
+        String.new(encoding: Encoding::BINARY)
       end
 
       def check_headers(response)

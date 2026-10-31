@@ -56,7 +56,9 @@ Flag any change that breaks one of these; they are behavior contracts, not style
   one) in a `Secret`, not in plain instance variables, so no serializer can write them out. The OpenAI-compatible
   adapter refuses to send a credential over plain `http` to a non-loopback host (unless `allow_insecure_http:`),
   caps a response's size (`max_response_bytes`) and time (`total_timeout`), and refuses a compressed one; those
-  limits are non-retried `LLMError`s that name the limit, never the URL or the response. Adapters run on worker
+  limits are non-retried `LLMError`s that name the limit, never the URL or the response. A failure status is still
+  classified by its status when its body is compressed or over the cap (the body is dropped unread), so a limit never
+  turns a credentials or endpoint mistake into an `LLMError`. Adapters run on worker
   threads for samples, so they hold no unsynchronized state. Built-in and custom adapters share one `Adapter::Registry`; there is no private path for the
   built-ins. `config.adapter` is process-wide (not per class or step); unset, it auto-detects `ruby_llm`.
 - **Classifying a provider failure is the adapter's job; what happens next is Squishling's.** The line is fixed:
@@ -119,10 +121,12 @@ Flag any change that breaks one of these; they are behavior contracts, not style
   through an outer squished call.
 - **Only named context leaves the process.** The LLM sees method arguments, `squish_context` values, a
   `squish!` call's `context:`, and source the developer explicitly passes to `append_to_purpose` — never
-  instance variables wholesale. Exceptions in context are sent as class and message only. The one model-generated
-  exception: escalating to a new step forwards the previous step's rejected output (capped at
+  instance variables wholesale. Exceptions in context are sent as class and message only. Model-generated output goes
+  to a provider in two places. Escalating to a new step forwards the previous step's rejected output (capped at
   `Invoker::MAX_FORWARDED_CHARS`) to that step's provider, which may differ; a step can opt out with
-  `forward_rejected: false`.
+  `forward_rejected: false`. A judged harness sends the judge's provider the purpose, the call's full input, and both
+  candidate outputs, uncapped and with no opt-out, so a judge on another provider sees the input too (see
+  `docs/harnesses.md`, "The judge").
 - **Params can't override what Squishling owns.** Provider-specific params are merged into the request alongside
   what the adapter builds (RubyLLM's `with_provider_options`; the OpenAI-compatible body, where Squishling's keys win), so `Params::RESERVED_KEYS` (model, messages, structured-output format, tools, streaming) stay rejected. A
   provider 400 is a `ConfigurationError`, never something a fallback absorbs.

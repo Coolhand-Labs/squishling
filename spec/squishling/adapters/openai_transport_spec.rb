@@ -220,21 +220,50 @@ RSpec.describe Squishling::Adapters::OpenAITransport do # rubocop:disable RSpec/
       expect { complete(max_response_bytes: 1000) }.to raise_error(Squishling::LLMError, /max_response_bytes \(1000\)/)
     end
 
-    it "caps an error body too, and puts none of it in the error" do
+    it "caps an error body too, but lets the status classify the failure, with none of the body in the error" do
       stub_post.to_return(status: 400, body: "secret " * 100)
 
       expect { complete(max_response_bytes: 100) }
-        .to raise_error(Squishling::LLMError, /max_response_bytes/) { |e| expect(e.message).not_to include("secret") }
+        .to raise_error(Squishling::RequestRejectedError, /HTTP 400/) { |e| expect(e.message).not_to include("secret") }
     end
 
-    it "isn't retried, even for a status that would be" do
+    it "retries an over-cap body on a status that would be retried, as the status alone says" do
       stub_post.to_return(status: 503, body: "x" * 500)
       retrying = adapter_class.new(api_key: "sk-test", max_retries: 3, max_response_bytes: 100)
       allow(retrying).to receive(:sleep)
 
-      expect { retrying.complete(adapter_request) }.to raise_error(Squishling::LLMError, /max_response_bytes/)
-      expect(WebMock).to have_requested(:post, url).once
-      expect(retrying).not_to have_received(:sleep)
+      expect { retrying.complete(adapter_request) }.to raise_error(Squishling::LLMError, /HTTP 503/)
+      expect(WebMock).to have_requested(:post, url).times(4)
+    end
+
+    # A proxy or gateway that ignores the request's identity encoding, or a body past the cap, must not turn a
+    # credentials or endpoint mistake into a transport failure that squish_fallback would absorb.
+    {
+      401 => Squishling::ConfigurationError, 402 => Squishling::ConfigurationError,
+      404 => Squishling::ConfigurationError, 301 => Squishling::ConfigurationError,
+      400 => Squishling::RequestRejectedError, 422 => Squishling::RequestRejectedError
+    }.each do |status, error_class|
+      it "classifies a compressed HTTP #{status} by its status, not as a refused response" do
+        stub_post.to_return(status:, body: "\x1F\x8B secret".b, headers: { "Content-Encoding" => "gzip" })
+
+        expect { complete }.to raise_error(error_class, /HTTP #{status}/) do |e|
+          expect(e.message).not_to include("secret", "gzip")
+        end
+      end
+
+      it "classifies an HTTP #{status} past the declared size cap by its status" do
+        stub_post.to_return(status:, body: "{}", headers: { "Content-Length" => "100000" })
+
+        expect { complete(max_response_bytes: 1000) }.to raise_error(error_class, /HTTP #{status}/)
+      end
+    end
+
+    it "still refuses a compressed or over-cap success, which has no status to go by" do
+      stub_post.to_return({ status: 200, body: "x".b, headers: { "Content-Encoding" => "gzip" } },
+        { status: 200, body: "{}", headers: { "Content-Length" => "100000" } })
+
+      expect { complete(max_response_bytes: 1000) }.to raise_error(Squishling::LLMError, /compressed/)
+      expect { complete(max_response_bytes: 1000) }.to raise_error(Squishling::LLMError, /max_response_bytes/)
     end
 
     it "keeps the limit as the cause" do

@@ -46,9 +46,10 @@ behavior that used to work, so read **Changed** before upgrading.
 - **Behavior change:** the OpenAI-compatible adapter refuses to send an `api_key` or `Authorization` header over
   `http://` to a host that isn't loopback (`localhost`, `*.localhost`, `127.0.0.0/8`, `::1`), raising
   `ConfigurationError`. A LAN or Docker setup such as `http://ollama:11434/v1` needs `allow_insecure_http: true`.
-  Responses over `max_response_bytes` raise `LLMError`, requests send `Accept-Encoding: identity` and a compressed
-  reply is refused, and `total_timeout:` bounds a whole attempt, not each read. None of those is retried by the adapter.
-  (#74, #86)
+  Successful responses over `max_response_bytes` raise `LLMError`, requests send `Accept-Encoding: identity` and a
+  compressed successful reply is refused, and `total_timeout:` bounds a whole attempt, not each read. None of those is
+  retried by the adapter. A failure status (4xx, 5xx, redirect) is classified by its status even when its body is
+  compressed or over the cap. (#74, #86)
 - **Behavior change:** a hand-written Hash `output_schema` with `properties` but no `type: "object"`, at the root or
   nested (a property, array `items`, an `optional` branch, a `$ref` target), now raises `ConfigurationError` when the
   schema is built, and `Squishling.verify` reports it. Add `type: "object"` (or a union that includes it). Schematist

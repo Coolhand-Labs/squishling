@@ -91,6 +91,13 @@ A judged harness with neither raises `ConfigurationError` before any sample is r
 step uses only its own `provider:`; it doesn't inherit the class or method `provider:`, which belongs to their models
 (a chat judge's params, though, do merge over the method's).
 
+**What the judge is sent.** The judge's provider receives the operation's purpose, the call's full input (the same
+method arguments and named context the samples saw), and **both candidate outputs**, whatever they hold. None of it is
+capped or filtered, and there is no opt-out short of not using a judged harness. When the judge is a different
+provider than the sampled model (a `judge:` step with its own `provider:`, or an escalation's next step on another
+provider), the input and both outputs go to that provider as well, so only name a judge you would trust with the
+input itself.
+
 ### Chat judges
 
 By default the judge is a chat model, asked for a strict `{ "verdict": "a" | "b" | "neither", "reason": "..." }`.
