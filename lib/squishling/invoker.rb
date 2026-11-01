@@ -25,13 +25,14 @@ module Squishling
     Built = Data.define(:prompt, :payload, :purpose)
 
     # Runs the harness (Definition#harness) over a Run of the call: the harness decides how the escalation is
-    # used, and what it returns is checked against the output schema's type.
+    # used, and what it returns is checked against the output schema's type. A call that ends on the token budget
+    # or a disagreement is reported to squawk once here, as the stop no attempt of its own reported.
     def call
       built = build
       harness = @definition.harness
       run = Run.new(definition: @definition, receiver: @receiver, inputs: @inputs, prompt: built.prompt,
         payload: built.payload, purpose: built.purpose, harness:)
-      accepted(harness.klass.new.call(run, **harness.options), run, harness)
+      accepted(call_harness(harness, run), run, harness)
     end
 
     # The first request the call would make (system prompt, output schema, user message), without making it.
@@ -40,6 +41,13 @@ module Squishling
     end
 
     private
+
+    def call_harness(harness, run)
+      harness.klass.new.call(run, **harness.options)
+    rescue BudgetExhaustedError, DisagreementError => e
+      run.report_stop(e)
+      raise
+    end
 
     def build
       purpose = @definition.purpose(@receiver)
@@ -70,14 +78,24 @@ module Squishling
     end
 
     # Exceptions are sent as their class and message. Plain JSON would send only the message, and with
-    # json/add/exception loaded it would also send the backtrace, which exposes file paths.
-    def describe(value)
+    # json/add/exception loaded it would also send the backtrace, which exposes file paths. path is the Hashes and
+    # Arrays being walked: one that contains itself is a ConfigurationError rather than a SystemStackError.
+    def describe(value, path = [])
       case value
       when Exception then { class: exception_class_name(value.class), message: value.message }
-      when Hash then value.transform_values { |item| describe(item) }
-      when Array then value.map { |item| describe(item) }
+      when Hash then within(value, path) { |inner| value.transform_values { |item| describe(item, inner) } }
+      when Array then within(value, path) { |inner| value.map { |item| describe(item, inner) } }
       else value
       end
+    end
+
+    def within(container, path)
+      if path.any? { |ancestor| ancestor.equal?(container) }
+        raise ConfigurationError, "#{@definition.label}: an argument or context value contains itself, " \
+                                  "so it can't be sent as JSON"
+      end
+
+      yield path + [container]
     end
 
     # An anonymous error class (Class.new(StandardError)) is named after its closest named ancestor.

@@ -19,7 +19,8 @@ module Squishling
     #   end
     class OpenAICompatible < Adapter::Base
       Options = OpenAIOptions
-      private_constant :Options
+      Transport = OpenAITransport
+      private_constant :Options, :Transport
 
       DEFAULT_BASE_URL = "https://api.openai.com/v1"
       STRUCTURED_OUTPUT = %i[json_schema json_object none].freeze
@@ -30,10 +31,12 @@ module Squishling
       # 429, and 5xx. A timeout is retried even though the server may have processed the request.
       NETWORK_ERRORS = [Timeout::Error, SocketError, EOFError, IOError, SystemCallError, Net::ProtocolError,
                         Net::HTTPBadResponse, Net::HTTPHeaderSyntaxError, OpenSSL::OpenSSLError, Zlib::Error].freeze
+      DEFAULT_MAX_RESPONSE_BYTES = 8 * 1024 * 1024
       MAX_RETRY_DELAY = 30
-      # How servers without OpenAI's error code (vLLM, Ollama, llama.cpp, ...) say a prompt is too long. The message is
-      # only matched against this, never repeated.
-      CONTEXT_LENGTH_MESSAGE = /context (length|window|size)|too many tokens|prompt is too long|maximum .{0,20}tokens/i
+      # How servers without OpenAI's error code (vLLM, Ollama, llama.cpp, ...) say a prompt is too long. Deliberately
+      # narrow (no bare "maximum ... tokens", which a bad max_tokens value also says): a wording that isn't here is a
+      # rejected request, which is the safe side. The message is only matched against this, never repeated.
+      CONTEXT_LENGTH_MESSAGE = /context (length|window|size)|too many tokens|prompt is too long/i
       private_constant :STRUCTURED_OUTPUT, :TOKEN_PARAMS, :PORTABLE_PARAMS, :NETWORK_ERRORS, :MAX_RETRY_DELAY,
         :CONTEXT_LENGTH_MESSAGE
 
@@ -44,23 +47,30 @@ module Squishling
       # max_retries: how often a timeout, connection failure, HTTP 408, 429, or 5xx is retried here (honoring
       # Retry-After) before it surfaces as an LLMError. max_tokens_param: the body key for max_output_tokens
       # (:max_completion_tokens, or :max_tokens for older servers). structured_output: :json_schema, :json_object,
-      # or :none. Raises ConfigurationError for a bad option.
+      # or :none. allow_insecure_http: lets a credential (api_key, or a header such as Authorization or api-key) go
+      # over plain http to a host that isn't loopback; without it that is a ConfigurationError. max_response_bytes:
+      # the most a response (an error body too) may hold, 8 MiB by default. total_timeout: the most seconds one
+      # attempt may take (read_timeout restarts at every read); it defaults to open_timeout + 2 * read_timeout.
+      # Responses are requested and accepted uncompressed only. Raises ConfigurationError for a bad option.
       def initialize(base_url: DEFAULT_BASE_URL, api_key: nil, headers: {}, default_model: nil, open_timeout: 10,
-        read_timeout: 120, max_retries: 2, max_tokens_param: :max_completion_tokens, structured_output: :json_schema)
+        read_timeout: 120, max_retries: 2, max_tokens_param: :max_completion_tokens, structured_output: :json_schema,
+        allow_insecure_http: false, max_response_bytes: DEFAULT_MAX_RESPONSE_BYTES, total_timeout: nil)
         super()
         @endpoint = Options.endpoint(base_url)
-        @api_key = api_key
-        @headers = Options.headers(headers)
+        @api_key = (Secret.new(api_key) unless api_key.nil?)
+        @headers = Secret.new(Options.headers(headers))
+        @allow_insecure_http = Options.flag(:allow_insecure_http, allow_insecure_http)
         @default_model = Options.default_model(default_model)
-        @open_timeout = Options.number(:open_timeout, open_timeout)
-        @read_timeout = Options.number(:read_timeout, read_timeout)
         @max_retries = Options.retries(max_retries)
         @max_tokens_param = Options.choice(:max_tokens_param, max_tokens_param, TOKEN_PARAMS)
         @structured_output = Options.choice(:structured_output, structured_output, STRUCTURED_OUTPUT)
+        @transport = build_transport(open_timeout, read_timeout, total_timeout, max_response_bytes)
+        check_cleartext!(api_key.respond_to?(:call) ? nil : api_key)
       end
 
       # Shows where requests go, never the key or the header values (a console, a log line, or an error tracker may
-      # print the config).
+      # print the config). The key and headers are held in a Secret, so to_yaml, as_json and Marshal can't expose them
+      # either.
       def inspect
         "#<#{self.class.name} #{@endpoint.scheme}://#{@endpoint.authority}#{@endpoint.path} " \
           "default_model=#{@default_model.inspect} structured_output=#{@structured_output.inspect}>"
@@ -143,46 +153,64 @@ module Squishling
         loop do
           attempt += 1
           response, error = exchange(body, headers)
-          return parse_body(request, response) if response.is_a?(Net::HTTPSuccess)
+          return parse_body(request, response) if response&.success?
 
           failure = failure_for(request, response, error)
           raise failure, cause: error unless retryable?(response, error) && attempt <= @max_retries
 
           pause(retry_delay(response, attempt))
         end
+      rescue Transport::Refused => e
+        # A size or time limit, or compression: the same request would hit it again, so it isn't retried.
+        raise llm_error(request, e.message), cause: e
       end
 
       def exchange(body, headers)
-        [http_post(body, headers), nil]
+        [@transport.post(body, headers), nil]
       rescue *NETWORK_ERRORS => e
         [nil, e]
       end
 
-      # Redirects aren't followed: the next hop could be another host, and the Authorization header would go with it.
-      def http_post(body, headers)
-        http = Net::HTTP.new(@endpoint.hostname, @endpoint.port)
-        http.use_ssl = @endpoint.scheme == "https"
-        http.open_timeout = @open_timeout
-        http.read_timeout = @read_timeout
-        http.write_timeout = @read_timeout
-        post = Net::HTTP::Post.new(@endpoint.request_uri, headers)
-        post.body = body
-        http.request(post)
+      def build_transport(open_timeout, read_timeout, total_timeout, max_response_bytes)
+        open_timeout = Options.number(:open_timeout, open_timeout)
+        read_timeout = Options.number(:read_timeout, read_timeout)
+        Transport.new(endpoint: @endpoint, open_timeout:, read_timeout:,
+          total_timeout: Options.total_timeout(total_timeout, open_timeout, read_timeout),
+          max_response_bytes: Options.number(:max_response_bytes, max_response_bytes, type: Integer))
       end
 
       # Built once per call, before any request and outside the network-error rescue, so the developer's own api_key
       # callable runs once and its exceptions propagate as they are.
       def request_headers(request)
-        key = (@api_key.respond_to?(:call) ? @api_key.call : (@api_key || default_api_key)).to_s.strip
+        key = api_key_value.to_s.strip
         if Options.unsafe_header?(key)
           raise configuration_error(request,
             "the api_key can't contain line breaks or NUL")
         end
+        check_cleartext!(key, request)
 
         headers = { "Content-Type" => "application/json", "Accept" => "application/json",
                     "User-Agent" => "squishling/#{VERSION}" }
         headers["Authorization"] = "Bearer #{key}" unless key.empty?
-        headers.merge(@headers)
+        # Accept-Encoding is Squishling's own: a compressed response would be inflated past the size cap.
+        headers.merge(@headers.reveal).reject { |name, _| name.casecmp?("accept-encoding") }
+          .merge("Accept-Encoding" => "identity")
+      end
+
+      def api_key_value
+        key = @api_key&.reveal
+        key.respond_to?(:call) ? key.call : (key || default_api_key)
+      end
+
+      # A credential doesn't go over plain http to another machine unless allow_insecure_http: says so. Checked when the
+      # adapter is built for a key given as a String, and again with each request's own key (a callable's). Reads the
+      # headers through their Secret; the message names neither the key nor a header value.
+      def check_cleartext!(key, request = nil)
+        return if @allow_insecure_http || !Options.cleartext_credential?(@endpoint, key, @headers.reveal)
+
+        raise configuration_error(request, Options::CLEARTEXT_CREDENTIAL) if request
+
+        raise ConfigurationError, Options::CLEARTEXT_CREDENTIAL
       end
 
       def default_api_key
@@ -213,9 +241,7 @@ module Squishling
         return transport_failure(request, error) if error
 
         status = response.code.to_i
-        return llm_error(request, "HTTP #{status}") if retryable?(response, nil) || too_large?(response, status)
-
-        rejection(request, response, status)
+        http_failure(request, status:, body: response.body.to_s, via: "HTTP #{status}")
       end
 
       # A certificate that doesn't verify is a setup mistake (base_url, CA store) that a retry can't fix.
@@ -232,32 +258,13 @@ module Squishling
         error.is_a?(OpenSSL::SSL::SSLError) && error.message.include?("certificate verify failed")
       end
 
-      def rejection(request, response, status)
-        case status
-        when 401, 403 then configuration_error(request, "the provider refused the credentials (HTTP #{status})")
-        when 404 then configuration_error(request, "HTTP 404: check base_url and the model name")
-        when 300..399 then configuration_error(request, "HTTP #{status}: redirects aren't followed; check base_url")
-        else rejected_request_error(request, via: "HTTP #{status}", body: response.body.to_s,
-          http_status: status)
-        end
-      end
-
-      # A request too long for the model's context (or for the server: 413) depends on the input and is worth another
-      # attempt (a bigger model may take it), unlike other 4xx. Only the error's code is read from the body.
-      def too_large?(response, status)
-        status == 413 || context_length?(response)
-      end
-
-      def context_length?(response)
-        return false unless response.code.to_i == 400
-
-        error = Adapter::ErrorBody.error(response.body.to_s)
-        error.is_a?(Hash) && (error.values_at("code", "type").include?("context_length_exceeded") ||
-          error["message"].to_s.match?(CONTEXT_LENGTH_MESSAGE))
+      # The structured code or type, as for any adapter, or the usual wording of a server that sends none (a 400).
+      def context_length?(status:, body:)
+        super || (status == 400 && Adapter::ErrorBody.error(body)&.[]("message").to_s.scrub.match?(CONTEXT_LENGTH_MESSAGE))
       end
 
       def retry_delay(response, attempt)
-        after = response&.[]("retry-after").to_s
+        after = response&.retry_after.to_s
         seconds = after.match?(/\A\d+\z/) ? after.to_i : (0.5 * (2**(attempt - 1))) + (rand * 0.25)
         [seconds, MAX_RETRY_DELAY].min
       end

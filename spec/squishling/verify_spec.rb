@@ -97,10 +97,37 @@ RSpec.describe Squishling, ".verify" do
       expect(messages(klass)).to contain_exactly(/invalid data member: a=/)
     end
 
+    it "reports an object schema that lacks type: object, without a request" do
+      adapter = FakeAdapter.new
+      Squishling.config.adapter = adapter
+      schema = { type: "object", properties: { n: { properties: { a: { type: "string" } }, required: ["a"] } },
+                 required: ["n"], additionalProperties: false }
+      klass = squishling_class { squishling purpose: "p", output_schema: schema }
+
+      expect(messages(klass)).to contain_exactly(/`type` isn't "object"/)
+      expect(adapter.chats).to be_empty
+    end
+
     it "reports a schema that isn't valid JSON Schema" do
       klass = squishling_class { squishling purpose: "p", output_schema: { type: "objct" } }
 
       expect(messages(klass)).not_to be_empty
+    end
+
+    it "reports a remote $ref, which would otherwise raise on the first response" do
+      schema = { type: "object", properties: { a: { "$ref": "https://example.com/a.json" } }, required: ["a"],
+                 additionalProperties: false }
+      klass = squishling_class { squishling purpose: "p", output_schema: schema }
+
+      expect(messages(klass)).to contain_exactly(%r{\$ref that can't be resolved.*example\.com/a\.json})
+    end
+
+    it "accepts a $ref to a local $defs entry" do
+      schema = { type: "object", properties: { a: { "$ref": "#/$defs/tag" } }, required: ["a"],
+                 additionalProperties: false, "$defs": { tag: { type: "string" } } }
+      klass = squishling_class { squishling purpose: "p", output_schema: schema }
+
+      expect(Squishling.verify(klass)).to be_ok
     end
 
     it "accepts a purpose given as a Proc" do

@@ -91,6 +91,13 @@ A judged harness with neither raises `ConfigurationError` before any sample is r
 step uses only its own `provider:`; it doesn't inherit the class or method `provider:`, which belongs to their models
 (a chat judge's params, though, do merge over the method's).
 
+**What the judge is sent.** The judge's provider receives the operation's purpose, the call's full input (the same
+method arguments and named context the samples saw), and **both candidate outputs**, whatever they hold. None of it is
+capped or filtered, and there is no opt-out short of not using a judged harness. When the judge is a different
+provider than the sampled model (a `judge:` step with its own `provider:`, or an escalation's next step on another
+provider), the input and both outputs go to that provider as well, so only name a judge you would trust with the
+input itself.
+
 ### Chat judges
 
 By default the judge is a chat model, asked for a strict `{ "verdict": "a" | "b" | "neither", "reason": "..." }`.
@@ -299,7 +306,10 @@ results, the same type the deterministic path returns.
 | `run.log(message)` | A warning to `config.logger`, prefixed with `"[Squishling] Class#method"` |
 
 `call` returns the accepted result: one a primitive of this run returned. Returning anything else (a Hash, `nil`, a
-result you built or copied with `with`) raises `ConfigurationError`, so a harness can't skip validation.
+result you built or copied with `with`) raises `ConfigurationError`, so a harness can't skip validation. The check is
+by object identity, which suits the typed results of an object schema. When the schema isn't an object, a result is a
+bare JSON value, and an immediate such as `1` or `true` counts as produced whatever its source, so there the check can't
+catch a hand-built value.
 
 ### When a custom harness fails
 
@@ -327,6 +337,10 @@ Every attempt a primitive makes is reported to the [`squawk`](failures.md#observ
 and `attempts` count within that sample, judge, or escalation. `metadata[:repeated]` is `true` for an attempt that
 sent back the reply it was just rejected for; the primitive then skips the rest of that step's attempts (the next
 step's `attempt` jumps past them, and a sample ends with its `InvalidOutputError`).
+
+A call that ends on the token budget or on a `DisagreementError` (the built-in squishsum harnesses', or one your
+`call` raises) is reported once more, as [a stopped call](failures.md#a-call-that-is-stopped), with `metadata[:stopped]`
+set and no output. Squishling does it around your `call`, so a custom harness needs no code for it.
 
 ### Threads
 

@@ -184,6 +184,7 @@ RSpec/DescribeClass:
     - 'spec/budget_spec.rb'
     - 'spec/rotation_spec.rb'
     - 'spec/squawk_spec.rb'
+    - 'spec/squawk_stop_spec.rb'
     - 'spec/contracts_spec.rb'
     - 'spec/harness_spec.rb'
     - 'spec/custom_harness_spec.rb'

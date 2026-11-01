@@ -111,7 +111,7 @@ RSpec.describe Squishling::Params do
     end
 
     it "rejects the camelCase and plural request keys of the Gemini, Bedrock Converse, and Mistral protocols" do
-      %i[systemInstruction cachedContent toolConfig tool_config outputConfig inputs].each do |key|
+      %i[systemInstruction cachedContent cached_content toolConfig tool_config outputConfig inputs].each do |key|
         expect { base.squishling(params: { key => {} }) }
           .to raise_error(Squishling::ConfigurationError, /#{key} can't be set through params/)
       end
@@ -127,8 +127,8 @@ RSpec.describe Squishling::Params do
     it "rejects every top-level request key an adapter or protocol owns" do
       %w[
         model messages input inputs instructions contents system system_instruction systemInstruction cachedContent
-        stream stream_options store include response_format text output_config outputConfig tools tool_choice
-        toolConfig tool_config schema functions function_call
+        cached_content stream stream_options store include response_format text output_config outputConfig tools
+        tool_choice toolConfig tool_config schema functions function_call
       ].each do |key|
         [key.to_sym, key].each do |spelling|
           expect { base.squishling(params: { spelling => 1 }) }

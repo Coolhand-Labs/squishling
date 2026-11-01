@@ -12,9 +12,16 @@ module Squishling
       # The ruby_llm gem isn't installed (Adapter.detect tells that apart from a gem that is, but too old).
       class MissingGemError < ConfigurationError; end
 
-      # Raises ConfigurationError when the ruby_llm gem is missing.
-      def initialize
-        super
+      # Raises ConfigurationError when the ruby_llm gem is missing. keep_cause: true keeps RubyLLM's original exception
+      # as the #cause of the errors raised for a failed request (its message and response hold the provider's response
+      # body); by default #cause is a sanitized stand-in (Adapter::ProviderFailure) with only the class and HTTP status.
+      def initialize(keep_cause: false)
+        super()
+        unless [true, false].include?(keep_cause)
+          raise ConfigurationError, "adapter :ruby_llm keep_cause: must be true or false, got #{keep_cause.inspect}"
+        end
+
+        @keep_cause = keep_cause
         require "ruby_llm"
         check_version!
         @lib = gem_lib_dir
@@ -141,29 +148,58 @@ module Squishling
       end
 
       # Transient HTTP failures are already retried by RubyLLM; anything that still fails is surfaced as an
-      # LLMError, which moves on to the next attempt of the escalation (or propagates from the last one). A 400
-      # means the request we built is invalid (an unsupported param, a schema the provider rejects), so it's a
-      # setup mistake: escalating or a fallback would otherwise hide it on every call.
+      # LLMError, which moves on to the next attempt of the escalation (or propagates from the last one), or as a
+      # ConfigurationError for a setup mistake (see #http_failure for which statuses are which): escalating or a
+      # fallback would otherwise hide it on every call.
       # A provider's or transport's own message never goes into ours: a provider can echo request content or part of
-      # an API key in it, and ours reach logs and error trackers. The original stays as #cause for whoever
-      # chooses to read it. RubyLLM's own ConfigurationError is local (it names a missing setting), so it is kept.
+      # an API key in it, and ours reach logs and error trackers.
+      # Error trackers report the whole cause chain, and RubyLLM's error message and response hold the provider's
+      # response body, so #cause is a sanitized stand-in (class, HTTP status, backtrace); the original is there only
+      # with keep_cause: true. RubyLLM's own ConfigurationError, and the errors #build_chat, #apply_params, and #judge
+      # convert, are local (they name a missing setting or a bad param and hold no provider response), so they are
+      # raised as they are and Ruby sets the original as their #cause.
       def guarded(request)
         yield
       rescue ::RubyLLM::ConfigurationError => e
         raise configuration_error(request, "#{e.class}: #{e.message}")
-      rescue ::RubyLLM::UnauthorizedError, ::RubyLLM::ForbiddenError => e
-        raise configuration_error(request, describe_failure(e))
-      rescue ::RubyLLM::BadRequestError => e
-        raise rejected_request_error(request, via: describe_failure(e), body: response_field(e.response, :body),
-          http_status: response_field(e.response, :status))
       rescue ::RubyLLM::Error, Faraday::Error => e
-        raise llm_error(request, describe_failure(e))
+        raise failure_for(request, e), cause: cause_of(e)
+      end
+
+      # Sorted by the HTTP status, not by RubyLLM's error class: RubyLLM's middleware picks a class from the provider's
+      # message text on a 400, so a bad parameter whose message happens to say "per day" arrives as a RateLimitError.
+      # An error with no response is sorted by its class. The one class honored over the status is RubyLLM's
+      # ContextLengthExceededError, since RubyLLM is where its provider's wording for an overlong prompt is known.
+      def failure_for(request, error)
+        via = describe_failure(error)
+        return llm_error(request, via) if error.is_a?(::RubyLLM::ContextLengthExceededError)
+
+        status = response_field(error.response, :status) || class_status(error)
+        http_failure(request, status:, body: response_field(error.response, :body), via:)
+      end
+
+      # The status RubyLLM's classes stand for, for an error raised without a response.
+      def class_status(error)
+        case error
+        when ::RubyLLM::UnauthorizedError then 401
+        when ::RubyLLM::PaymentRequiredError then 402
+        when ::RubyLLM::ForbiddenError then 403
+        when ::RubyLLM::BadRequestError then 400
+        end
       end
 
       # The error's class and HTTP status, when it has one, which is all of it that is ours to repeat.
       def describe_failure(error)
-        status = response_field(error.response, :status)
+        status = status_of(error)
         status ? "#{error.class}, HTTP #{status}" : error.class.to_s
+      end
+
+      def status_of(error)
+        response_field(error.response, :status)
+      end
+
+      def cause_of(error)
+        @keep_cause ? error : sanitized_cause(error, status: status_of(error))
       end
 
       # A field of an error's response, which is a Faraday::Response, or a Hash for a Faraday error.

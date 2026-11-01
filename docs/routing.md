@@ -17,7 +17,7 @@ A squished call runs its Ruby implementation unless one of these sends it to the
 | Trigger | Declared where | Decided |
 |---|---|---|
 | `squish_when` (or `when:`) predicate is truthy | class, or per method | before Ruby runs |
-| The method has no implementation: it isn't defined, or it raises `NotImplementedError` | the method body | when Ruby gives up |
+| The method has no implementation: it isn't defined, or its own body raises `NotImplementedError` | the method body | when Ruby gives up |
 | `squish!` | inside the method, e.g. in a `rescue` | after Ruby has partly run, see [Handing off to the LLM](#handing-off-to-the-llm-with-squish) |
 
 With no predicate and a working implementation, every call runs Ruby.
@@ -41,8 +41,14 @@ is validated against the schema and turned into the same typed result the LLM pa
 already has a `result` (see [Naming and collisions](naming.md)). Invalid deterministic output raises
 `Squishling::InvalidOutputError` too, so a hardened path can't silently drift from the contract.
 
-A `NotImplementedError` raised anywhere inside the method, including from code it calls, also routes to the
-LLM.
+Only the method's own stub routes: a `NotImplementedError` raised directly in the method body (`raise
+NotImplementedError` in a `def` or a `define_method` block, including one in a module prepended before
+`include Squishling`, or in a squished parent reached through `super`). One raised by code the method calls
+(a helper, another object, a block, or a `super` into a parent that isn't squished) is a bug in that code, not a
+missing implementation, so it propagates and nothing is sent to the provider. Keep the `raise` in the method body:
+a shared `not_implemented!` helper, or a decorator prepended before `include Squishling` that wraps the method with
+its own `super` frame, hides the stub and the error propagates (use `squish_when { true }` or `squish!` to
+send those calls to the LLM).
 
 Each call is routed on its own, including a squished method that calls itself on smaller inputs (those
 recursive calls must return schema-valid values too). A subclass

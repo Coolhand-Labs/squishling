@@ -126,6 +126,9 @@ State, in the final message:
   `rubygems-publish` timer. Do not approve, re-run, or publish by any other
   route. Check the run again later if the user asks whether the gem is live
   (`gem search squishling --remote`, or the RubyGems page).
+- A reminder that the LinkedIn and Twitter/X drafts are in a `## Social posts`
+  comment on the release PR (not its body, so they stay out of the squash
+  commit) and ready to post now the release is live.
 
 ## Rationalizations to resist
 

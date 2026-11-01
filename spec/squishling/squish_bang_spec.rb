@@ -233,6 +233,30 @@ RSpec.describe Squishling, "#squish!" do
     expect(chats.size).to eq(1)
   end
 
+  it "raises a ConfigurationError, not a SystemStackError, for an argument that contains itself" do
+    klass = Class.new do
+      include Squishling
+
+      purpose "Explain."
+      output_schema { string :name }
+
+      def call(data:) = data && squish!
+    end
+    chats = stub_llm({ "name" => "Ada" })
+    cyclic_hash = { "a" => 1 }
+    cyclic_hash["b"] = cyclic_hash
+    cyclic_array = [1]
+    cyclic_array << { "nested" => cyclic_array }
+    shared = { "x" => 1 }
+
+    expect { klass.call(data: cyclic_hash) }.to raise_error(Squishling::ConfigurationError, /contains itself/)
+    expect { klass.call(data: cyclic_array) }.to raise_error(Squishling::ConfigurationError, /contains itself/)
+    expect(chats).to be_empty
+
+    klass.call(data: [shared, shared])
+    expect(JSON.parse(chats.first.messages.first)).to eq("arguments" => { "data" => [{ "x" => 1 }, { "x" => 1 }] })
+  end
+
   it "sends an exception passed as an argument as its class and message" do
     klass = Class.new do
       include Squishling

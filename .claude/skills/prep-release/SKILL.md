@@ -4,14 +4,16 @@ description: |
   Runs an entire release event for this gem: triages every open PR into a
   quality/risk-rated merge recommendation, waits for the user's sign-off,
   squash-merges the chosen PRs, writes the release's changelog and version
-  bump plus a whole-package security red-team on its own release branch,
-  validates that branch with the full test suite and live-key example
-  apps, then opens a single release-prep PR for the user's final review.
-  Never merges that PR, tags, or publishes. Use when the user types
+  bump, a refreshed "latest release" callout on the site's index page, and a
+  whole-package security red-team on its own release branch, drafts
+  LinkedIn and Twitter/X posts for the release, validates that branch with
+  the full test suite and live-key example apps, then opens a single
+  release-prep PR for the user's final review. Never merges that PR, tags,
+  or publishes. Use when the user types
   /prep-release, asks to "prep a release", "cut a release", "release
   checklist", or wants the open PRs triaged and merged into a release.
 user_invocable: true
-version: 1.0.0
+version: 1.1.0
 ---
 
 # Prep Release
@@ -132,6 +134,41 @@ never on `main` directly.
    `[Unreleased]` CHANGELOG heading into `## [X.Y.Z] - <today's date>`
    (keeping an empty `## [Unreleased]` above it), and run `bundle install`
    so `Gemfile.lock`'s `squishling (X.Y.Z)` line matches.
+6. **Update the site's latest-release callout.** `site/index.html` opens with
+   an `<aside id="latest-release">` under the hero. *Replace its contents*
+   (never stack a second callout) with, in order:
+   - the kicker line: `Latest release · vX.Y.Z · <time datetime="YYYY-MM-DD">Month D, YYYY</time>`,
+     using the same date as the CHANGELOG heading;
+   - 1-2 sentences on the release's theme: the through-line of the
+     `## [X.Y.Z]` entries, not a list of features;
+   - an emoji bullet list, one bullet per user-facing change group (about 5
+     at most, one emoji each, the benefit in plain English first, drawn from
+     the CHANGELOG section; internal and docs-only changes don't get one).
+     A breaking change always gets its bullet (or a clause in one) saying what
+     the user must do, even past the cap; other behavior changes only if
+     they need action. If there are no user-facing changes, omit the `<ul>`;
+   - the "Release notes" link to `https://github.com/Coolhand-Labs/squishling/releases/tag/vX.Y.Z`
+     (it resolves once `/finish-release` publishes) and the Changelog link.
+
+   Keep the existing element structure and classes and change only the text
+   (wrap method names in `<code>`, escape HTML).
+
+   Commit it on `release/vX.Y.Z`: Pages (`pages.yml`) deploys `site/**` when
+   the release PR merges to `main`.
+7. **Draft the social posts** from that same theme and bullets, and keep them
+   in `$TMPDIR/squishling-release-posts-vX.Y.Z.md` (scratch outside the repo;
+   never commit it), starting with a `## Social posts` heading. Phase 5 posts
+   the file as a PR comment. Every fact comes from the CHANGELOG or the diff.
+   No AI attribution (`AGENTS.md`).
+   - **LinkedIn**: opens "Squishling vX.Y.Z is here...", then a short
+     paragraph on what Squishling is (a Ruby class that is a hybrid of code
+     and LLM inference) and the release's theme, the emoji bullets (one line
+     each, with a clause of detail), a closing line on anything strategic
+     (e.g. a direction the release opens up), and the release URL.
+   - **Twitter/X**: at most 280 characters (count them; a URL counts as 23 and
+     an emoji as 2): a one-line theme, the 3-4 shortest bullets, the release
+     URL. If the release doesn't fit, write a 2-3 post thread rather than
+     cutting a thought in half.
 
 ### Red-team
 
@@ -230,17 +267,26 @@ rule `/loop-review` uses for stuck findings.
 
 ## Phase 5: Open the release-prep PR, report everything
 
+0. If the red-team or Phase 4 changed behavior or the changelog (a fix
+   landed, a feature was reverted), re-check the site callout and the social
+   drafts against the final `## [X.Y.Z]` section before opening the PR.
 1. Push `release/vX.Y.Z` and `gh pr create` (e.g. "chore: release
-   vX.Y.Z") targeting `main`. This PR is the user's final checkpoint
-   before the changelog/version/red-team commit lands — never merge it,
-   tag it, or run `rake release`/`gem push` yourself.
+   vX.Y.Z") targeting `main`. Then `gh pr comment <n> --body-file
+   "$TMPDIR/squishling-release-posts-vX.Y.Z.md"` so the social drafts are
+   reviewed alongside the callout diff. A comment, not the PR body:
+   `/finish-release` copies the body into the permanent squash-commit message.
+   This PR is the user's final checkpoint before the changelog/version/
+   red-team commit lands — never merge it, tag it, or run
+   `rake release`/`gem push` yourself.
 2. Report one consolidated summary covering the whole run:
    - Phase 1's PR table and which PRs the user chose.
    - Phase 2's outcome: which PRs merged, which were skipped for new
      conflicts (and need a rebase before the next release).
    - The release-prep PR link, the version bump and why.
    - Coverage-quality gaps plus recommended specs.
-   - Docs updated.
+   - Docs updated, and the site callout's new version, date, and theme.
+   - The LinkedIn and Twitter/X drafts, printed in full (the user posts them
+     once `/finish-release` has published the release).
    - Red-team findings split into fixed vs. flagged-for-decision.
    - Phase 4's regression test/lint result and the example-app run
      results (pass/skip/fail per script).
@@ -252,7 +298,9 @@ rule `/loop-review` uses for stuck findings.
   need a stop-and-ask — they're mechanical, reversible, and gated on Phase
   4 already being green before the PR opens.
 - Squash-merging PRs the user explicitly chose in Phase 1, and pushing the
-  `release/vX.Y.Z` branch to open its own PR, are both in scope.
+  `release/vX.Y.Z` branch to open its own PR and comment the social drafts on
+  it, are all in scope. Posting them to LinkedIn or Twitter/X is not: the
+  user does that.
 - Never push a commit directly to `main`. All release-branch work lands on
   `main` only via the Phase 5 PR, which the user reviews and merges
   themselves.
@@ -275,6 +323,9 @@ rule `/loop-review` uses for stuck findings.
 - *"Tests pass, so coverage is fine."* Passing tests and meaningful
   coverage are different questions. A red build blocks release; a green
   build with hollow tests doesn't guarantee anything.
+- *"The callout still reads fine from the last release."* It is rewritten every
+  release. A landing page with last release's version and date is a bug, and
+  the social drafts are built from it.
 - *"Docs are close enough, I'll skip the cleanup pass."* Accumulated
   changes since the last tag are exactly when docs drift from behavior —
   this phase exists because per-PR doc updates miss the cross-cutting

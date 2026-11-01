@@ -7,10 +7,11 @@ module Squishling
   # missing API key). Never retried and never passed to squish_fallback.
   class ConfigurationError < Error; end
 
-  # The provider answered a request with HTTP 400 (or another 4xx that isn't a credentials, model, or redirect
-  # problem). Still a ConfigurationError: never retried, escalated, or passed to a fallback. The provider's message is
-  # never repeated; the machine-readable status and code its error body carries are, when they are plain tokens
-  # (e.g. "INVALID_ARGUMENT", "invalid_request_error"). Both are nil when the body has none.
+  # The provider answered a request with HTTP 400 (or another 4xx that isn't a credentials, billing, model, redirect,
+  # or too-long-input problem; the adapter decides which, see Adapter::Base#http_failure). Still a ConfigurationError:
+  # never retried, escalated, or passed to a fallback. The provider's message is never repeated; the machine-readable
+  # status and code its error body carries are, when they are plain tokens (e.g. "INVALID_ARGUMENT",
+  # "invalid_request_error"). Both are nil when the body has none.
   class RequestRejectedError < ConfigurationError
     attr_reader :provider_status, :provider_code
 
@@ -130,6 +131,7 @@ module Squishling
   end
 
   # The LLM call itself failed (rate limit, server error, timeout, connection) after the
-  # adapter's own HTTP retries. The original exception is available as #cause.
+  # adapter's own HTTP retries. #cause is the adapter's: a sanitized stand-in (Adapter::ProviderFailure) for a provider
+  # exception that carries a response body, or the transport error itself when it carries none.
   class LLMError < Error; end
 end

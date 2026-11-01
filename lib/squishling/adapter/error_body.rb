@@ -11,7 +11,8 @@ module Squishling
       # repeated.
       WORD = /\A[A-Za-z0-9][\w.]{0,39}\z/
       PATH = /\A[\w.\-\[\]]{1,64}\z/
-      private_constant :WORD, :PATH
+      CONTEXT_LENGTH_EXCEEDED = "context_length_exceeded"
+      private_constant :WORD, :PATH, :CONTEXT_LENGTH_EXCEEDED
 
       module_function
 
@@ -38,9 +39,15 @@ module Squishling
         nil
       end
 
+      # Whether the body's code or type is the structured "context_length_exceeded" (what OpenAI sends for a prompt too
+      # long for the model). Only that field is read, never the message.
+      def context_length?(body)
+        (error(body)&.values_at("code", "type") || []).include?(CONTEXT_LENGTH_EXCEEDED)
+      end
+
       def token(value, pattern)
         value = value.to_s if value.is_a?(Integer)
-        value if value.is_a?(String) && value.match?(pattern)
+        value if value.is_a?(String) && value.valid_encoding? && value.match?(pattern)
       end
     end
   end

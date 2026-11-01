@@ -87,6 +87,14 @@
   ul.plain { padding-left: 1.2rem; margin: 0 0 1rem; }
   ul.plain li { margin-bottom: 0.5rem; }
 
+  /* Latest release callout, rewritten by /prep-release each release */
+  .release { margin: 1.75rem 0 0; background: var(--card); border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 0 10px 10px 0; padding: 0.9rem 1.1rem; font-size: 0.95rem; }
+  .release .kicker { color: var(--accent); }
+  .release p { margin: 0 0 0.6rem; }
+  .release ul { list-style: none; margin: 0 0 0.6rem; padding: 0; }
+  .release li { margin-bottom: 0.3rem; }
+  .release .more { margin: 0; font-size: 0.85rem; color: var(--muted); }
+
   /* A measured run: pass rate and cost */
   .run { display: grid; grid-template-columns: 1fr auto; gap: 0.75rem 1.25rem; align-items: center; background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 0.85rem 1.1rem; margin: 0 0 1.25rem; }
   .run .pass b, .run .cost b { font-size: 1.5rem; line-height: 1.1; font-variant-numeric: tabular-nums; }
@@ -233,6 +241,21 @@
   </p>
   <p class="small">Join the discussion on <a href="https://news.ycombinator.com/item?id=50105742">Hacker News</a>.</p>
 </header>
+
+<aside class="release" id="latest-release" aria-label="Latest release">
+  <p class="kicker">Latest release · v0.5.1 · <time datetime="2026-10-31">October 31, 2026</time></p>
+  <p>Squishling turns any Ruby class into a hybrid of code and LLM inference working together. v0.5.1 is a hardening
+  release: it keeps your data and credentials where you put them, and stops errors from being misread.</p>
+  <ul>
+    <li>🔒 <strong>Secrets stay out of logs and trackers:</strong> API keys and headers are redacted from <code>to_yaml</code> and JSON, and a provider's error body no longer rides along on <code>cause</code> (use <code>keep_cause: true</code> on the RubyLLM adapter to keep it)</li>
+    <li>🛡️ <strong>Abstract methods can't leak your data:</strong> a <code>NotImplementedError</code> from code your method calls no longer sends its arguments to the LLM, only the method's own stub does</li>
+    <li>🌐 <strong>A safer OpenAI-compatible transport:</strong> credentials are refused over plain <code>http://</code> to non-local hosts (set <code>allow_insecure_http: true</code> for a trusted network), and responses are capped in size and time</li>
+    <li>🎯 <strong>Errors sorted by status, not by provider wording:</strong> a bad request is no longer mistaken for a retryable one, and <code>squawk</code> now sees calls that end on the token budget or a disagreement</li>
+    <li>🧱 <strong>Stricter hand-written schemas:</strong> an object schema with <code>properties</code> now needs <code>type: "object"</code>, and <code>Squishling.verify</code> flags it before a request</li>
+  </ul>
+  <p class="more"><a href="https://github.com/Coolhand-Labs/squishling/releases/tag/v0.5.1">Release notes</a> ·
+  <a href="https://github.com/Coolhand-Labs/squishling/blob/main/CHANGELOG.md">Changelog</a></p>
+</aside>
 
 <details class="toc-inline"><summary>On this page</summary><ol id="tocInline"></ol></details>
 

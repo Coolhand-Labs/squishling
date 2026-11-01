@@ -114,6 +114,103 @@ RSpec.describe Squishling::Adapter do
       expect(error.message).to include("(Acme, INVALID_ARGUMENT)")
     end
 
+    describe "#sanitized_cause" do
+      let(:original) do
+        stub_const("Acme", Module.new)
+        stub_const("Acme::Boom", Class.new(StandardError) do
+          attr_reader :response
+
+          def initialize(message, response)
+            super(message)
+            @response = response
+          end
+        end)
+        begin
+          raise Acme::Boom.new("echoed secret", { body: "echoed secret" })
+        rescue StandardError => e
+          e
+        end
+      end
+
+      it "stands in for a provider exception with its class, HTTP status, and backtrace, and nothing else" do
+        cause = base.send(:sanitized_cause, original, status: 502)
+
+        expect(cause).to be_a(Squishling::Adapter::ProviderFailure).and have_attributes(message: "Acme::Boom, HTTP 502")
+        expect(cause.backtrace).to eq(original.backtrace)
+        expect(cause.instance_variables).to be_empty
+        expect(cause.cause).to be_nil
+      end
+
+      it "names only the class when there is no status" do
+        expect(base.send(:sanitized_cause, original).message).to eq("Acme::Boom")
+      end
+
+      it "is not a Squishling::Error, so nothing rescues it by accident" do
+        expect(Squishling::Adapter::ProviderFailure.ancestors).not_to include(Squishling::Error)
+      end
+
+      it "can be set as the cause of a raised Squishling error" do
+        error = begin
+          raise Squishling::LLMError, "K#m: failed", cause: base.send(:sanitized_cause, original)
+        rescue Squishling::LLMError => e
+          e
+        end
+
+        expect(error.cause.message).to eq("Acme::Boom")
+      end
+    end
+
+    describe "#http_failure" do
+      let(:request) do
+        Squishling::Adapter::Request.new(label: "K#m", model: nil, provider: nil, instructions: nil, messages: [],
+          schema: nil, params: {})
+      end
+      let(:overflow) { JSON.generate(error: { code: "context_length_exceeded", message: "echoed secret" }) }
+
+      def failure(adapter, status, body = "{}")
+        adapter.send(:http_failure, request, status:, body:, via: "Acme, HTTP #{status}")
+      end
+
+      it "gives a custom adapter the same status mapping as the built-ins, repeating only via" do
+        classes = [400, 401, 402, 403, 404, 301, 408, 413, 429, 500, 422].to_h do |status|
+          [status, failure(base, status).class]
+        end
+
+        expect(classes).to eq(
+          400 => Squishling::RequestRejectedError, 401 => Squishling::ConfigurationError,
+          402 => Squishling::ConfigurationError, 403 => Squishling::ConfigurationError,
+          404 => Squishling::ConfigurationError, 301 => Squishling::ConfigurationError,
+          408 => Squishling::LLMError, 413 => Squishling::LLMError, 429 => Squishling::LLMError,
+          500 => Squishling::LLMError, 422 => Squishling::RequestRejectedError
+        )
+        expect(failure(base, 500).message).to eq("K#m: Acme, HTTP 500")
+      end
+
+      it "treats a failure with no HTTP status as an LLMError" do
+        expect(base.send(:http_failure, request, status: nil, body: nil, via: "Acme")).to be_a(Squishling::LLMError)
+      end
+
+      it "recognizes a structured overflow on a 400 by default, and leaves any other wording a rejection" do
+        wording = JSON.generate(error: { message: "context length exceeded" })
+
+        expect(failure(base, 400, overflow)).to be_a(Squishling::LLMError)
+        expect(failure(base, 422, overflow)).to be_a(Squishling::RequestRejectedError)
+        expect(failure(base, 400, wording)).to be_a(Squishling::RequestRejectedError)
+      end
+
+      it "lets an adapter decide what an overflow looks like for its provider" do
+        acme = Class.new(Squishling::Adapter::Base) do
+          def context_length?(status:, body:)
+            super || (status == 400 && body.to_s.include?("TOO_LONG"))
+          end
+        end.new
+
+        expect(failure(acme, 400, "TOO_LONG")).to be_a(Squishling::LLMError)
+        expect(failure(acme, 400, overflow)).to be_a(Squishling::LLMError)
+        expect(failure(acme, 400, "bad")).to be_a(Squishling::RequestRejectedError)
+      end
+    end
+
     it "carries no context by default" do
       expect(base.capture_context).to be_nil
       expect(base.with_context(nil) { :ran }).to eq(:ran)
@@ -157,6 +254,13 @@ RSpec.describe Squishling::Adapter do
       end
       expect { Squishling.configure { |c| c.adapter = {} } }
         .to raise_error(Squishling::ConfigurationError, /needs a type:/)
+    end
+
+    it "names the class of a rejected object, never its instance variables" do
+      client = Class.new { def initialize = @access_token = "sk-LIVEKEY" }.new
+
+      expect { Squishling.configure { |c| c.adapter = client } }
+        .to raise_error(Squishling::ConfigurationError, /got an instance of/) { |e| expect(e.message).not_to include("sk-LIVEKEY") }
     end
 
     it "lists the available adapters in the message for an unknown one" do

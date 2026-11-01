@@ -52,7 +52,8 @@ module Squishling
     end
 
     # What a test asked squawk to record: every attempt's raw output, error, and metadata (role, sample, attempt,
-    # final, usage, ...). Use Testing.with_squawk, which puts the previous hook back.
+    # final, usage, ...), and the report of a call stopped by a token budget or a disagreement (stopped).
+    # Use Testing.with_squawk, which puts the previous hook back.
     class SquawkCapture
       Call = Data.define(:output, :error, :metadata)
 
