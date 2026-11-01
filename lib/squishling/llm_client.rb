@@ -89,7 +89,8 @@ module Squishling
     def complete(chat, message, step, reask)
       messages = chat.messages + [{ role: :user, content: message }]
       request = Adapter::Request.new(label: @label, model: step.model, provider: step.provider,
-        instructions: chat.instructions, messages:, schema: chat.schema, params: step.request_params(reask))
+        instructions: chat.instructions, messages:, schema: chat.schema, params: step.request_params(reask),
+        cache: step.cache)
       response = @adapter.complete(request)
       unless response.is_a?(Adapter::Response)
         raise ConfigurationError, "#{@label}: the #{@adapter.class} adapter must return a " \

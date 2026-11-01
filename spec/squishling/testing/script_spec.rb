@@ -144,6 +144,20 @@ RSpec.describe Squishling::Testing::Script do
       expect(judgment.candidates).to eq({ "a" => high, "b" => low })
     end
 
+    it "never asks for caching on the judgment, whatever its step says" do
+      klass.squishling(harness: { type: :judged_squishsum, judge: jev.merge(cache: true) })
+      fake = fake_squishling do |llm|
+        llm.sample("a").reply(high)
+        llm.sample("b").reply(low)
+        llm.judge.judgment(:b, confidence: 0.9)
+      end
+
+      klass.call(text: "x")
+
+      expect(fake.requests_for(role: :judge).first.cache).to be(false)
+      expect(fake.requests_for(role: :sample).map(&:cache)).to all(eq({}))
+    end
+
     it "rejects a pick below min_confidence" do
       fake_squishling do |llm|
         llm.sample("a").reply(high)

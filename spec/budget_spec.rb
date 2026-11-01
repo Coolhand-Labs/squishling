@@ -71,6 +71,19 @@ RSpec.describe "Squishling token budget" do
       expect(chats.map { |chat| chat.messages.size }).to eq([2])
     end
 
+    it "counts the tokens read from and written to the prompt cache as input" do
+      klass.squishling(max_total_input_tokens: 1_000)
+      cached = FakeChat::Response.new({ "label" => 1 }, nil,
+        { input_tokens: 100, output_tokens: 5, cache_read_tokens: 500, cache_write_tokens: 450 })
+      stub_llm(cached, cached, cached, cached)
+
+      expect { klass.call(text: "x") }.to raise_error(Squishling::BudgetExhaustedError) { |error|
+        expect(error.limit).to eq(:max_total_input_tokens)
+        expect(error.used).to eq(input_tokens: 1_050, output_tokens: 5)
+        expect(error.attempts).to eq(1)
+      }
+    end
+
     it "always makes the first request, and returns an output accepted within the budget" do
       klass.squishling(max_total_output_tokens: 1)
       stub_llm(valid)

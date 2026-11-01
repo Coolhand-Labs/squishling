@@ -211,7 +211,8 @@ RSpec.describe Squishling::Testing::Adapter do
       request = fake.requests.first
 
       expect(request).to have_attributes(label: "Rater#call", type: :chat, role: nil, model: "flash",
-        provider: :vertexai, params: { temperature: 0 }, attempt: 1, attempts: 3, conversation: 0)
+        provider: :vertexai, params: { temperature: 0 }, cache: {}, attempt: 1, attempts: 3,
+        conversation: 0)
       expect(request.arguments).to eq({ "text" => "hello" })
       expect(request.context).to eq({ "tenant" => "acme" })
       expect(request.system_prompt).to start_with("Rate the ticket.")

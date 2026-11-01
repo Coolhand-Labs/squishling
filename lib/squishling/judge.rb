@@ -111,6 +111,11 @@ module Squishling
       value.is_a?(String) && !value.strip.empty?
     end
 
+    # A judgment is not a chat, so it has nothing to cache whatever its step says.
+    def judgment_steps(judge)
+      ModelPath.steps([judge], provider: nil, params: {}).map { |step| step.with(cache: false) }
+    end
+
     def judgment?
       @judge&.fetch(:type) == :judgment
     end
@@ -119,8 +124,9 @@ module Squishling
     # under its own, like any escalation step; a judgment judge sends only its own params, as provider options.
     def resolve_steps(path)
       if (judge = @judge)
-        params = judge[:type] == :judgment ? {} : @definition.params
-        return ModelPath.steps([judge], provider: nil, params:)
+        return judgment_steps(judge) if judge[:type] == :judgment
+
+        return ModelPath.steps([judge], provider: nil, params: @definition.params, cache: @definition.cache)
       end
 
       rest = path.drop_while { |step| step == path.first }

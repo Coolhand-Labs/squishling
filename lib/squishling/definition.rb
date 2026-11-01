@@ -13,8 +13,8 @@ module Squishling
     attr_reader :klass, :name, :call_context, :handed_off
 
     def initialize(klass:, name:, purpose: nil, append_to_purpose: nil, output_schema: nil, model: nil,
-      provider: nil, params: nil, harness: nil, predicate: nil, fallback: nil, validator: nil, squawk: nil,
-      squawk_on: nil, budget: nil, call_context: {}, handed_off: false)
+      provider: nil, params: nil, cache: nil, harness: nil, predicate: nil, fallback: nil, validator: nil,
+      squawk: nil, squawk_on: nil, budget: nil, call_context: {}, handed_off: false)
       @klass = klass
       @name = name
       @purpose = purpose
@@ -23,6 +23,7 @@ module Squishling
       @model = model
       @provider = provider
       @params = params
+      @cache = cache
       @harness = harness
       @predicate = predicate
       @fallback = fallback
@@ -37,15 +38,16 @@ module Squishling
     # This definition with one call's overrides on top. The output schema, predicate, fallback, and validator
     # can't be overridden: the call must still return the method's result type.
     def for_call(purpose: nil, append_to_purpose: nil, context: nil, model: nil, escalation: nil,
-      provider: nil, params: nil, harness: nil, max_total_output_tokens: nil, max_total_input_tokens: nil)
+      provider: nil, params: nil, cache: nil, harness: nil, max_total_output_tokens: nil,
+      max_total_input_tokens: nil)
       call_path = ModelPath.declare(model, escalation, "#{label} squish!")
       raise ConfigurationError, "#{label}: squish! provider: needs a model: or escalation:" if provider && !call_path
-      unless context.nil? || (context.is_a?(Hash) && context.each_key.all?(NAME_KEY))
-        raise ConfigurationError, "#{label}: squish! context: must be a Hash with String or Symbol keys"
-      end
+
+      check_context!(context)
 
       appended = Appendices.normalize(append_to_purpose, "#{label} squish!") unless append_to_purpose.nil?
       call_params = params && Params.normalize(params, "#{label} squish! params")
+      call_cache = Cache.normalize(cache, "#{label} squish! cache")
       call_harness = Harness.normalize(harness, "#{label} squish!") unless harness.nil?
       call_budget = Budget.build("#{label} squish!", output: max_total_output_tokens, input: max_total_input_tokens)
       self.class.new(
@@ -56,6 +58,7 @@ module Squishling
         model: call_path || @model, provider: call_path ? provider : @provider,
         # merge, not Params.resolve: a nil at the method level must still unset the class's key.
         params: call_params ? (@params || {}).merge(call_params) : @params,
+        cache: [call_cache, @cache].find { |level| !level.nil? },
         harness: call_harness || @harness, budget: @budget.merge(call_budget),
         call_context: @call_context.merge((context || {}).transform_keys(&:to_sym)),
         handed_off: true # only squish! builds a definition this way; it is not part of a declared one
@@ -101,7 +104,7 @@ module Squishling
       else
         0
       end
-      ModelPath.steps(eligible, provider:, params:, turn:)
+      ModelPath.steps(eligible, provider:, params:, cache:, turn:)
     end
 
     # The steps and provider of the first level (method, class, or config) that declares a model or escalation, or
@@ -137,6 +140,12 @@ module Squishling
     # Generation params: config defaults, overridden key by key by the class, then by the method.
     def params
       Params.resolve(Squishling.config.default_params, klass.squishling_params, @params)
+    end
+
+    # Prompt caching: false, or the options to ask the provider for (see Cache). The config default, overridden by the
+    # class, then the method (and a squish! call).
+    def cache
+      Cache.resolve(Squishling.config.default_cache, klass.squishling_cache, @cache)
     end
 
     # The token limits of one call (see Budget): config defaults, overridden limit by limit by the class, then by the
@@ -246,6 +255,12 @@ module Squishling
     end
 
     private
+
+    def check_context!(context)
+      return if context.nil? || (context.is_a?(Hash) && context.each_key.all?(NAME_KEY))
+
+      raise ConfigurationError, "#{label}: squish! context: must be a Hash with String or Symbol keys"
+    end
 
     # Values JSON can't represent (NaN, Infinity, cycles) are invalid output, not a raw JSON error.
     def jsonify_return(attrs)

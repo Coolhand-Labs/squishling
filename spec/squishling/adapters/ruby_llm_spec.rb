@@ -23,6 +23,7 @@ RSpec.describe Squishling::Adapters::RubyLLM do
       def with_temperature(value) = tap { @generation[:temperature] = value }
       def with_max_output_tokens(value) = tap { @generation[:max_output_tokens] = value }
       def with_provider_options(value) = tap { @generation[:provider_options] = value }
+      def with_caching(value) = tap { @generation[:caching] = value }
 
       def with_thinking(enabled = true, **options) # rubocop:disable Style/OptionalBooleanParameter -- mirrors RubyLLM
         tap { @generation[:thinking] = options.empty? ? enabled : options }
@@ -146,6 +147,66 @@ RSpec.describe Squishling::Adapters::RubyLLM do
       adapter.complete(adapter_request(model: nil))
 
       expect(chats.first.options).to eq({})
+    end
+
+    describe "cache" do
+      it "asks RubyLLM for prompt caching with the request's options" do
+        stub_chat("{}", "{}")
+
+        adapter.complete(adapter_request(cache: {}))
+        adapter.complete(adapter_request(cache: { ttl: "1h" }))
+
+        expect(chats.map { |chat| chat.generation[:caching] }).to eq([{}, { ttl: "1h" }])
+      end
+
+      it "sends no cache controls when the request has none" do
+        stub_chat("{}")
+
+        adapter.complete(adapter_request)
+
+        expect(chats.first.generation).not_to have_key(:caching)
+      end
+
+      it "turns an option RubyLLM rejects when it renders the request into a ConfigurationError" do
+        stub_chat("{}")
+        allow_any_instance_of(fake_chat_class).to receive(:ask) do # rubocop:disable RSpec/AnyInstance
+          raise ArgumentError, "Anthropic prompt caching accepts :ttl, got :bogus"
+        end
+        allow(adapter).to receive(:raised_by_ruby_llm?).and_return(true)
+
+        expect { adapter.complete(adapter_request(cache: { bogus: 1 })) }
+          .to raise_error(Squishling::ConfigurationError, /Klass#call: RubyLLM rejected the request, cache.*:ttl/)
+      end
+    end
+
+    describe "an ArgumentError while asking" do
+      before do
+        stub_chat("{}")
+        allow_any_instance_of(fake_chat_class).to receive(:ask) do # rubocop:disable RSpec/AnyInstance
+          raise ArgumentError, message
+        end
+      end
+
+      let(:message) { "Anthropic prompt caching accepts :ttl, got :bogus" }
+
+      it "propagates unchanged when it didn't come from RubyLLM" do
+        allow(adapter).to receive(:raised_by_ruby_llm?).and_return(false)
+
+        expect { adapter.complete(adapter_request(cache: {})) }.to raise_error(ArgumentError, message)
+      end
+
+      it "propagates unchanged when it isn't about caching" do
+        allow(adapter).to receive(:raised_by_ruby_llm?).and_return(true)
+        allow_any_instance_of(fake_chat_class).to receive(:ask).and_raise(ArgumentError, "bad thinking") # rubocop:disable RSpec/AnyInstance
+
+        expect { adapter.complete(adapter_request(cache: {})) }.to raise_error(ArgumentError, "bad thinking")
+      end
+
+      it "propagates unchanged when caching is off" do
+        allow(adapter).to receive(:raised_by_ruby_llm?).and_return(true)
+
+        expect { adapter.complete(adapter_request) }.to raise_error(ArgumentError, message)
+      end
     end
 
     describe "params" do

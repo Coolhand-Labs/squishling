@@ -17,9 +17,10 @@ module Squishling
   # retry_temperature: (a Numeric) is the temperature for the step's same-chat retries after the first attempt.
   module ModelPath
     # One attempt: the model, its provider, the fully resolved generation params, whether the previous
-    # step's rejected output is shown to it, and the temperature its retries in the same chat use, if any.
-    Step = Data.define(:model, :provider, :params, :forward_rejected, :retry_temperature) do
-      def initialize(model:, provider:, params:, forward_rejected:, retry_temperature: nil)
+    # step's rejected output is shown to it, the temperature its retries in the same chat use, if any, and the
+    # prompt caching options to request (false for none, see Cache).
+    Step = Data.define(:model, :provider, :params, :forward_rejected, :retry_temperature, :cache) do
+      def initialize(model:, provider:, params:, forward_rejected:, retry_temperature: nil, cache: false)
         super
       end
 
@@ -35,7 +36,7 @@ module Squishling
       end
     end
 
-    STEP_KEYS = %i[model provider params attempts priority order rotate forward_rejected include_when
+    STEP_KEYS = %i[model provider params cache attempts priority order rotate forward_rejected include_when
                    retry_temperature].freeze
 
     module_function
@@ -72,13 +73,14 @@ module Squishling
     end
 
     # One Step per attempt. The level's provider applies to steps that don't name their own, and each
-    # step's params are merged over the level-resolved params. turn is this call's place in the method's rotation
+    # step's params are merged over the level-resolved params, and its cache: replaces the level-resolved one (a Hash
+    # or false, see Cache). turn is this call's place in the method's rotation
     # (see Rotation): each tier of tied priorities starts turn steps further along.
-    def steps(path, provider:, params:, turn: 0)
+    def steps(path, provider:, params:, cache: false, turn: 0)
       rotated(path, turn).flat_map do |step|
         attempt = Step.new(model: step[:model], provider: step[:provider] || provider,
           params: Params.resolve(params, step[:params]), forward_rejected: step[:forward_rejected],
-          retry_temperature: step[:retry_temperature])
+          retry_temperature: step[:retry_temperature], cache: Cache.resolve(cache, step[:cache]))
         [attempt] * step[:attempts]
       end
     end
@@ -131,7 +133,7 @@ module Squishling
     def normalize_step(step, label, extras: [])
       case step
       when String, Symbol
-        { model: model_name(step, label), provider: nil, params: nil, attempts: 1, forward_rejected: true }
+        { model: model_name(step, label), provider: nil, params: nil, cache: nil, attempts: 1, forward_rejected: true }
       when Hash then normalize_hash(step, label, extras)
       else
         raise ConfigurationError, "#{label}: each step must be a model name or a Hash with model:, got #{step.inspect}"
@@ -169,7 +171,8 @@ module Squishling
       end
 
       params = step[:params] && Params.normalize(step[:params], "#{label} (#{model}) params")
-      normalized = { model:, provider: step[:provider], params:, attempts:, forward_rejected: }
+      cache = Cache.normalize(step[:cache], "#{label} (#{model}) cache")
+      normalized = { model:, provider: step[:provider], params:, cache:, attempts:, forward_rejected: }
       normalized.merge(step.slice(:priority, :rotate, :include_when, :retry_temperature, *extras))
     end
 

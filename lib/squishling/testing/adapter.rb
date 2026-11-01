@@ -82,7 +82,8 @@ module Squishling
         payload = Schema.jsonify(input)
         @requests << Request.new(label:, type: :judgment, role: :judge, sample: nil, attempt: call[:attempt],
           attempts: call[:attempts], model: step.model, provider: step.provider, params: step.params,
-          system_prompt: nil, output_schema: nil, messages: [], conversation: nil, payload:, reply: outcome)
+          cache: step.cache, system_prompt: nil, output_schema: nil, messages: [], conversation: nil, payload:,
+          reply: outcome)
         outcome
       end
 
@@ -150,8 +151,9 @@ module Squishling
       def record(request, call, outcome, conversation)
         @requests << Request.new(label: request.label, type: :chat, role: call[:role], sample: call[:sample]&.to_s,
           attempt: call[:attempt], attempts: call[:attempts], model: request.model, provider: request.provider,
-          params: request.params, system_prompt: request.instructions, output_schema: request.schema["schema"],
-          messages: request.messages, conversation:, payload: Request.payload_of(request.messages), reply: outcome)
+          params: request.params, cache: request.cache, system_prompt: request.instructions,
+          output_schema: request.schema["schema"], messages: request.messages, conversation:,
+          payload: Request.payload_of(request.messages), reply: outcome)
       end
     end
 

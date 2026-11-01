@@ -497,6 +497,15 @@ RSpec.describe "Squishling harnesses" do
       expect(chats.last.params).to eq(temperature: 0.1, seed: 9, top_p: 1)
     end
 
+    it "gives a chat judge the method's cache, and a harness stage too" do
+      klass.squishling(cache: { ttl: "1h" }, harness: { type: :judged_squishsum, judge: "claude-opus-5-5" })
+      chats = stub_llm_chats([high], [low], [{ "verdict" => "a", "reason" => "outage" }])
+
+      klass.call(text: "x")
+
+      expect(chats.map(&:cache)).to all(eq(ttl: "1h"))
+    end
+
     it "gives a judge: step only its own provider:, never the class's" do
       klass.squishling(provider: :anthropic, harness: { type: :judged_squishsum, judge: "claude-opus-5-5" })
       chats = stub_llm_chats([high], [low], [{ "verdict" => "a", "reason" => "outage" }])
