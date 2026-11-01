@@ -33,19 +33,20 @@ module Squishling
     # threads, so the totals are taken under a lock. A response without token counts adds nothing, so a provider that
     # reports no usage never exhausts a budget.
     class Tally
-      def initialize(budget)
+      def initialize(budget, cache_reads: false)
         @budget = budget
+        @cache_reads = cache_reads
         @used = { input_tokens: 0, output_tokens: 0 }
         @lock = Mutex.new
       end
 
       # Counts a response's tokens: an Adapter::Response, or a judgment (see Observer.usage). The input total includes
-      # the tokens read from and written to the prompt cache, which adapters report apart from input_tokens.
+      # the tokens written to the prompt cache, and those read from it only when cache_reads is set; adapters report
+      # both apart from input_tokens.
       def add(response)
         usage = Observer.usage(response)
         @lock.synchronize do
-          @used[:input_tokens] += count(usage.input_tokens) + count(usage.cache_read_tokens) +
-                                  count(usage.cache_write_tokens)
+          @used[:input_tokens] += input_count(usage)
           @used[:output_tokens] += count(usage.output_tokens)
         end
         response
@@ -64,6 +65,11 @@ module Squishling
       end
 
       private
+
+      def input_count(usage)
+        total = count(usage.input_tokens) + count(usage.cache_write_tokens)
+        @cache_reads ? total + count(usage.cache_read_tokens) : total
+      end
 
       def count(tokens)
         tokens.is_a?(Integer) && tokens.positive? ? tokens : 0

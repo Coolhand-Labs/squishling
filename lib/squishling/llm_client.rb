@@ -16,7 +16,7 @@ module Squishling
       @harness = harness
       @handed_off = handed_off
       @adapter = Squishling.config.resolved_adapter
-      @tally = Budget::Tally.new(budget)
+      @tally = Budget::Tally.new(budget, cache_reads: Squishling.config.budget_counts_cache_reads)
     end
 
     # The budget limit this client's requests have reached ({ limit:, max:, used: }), or nil. Checked before each

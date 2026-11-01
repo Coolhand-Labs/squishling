@@ -71,17 +71,57 @@ RSpec.describe "Squishling token budget" do
       expect(chats.map { |chat| chat.messages.size }).to eq([2])
     end
 
-    it "counts the tokens read from and written to the prompt cache as input" do
-      klass.squishling(max_total_input_tokens: 1_000)
-      cached = FakeChat::Response.new({ "label" => 1 }, nil,
-        { input_tokens: 100, output_tokens: 5, cache_read_tokens: 500, cache_write_tokens: 450 })
-      stub_llm(cached, cached, cached, cached)
+    describe "prompt cache tokens" do
+      let(:cached) do
+        FakeChat::Response.new({ "label" => 1 }, nil,
+          { input_tokens: 100, output_tokens: 5, cache_read_tokens: 500, cache_write_tokens: 450 })
+      end
 
-      expect { klass.call(text: "x") }.to raise_error(Squishling::BudgetExhaustedError) { |error|
-        expect(error.limit).to eq(:max_total_input_tokens)
-        expect(error.used).to eq(input_tokens: 1_050, output_tokens: 5)
-        expect(error.attempts).to eq(1)
-      }
+      before { klass.squishling(max_total_input_tokens: 1_000) }
+
+      it "counts the tokens written to the cache but not those read from it" do
+        stub_llm(cached, cached, cached, cached)
+
+        expect { klass.call(text: "x") }.to raise_error(Squishling::BudgetExhaustedError) { |error|
+          expect(error.limit).to eq(:max_total_input_tokens)
+          expect(error.used).to eq(input_tokens: 1_100, output_tokens: 10)
+          expect(error.attempts).to eq(2)
+        }
+      end
+
+      it "counts the tokens read from the cache too when budget_counts_cache_reads is set" do
+        Squishling.config.budget_counts_cache_reads = true
+        stub_llm(cached, cached, cached, cached)
+
+        expect { klass.call(text: "x") }.to raise_error(Squishling::BudgetExhaustedError) { |error|
+          expect(error.used).to eq(input_tokens: 1_050, output_tokens: 5)
+          expect(error.attempts).to eq(1)
+        }
+      end
+
+      it "never exhausts the input budget on cache reads alone" do
+        reads = FakeChat::Response.new({ "label" => 1 }, nil,
+          { input_tokens: 10, output_tokens: 5, cache_read_tokens: 5_000 })
+        stub_llm(reads, reads, reads, reads)
+
+        expect { klass.call(text: "x") }.to raise_error(Squishling::InvalidOutputError) { |error|
+          expect(error).not_to be_a(Squishling::BudgetExhaustedError)
+          expect(error.attempts).to eq(4)
+        }
+      end
+    end
+
+    it "defaults budget_counts_cache_reads to false and accepts true" do
+      expect(Squishling.config.budget_counts_cache_reads).to be(false)
+      Squishling.config.budget_counts_cache_reads = true
+      expect(Squishling.config.budget_counts_cache_reads).to be(true)
+    end
+
+    it "rejects a budget_counts_cache_reads that is not a boolean, nil included" do
+      [nil, "yes"].each do |value|
+        expect { Squishling.config.budget_counts_cache_reads = value }
+          .to raise_error(Squishling::ConfigurationError, /budget_counts_cache_reads must be true or false/)
+      end
     end
 
     it "always makes the first request, and returns an output accepted within the budget" do
@@ -398,6 +438,18 @@ RSpec.describe "Squishling token budget" do
       tally.add(judgment)
       expect(tally.exhausted).to eq(limit: :max_total_output_tokens, max: 100,
         used: { input_tokens: 80, output_tokens: 120 })
+    end
+
+    it "counts cache writes always, and cache reads only when cache_reads is set" do
+      response = Squishling::Adapter::Response.new(content: "{}",
+        tokens: { input_tokens: 10, cache_write_tokens: 20, cache_read_tokens: 300 })
+      default = described_class.new({ input: 1 })
+      counting = described_class.new({ input: 1 }, cache_reads: true)
+
+      [default, counting].each { |tally| tally.add(response) }
+
+      expect(default.exhausted[:used]).to eq(input_tokens: 30, output_tokens: 0)
+      expect(counting.exhausted[:used]).to eq(input_tokens: 330, output_tokens: 0)
     end
 
     it "is exhausted exactly when a total reaches its limit" do

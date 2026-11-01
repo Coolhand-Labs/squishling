@@ -186,8 +186,9 @@ Squishling.register_adapter(:acme, AcmeAdapter)
 String, or a Hash if you parsed it; `nil` or empty counts as invalid output and is retried. `model` is the id the
 provider reports. `tokens` is a Hash (`:input_tokens`, which leaves out the tokens read from or written to the prompt cache, `:output_tokens`, `:cache_read_tokens`, `:cache_write_tokens`, and anything else you have); `{}` when
 unknown. These feed [`squawk`'s `usage`](failures.md#observing-every-attempt-squawk), the [observer](observers.md)'s `Usage`, and the
-[token budget](failures.md#capping-a-calls-cost-token-budgets), which counts `:input_tokens` and `:output_tokens`
-(a response with none never exhausts a budget).
+[token budget](failures.md#capping-a-calls-cost-token-budgets), which counts `:input_tokens`, `:cache_write_tokens` and
+`:output_tokens`, and `:cache_read_tokens` only with `budget_counts_cache_reads` (a response with none never exhausts a
+budget).
 `finish_reason` is why the provider stopped, as a Symbol: `:stop`, `:max_tokens` (the output cap cut the reply off),
 `:content_filter`, `:tool_calls`, or the provider's own spelling; leave it out (`nil`) when unknown. Map your
 provider's "length" reason to `:max_tokens`, so Squishling can [tell a cutoff from a wrong
