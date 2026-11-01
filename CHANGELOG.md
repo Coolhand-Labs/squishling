@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-01
+
+Prompt caching, on by default. Read **Changed** before upgrading: requests now ask the provider to cache the stable
+prompt, which can bill a cache write on providers that charge for one.
+
+### Added
+
+- Prompt caching: a `cache` setting that asks the provider to cache the stable prompt (the purpose and the input note in
+  the system prompt), so a repeated call can read it back instead of paying for it again. It is `true`, `false`, or a
+  Hash of options such as `{ ttl: "1h" }`, set with `config.default_cache`, `squishling cache:`, `squish :method,
+  cache:`, `squish!(cache:)`, or an escalation step's `cache:`; the more specific level wins. There is no class-level
+  `cache false` macro, since it would collide with `ActiveRecord::Base.cache`: use `squishling cache: false`. The RubyLLM
+  adapter asks for it with `Chat#with_caching` and sends no cache controls when it is off; a System One judgment is never
+  cached. See [Prompt caching](docs/configuration.md#prompt-caching). (#79, #80)
+- `Observer::Usage` gains `cache_read_tokens` and `cache_write_tokens`, and `Adapter::Request`, `ModelPath::Step`, and
+  `Testing::Request` gain a `cache` member (defaulting to `false`, so existing constructors keep working). Adapters that
+  report cache usage put `:cache_read_tokens` and `:cache_write_tokens` in `Adapter::Response#tokens`. (#79, #80)
+- `config.budget_counts_cache_reads` (default `false`, `true` or `false` only): whether the tokens a request reads from the
+  provider's prompt cache count toward `max_total_input_tokens`. (#97)
+
+### Changed
+
+- **Behavior change:** prompt caching is on by default (`config.default_cache` is `true`). With the RubyLLM adapter, a
+  provider that bills for cache writes (such as Anthropic Claude) may charge a write premium on the first call. Set
+  `config.default_cache = false`, or `cache: false` on a class, method, or step, to opt out. A model that can't take
+  cache controls may reject the request, which raises `ConfigurationError`: set `cache: false` for that model. The
+  OpenAI-compatible adapter ignores the setting. (#79, #80)
+- **Behavior change:** `max_total_input_tokens` now counts the tokens written to the prompt cache, which RubyLLM
+  reports apart from `input_tokens`, so a call that writes a large cached prompt can reach the budget sooner than before.
+  Tokens read from the cache are left out unless `budget_counts_cache_reads` is `true`. Output tokens are unchanged.
+  (#79, #80, #97)
+- **Behavior change:** the OpenAI-compatible adapter reports `input_tokens` net of cached tokens, as every adapter
+  does (the cached reads go to `cache_read_tokens`, and a server's cache writes to `cache_write_tokens`). A custom
+  adapter's `input_tokens` should likewise exclude cached tokens. Code that read `input_tokens` from `squawk` usage or an
+  observer for this adapter will see a smaller number on cache hits. (#79, #80)
+
+### Documented
+
+- The adapter docs list the separate [`squishling-apple_fm`](https://github.com/Coolhand-Labs/squishling-apple-fm-adapter)
+  and [`squishling-claude_code`](https://github.com/Coolhand-Labs/squishling-claude-code-adapter) adapter gems. (#94)
+
 ## [0.5.1] - 2026-10-31
 
 The v0.5.0 red-team follow-ups (#70): data-egress, secret-leakage, and misclassification fixes. Several of them change
