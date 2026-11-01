@@ -243,17 +243,17 @@
 </header>
 
 <aside class="release" id="latest-release" aria-label="Latest release">
-  <p class="kicker">Latest release · v0.5.1 · <time datetime="2026-10-31">October 31, 2026</time></p>
-  <p>Squishling turns any Ruby class into a hybrid of code and LLM inference working together. v0.5.1 is a hardening
-  release: it keeps your data and credentials where you put them, and stops errors from being misread.</p>
+  <p class="kicker">Latest release · v0.6.0 · <time datetime="2026-11-01">November 1, 2026</time></p>
+  <p>Squishling turns any Ruby class into a hybrid of code and LLM inference working together. v0.6.0 makes the LLM
+  half cheaper to run: the stable part of every prompt is now cached by the provider, and you can see and budget for it.</p>
   <ul>
-    <li>🔒 <strong>Secrets stay out of logs and trackers:</strong> API keys and headers are redacted from <code>to_yaml</code> and JSON, and a provider's error body no longer rides along on <code>cause</code> (use <code>keep_cause: true</code> on the RubyLLM adapter to keep it)</li>
-    <li>🛡️ <strong>Abstract methods can't leak your data:</strong> a <code>NotImplementedError</code> from code your method calls no longer sends its arguments to the LLM, only the method's own stub does</li>
-    <li>🌐 <strong>A safer OpenAI-compatible transport:</strong> credentials are refused over plain <code>http://</code> to non-local hosts (set <code>allow_insecure_http: true</code> for a trusted network), and responses are capped in size and time</li>
-    <li>🎯 <strong>Errors sorted by status, not by provider wording:</strong> a bad request is no longer mistaken for a retryable one, and <code>squawk</code> now sees calls that end on the token budget or a disagreement</li>
-    <li>🧱 <strong>Stricter hand-written schemas:</strong> an object schema with <code>properties</code> now needs <code>type: "object"</code>, and <code>Squishling.verify</code> flags it before a request</li>
+    <li>💸 <strong>Prompt caching, on by default:</strong> repeated calls reuse the cached prompt instead of paying for it again. Some providers charge extra to write the cache, so set <code>cache: false</code> (or <code>config.default_cache = false</code>) to opt out</li>
+    <li>🎛️ <strong>Control it where you need it:</strong> set <code>cache</code> per class, method, escalation step, or <code>squish!</code> call, with options like <code>{ ttl: "1h" }</code></li>
+    <li>👀 <strong>See whether it hits:</strong> <code>cache_read_tokens</code> and <code>cache_write_tokens</code> show up in <code>squawk</code> usage and on observers</li>
+    <li>🧮 <strong>Budgets that understand the cache:</strong> <code>max_total_input_tokens</code> counts cache writes but not cheap reads (set <code>budget_counts_cache_reads = true</code> to count them)</li>
+    <li>🔌 <strong>More adapters:</strong> the docs now point to the Apple on-device and Claude Code adapter gems</li>
   </ul>
-  <p class="more"><a href="https://github.com/Coolhand-Labs/squishling/releases/tag/v0.5.1">Release notes</a> ·
+  <p class="more"><a href="https://github.com/Coolhand-Labs/squishling/releases/tag/v0.6.0">Release notes</a> ·
   <a href="https://github.com/Coolhand-Labs/squishling/blob/main/CHANGELOG.md">Changelog</a></p>
 </aside>
 
