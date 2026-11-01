@@ -96,7 +96,8 @@ Flag any change that breaks one of these; they are behavior contracts, not style
   method, `squish!`; layered limit by limit, `false` lifts one) are checked before each request the call's `Run` makes
   (escalation attempts, sample rounds, judge attempts), against the tokens its `LLMClient` has tallied from the
   responses so far (mutex-guarded: samples add from worker threads). A request in flight is never cut short, so a call
-  can end above the limit by one request; a response without token counts adds nothing. It raises
+  can end above the limit by one request; a response without token counts adds nothing. The input total counts cache
+  writes but, unless `budget_counts_cache_reads` is set, not cache reads. It raises
   `BudgetExhaustedError`, an `InvalidOutputError`, so `squish_fallback` and the "no second rescue path" rule hold.
 - **Error taxonomy.** Everything Squishling raises inherits `Squishling::Error`: `ConfigurationError`
   (setup mistakes; never retried, escalated, or passed to fallbacks; a provider 400 or other rejected 4xx is its
@@ -189,7 +190,7 @@ helpers, and the `sanitized_cause` helper with its `Adapter::ProviderFailure`), 
 `squish_validate`, `squish_fallback`, `result`/`squishling_result`, `squish!` (including
 `model:`/`escalation:`/`cache:`/`harness:`), and the `max_total_output_tokens:`/`max_total_input_tokens:` options of
 `squishling`, `squish`, and `squish!`), `Squishling::Configuration` options (including `default_harness`,
-`default_cache`,
+`default_cache`, `budget_counts_cache_reads`,
 `default_max_total_output_tokens`/`default_max_total_input_tokens`, `observer`, `squawk_on`, and `squawk`, whose
 `output:`/`metadata:`/`error:` keywords are public), `Squishling::Observer::Call`/`Usage`
 (with `cache_read_tokens`/`cache_write_tokens`),

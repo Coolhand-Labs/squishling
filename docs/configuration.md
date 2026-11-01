@@ -34,6 +34,7 @@ end
 | `default_params` | `{}` | Generation params for every call (temperature, reasoning effort, top_p, …), overridable per class, per method, and per escalation step. See [Generation params](#generation-params). |
 | `default_cache` | `true` | Asks the provider to cache the stable prompt on every request: `true`, `false`, or a Hash of options such as `{ ttl: "1h" }`. Overridable per class, per method, per escalation step, and per `squish!` call. See [Prompt caching](#prompt-caching). |
 | `default_max_total_output_tokens`, `default_max_total_input_tokens` | `nil` (no limit) | The most output (or input) tokens one call may use across all its requests; once reached, the call raises `BudgetExhaustedError` instead of making another attempt. Overridable per class (`squishling max_total_output_tokens: ...`), per method, and per `squish!` call. See [Capping a call's cost](failures.md#capping-a-calls-cost-token-budgets). |
+| `budget_counts_cache_reads` | `false` | Whether the input tokens a request reads from the provider's prompt cache count toward `max_total_input_tokens`. Off by default, since reads are cheap; tokens written to the cache always count. Global only. See [Capping a call's cost](failures.md#capping-a-calls-cost-token-budgets). |
 | `squawk` | `nil` | A callable run after every LLM attempt (see `squawk_on`), and once more when a token budget or a disagreement stops the call, with the raw output, for sending it to an error tracker or tracing tool. Also settable per class and per method. See [Observing every attempt](failures.md#observing-every-attempt-squawk). |
 | `squawk_on` | `:all` | Which attempts reach the `squawk` hook: `:all`, `:rejections` (errors only), `:retries` (errors plus any accepted attempt after the first), `:final` (the last attempt the escalation allows), or a list of them (any one holding runs the hook). A call [stopped](failures.md#a-call-that-is-stopped) by a token budget or a disagreement is always reported. Also settable per class and per method. |
 | `observer` | `nil` | An around-style hook for every provider request: `:coolhand`, any object responding to `around(call)`, or `false` for none. `nil` uses the [Coolhand observer](coolhand.md) when the `coolhand` gem is configured. See [Observers](observers.md). |
@@ -298,6 +299,8 @@ squish!(cache: false, escalation: ["claude-opus-5-5"])            # one hand-off
 - **An option the provider doesn't take raises `ConfigurationError`** when the request is made (Anthropic accepts `ttl`,
   for instance). Explicit Gemini content caches (`id:`) are not supported.
 - **Judgments** (`type: :judgment` judges) don't use a chat, so they are never cached.
+- **Token budgets** count the tokens written to the cache but not those read back, so a hit doesn't spend
+  `max_total_input_tokens`; `budget_counts_cache_reads = true` counts reads too.
 - **See whether it hits** in `cache_read_tokens` and `cache_write_tokens`: they are in `squawk`'s `usage` and on the
   [observer](observers.md#what-yield-returns)'s `Usage` (nil when the provider reports none).
 

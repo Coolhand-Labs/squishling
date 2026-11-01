@@ -28,6 +28,10 @@ module Squishling
     # such as { ttl: "1h" } (see Cache). Overridable per class, per method, per escalation step, and per squish! call.
     attr_reader :default_cache
 
+    # Whether the tokens a request reads from the provider's prompt cache count toward max_total_input_tokens: false
+    # (the default) leaves them out, true counts them. Tokens written to the cache always count (see Budget).
+    attr_reader :budget_counts_cache_reads
+
     # How every squishling class that doesn't declare its own harness uses its escalation (see Harness):
     # :escalation (the default), :squishsum, :judged_squishsum, a harness you registered, or a Hash with type: and
     # its options.
@@ -72,6 +76,7 @@ module Squishling
       @default_provider = nil
       @default_params = {}
       @default_cache = true
+      @budget_counts_cache_reads = false
       @default_harness = nil
       @logger = nil
       @squawk = nil
@@ -139,6 +144,16 @@ module Squishling
     # nil restores the default (true).
     def default_cache=(cache)
       @default_cache = cache.nil? || Cache.normalize(cache, "default_cache")
+    end
+
+    # true or false; unlike default_cache=, nil is not accepted.
+    def budget_counts_cache_reads=(counts)
+      unless [true, false].include?(counts)
+        raise ConfigurationError,
+          "Squishling.configure: budget_counts_cache_reads must be true or false, got #{counts.inspect}"
+      end
+
+      @budget_counts_cache_reads = counts
     end
 
     def default_harness=(harness)
