@@ -77,11 +77,12 @@ module Squishling
 
       def judged(input, _questions, step, label)
         call = { role: :judge, sample: nil, attempt: Observer.current&.attempt, attempts: Observer.current&.attempts,
-                 model: step.model, provider: step.provider }
+                 model: step.model, provider: step.provider, adapter: step.adapter }
         outcome = outcome_for(:judgment, call, label, step.model)
         payload = Schema.jsonify(input)
         @requests << Request.new(label:, type: :judgment, role: :judge, sample: nil, attempt: call[:attempt],
-          attempts: call[:attempts], model: step.model, provider: step.provider, params: step.params,
+          attempts: call[:attempts], model: step.model, provider: step.provider, adapter: step.adapter,
+          params: step.params,
           cache: step.cache, system_prompt: nil, output_schema: nil, messages: [], conversation: nil, payload:,
           reply: outcome)
         outcome
@@ -124,7 +125,7 @@ module Squishling
       # installed without one, what the request itself shows.
       def call_of(request)
         observed = Observer.current
-        base = { model: request.model, provider: request.provider }
+        base = { model: request.model, provider: request.provider, adapter: request.adapter }
         if observed
           return base.merge(role: observed.role, sample: observed.sample, attempt: observed.attempt,
             attempts: observed.attempts)
@@ -151,7 +152,7 @@ module Squishling
       def record(request, call, outcome, conversation)
         @requests << Request.new(label: request.label, type: :chat, role: call[:role], sample: call[:sample]&.to_s,
           attempt: call[:attempt], attempts: call[:attempts], model: request.model, provider: request.provider,
-          params: request.params, cache: request.cache, system_prompt: request.instructions,
+          adapter: request.adapter, params: request.params, cache: request.cache, system_prompt: request.instructions,
           output_schema: request.schema["schema"], messages: request.messages, conversation:,
           payload: Request.payload_of(request.messages), reply: outcome)
       end

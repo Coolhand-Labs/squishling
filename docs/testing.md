@@ -19,7 +19,8 @@ still hold what the helpers set), so the rest of your `Squishling.configure` sur
 
 The helpers change global state (`Squishling.config` and the stubbed classes), so tests that use them must not run
 in parallel threads. That includes `no_llm_call` / `assert_no_llm_call`, which swap the process-wide `config.adapter`
-for the block: a request another thread makes meanwhile is forbidden too, and may be counted in the block's calls.
+(routing every name in `config.adapters` to the guard too) for the block: a request another thread makes meanwhile is
+forbidden too, and may be counted in the block's calls.
 
 ## Scripting the model
 
@@ -58,9 +59,11 @@ A reply is one of:
 | `:rate_limit`, `:server_error`, `:overloaded`, `:timeout`, `:context_length` | `LLMError` (the next attempt is tried) |
 | `:bad_request`, `:unauthorized`, `:forbidden` | `ConfigurationError` (never retried, never given to a fallback) |
 
-**Selecting what a rule answers.** `step(model)`, `step(provider: :vertexai)`, and `step(:any)` answer escalation
-attempts; `attempt: 2` narrows a step rule to one attempt of the escalation. Rules are matched most specific first
-(a sample or the judge, then the rule naming the most of model, provider and attempt, then `step(:any)`), and by
+**Selecting what a rule answers.** `step(model)`, `step(provider: :vertexai)`, `step(adapter: :local)`, and `step(:any)`
+answer escalation attempts; `attempt: 2` narrows a step rule to one attempt of the escalation. The scripted adapter
+answers for every name in `config.adapters`, so `adapter:` selects on the name a step asked for. Rules are matched most
+specific first (a sample or the judge, then the rule naming the most of model, provider, adapter and attempt, then
+`step(:any)`), and by
 declaration order within that.
 Scripts are keyed by model, so a rotated tier (`priority:`) gets the same answers whichever model goes first. Which
 model goes first still depends on how many calls the class has had, so don't assert the order of `fake.models` for a
@@ -92,7 +95,7 @@ and `#verdict` are the real ones; rescue them as you would in production.
 |---|---|
 | `arguments`, `context` | the method's arguments and the `squish_context` / `squish!` context the model was sent |
 | `system_prompt`, `output_schema` | the purpose (with `append_to_purpose` sections) and the strict schema |
-| `model`, `provider`, `params`, `cache` | the step it went to (`cache` is `false` when [prompt caching](configuration.md#prompt-caching) was off for it) |
+| `model`, `provider`, `adapter`, `params`, `cache` | the step it went to (`adapter` is its name from `config.adapters`, `nil` for the default; `cache` is `false` when [prompt caching](configuration.md#prompt-caching) was off for it) |
 | `role`, `sample`, `attempt`, `attempts` | `nil`/`:sample`/`:judge`, `"a"`, and where it is in the escalation |
 | `conversation` | the chat it belongs to |
 | `errors` | the validation messages a retry or escalation carried back to the model |
@@ -181,7 +184,8 @@ can't tell which request is which.
 
 ## How it works
 
-`fake_squishling` assigns a `Squishling::Testing::Adapter` (a `Squishling::Adapter::Base`) as `config.adapter`, and an
-observer that tells it which role, sample, and attempt each request is. Because it sits behind the same interface as
-the real adapters, it needs no knowledge of RubyLLM or any provider, and it is covered by Squishling's own specs.
+`fake_squishling` assigns a `Squishling::Testing::Adapter` (a `Squishling::Adapter::Base`) as `config.adapter`
+(routing every name in `config.adapters` to it too), and an observer that tells it which role, sample, and attempt
+each request is. Because it sits behind the same interface as the real adapters, it needs no knowledge of RubyLLM or
+any provider, and it is covered by Squishling's own specs.
 Call `Squishling::Testing.install` and `.reset!` yourself if you use a test framework other than the two above.

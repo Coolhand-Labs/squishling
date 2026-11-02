@@ -12,9 +12,13 @@ module Squishling
     # LLM (typically from a rescue) and false when squish_when or a missing implementation did. role is nil for an
     # escalation attempt, :sample (with sample "a", "b", ...) or :judge, like squawk's metadata. attempt and
     # attempts count the (expanded) escalation path the request belongs to. request is :chat, or :judgment for a
-    # System One judge.
+    # System One judge. adapter is the name of the configured adapter the step picked (nil for the default one).
     Call = Data.define(:label, :purpose, :harness, :handed_off, :role, :sample, :attempt, :attempts, :model, :provider,
-      :request)
+      :request, :adapter) do
+      def initialize(adapter: nil, **attributes)
+        super
+      end
+    end
 
     # What an observer's block returns: the request's token usage and the model that answered, never the content.
     # A count the provider didn't report is nil. cache_read_tokens and cache_write_tokens are the input tokens served

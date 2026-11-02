@@ -12,11 +12,14 @@ module Squishling
     # structured-output payload ({ "name", "description", "schema", "strict" => true }). params is the resolved
     # generation params: the portable :temperature, :max_output_tokens, and :thinking, plus any provider-specific keys
     # (see Params). label ("Class#method") prefixes the adapter's error messages. model and provider are the step's
-    # (nil when it names none). cache is the prompt caching to ask the provider for: false (none), or a Hash of options
+    # (nil when it names none). adapter is the name this adapter was configured under (config.adapters), nil for the
+    # default adapter. cache is the prompt caching to ask the provider for: false (none), or a Hash of options
     # ({} for the provider's default, { ttl: "1h" }), see Cache. An adapter whose provider has no prompt caching, or
     # caches on its own, ignores it.
-    Request = Data.define(:label, :model, :provider, :instructions, :messages, :schema, :params, :cache) do
-      def initialize(label:, model:, provider:, instructions:, messages:, schema:, params:, cache: false)
+    Request = Data.define(:label, :model, :provider, :instructions, :messages, :schema, :params, :cache,
+      :adapter) do
+      def initialize(label:, model:, provider:, instructions:, messages:, schema:, params:, cache: false,
+        adapter: nil)
         super
       end
     end

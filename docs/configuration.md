@@ -28,6 +28,7 @@ end
 | Option | Default | Description |
 |---|---|---|
 | `adapter` | `nil` (RubyLLM, when its gem is available) | How requests reach a model: `:ruby_llm`, `:openai_compatible`, a [registered](adapters.md#writing-your-own) name, a Hash with `type:` and that adapter's options, or an adapter instance. See [Adapters](adapters.md). |
+| `adapters` | `{}` | More adapters by name, for escalation steps that pick one with `adapter:`. Each value takes what `adapter` does. See [Mixing adapters](adapters.md#mixing-adapters-in-one-escalation). |
 | `default_model` | `nil` | The universal model (a single attempt) for every squishling class that doesn't declare one. `nil` uses the adapter's own default (RubyLLM's `default_model`; the OpenAI-compatible adapter's `default_model:` option). |
 | `default_escalation` | `nil` | The universal [escalation](#models-and-escalation): models tried in order. Assigning it clears `default_model`, and vice versa. |
 | `default_provider` | `nil` | The provider for `default_model`/`default_escalation` steps that don't name one. What it means depends on the adapter: RubyLLM needs it only for models missing from its registry (see below); the OpenAI-compatible adapter ignores it. |
@@ -75,6 +76,7 @@ Each step is a model name, or a Hash with:
 | `rotate:` | `true` | Set `false` on a step to keep its tier in the order written instead of rotating it. |
 | `include_when:` | always | A Proc that leaves this step out of any call where it returns falsy (see [Excluding a model per call](#excluding-a-model-per-call)). |
 | `provider:` | the level's `provider:` | See [Providers](#providers-and-newly-released-models). |
+| `adapter:` | `config.adapter` | The name of an adapter from `config.adapters` that makes this step's requests, so one escalation can mix adapters. See [Mixing adapters](adapters.md#mixing-adapters-in-one-escalation). |
 | `retry_temperature:` | none | A Numeric `temperature` for this step's retries in the same chat (not its first attempt), to nudge a model that keeps sending the same rejected reply. Don't use it on a step that sets `thinking`, since reasoning models reject `temperature`. |
 | `forward_rejected:` | `true` | Set `false` to start this step from the original input alone, without the previous step's rejected output and its errors (see below). |
 | `params:` | `{}` | [Generation params](#generation-params) for this step, merged over the class and method params key by key. |
@@ -169,7 +171,7 @@ end
 Passing both `model:` and `escalation:` in one declaration raises `ConfigurationError`, and so does a list passed as
 `model:`. Across separate declarations (a reopened class, or two config assignments), the latest one wins.
 
-Consecutive attempts of the same step (same model, provider, params, `cache:`, `forward_rejected:`, and `retry_temperature:`, e.g. `attempts: 2`)
+Consecutive attempts of the same step (same model, provider, adapter, params, `cache:`, `forward_rejected:`, and `retry_temperature:`, e.g. `attempts: 2`)
 continue one conversation. Moving to a different step starts a fresh chat with the original input plus the previous
 output and why it was rejected, so no provider-specific history crosses providers. That rejected output is
 model-generated and is sent to the next step's provider, even when it is a different one, truncated to 4,000

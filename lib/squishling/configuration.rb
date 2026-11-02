@@ -65,8 +65,19 @@ module Squishling
     # gem is available. Built when assigned, so a mistake fails at setup rather than on the first request.
     attr_reader :adapter
 
+    # More adapters, by name, for escalation steps that pick one with adapter: (see ModelPath), e.g.
+    #   config.adapters = { local: { type: :openai_compatible, base_url: "http://localhost:11434/v1" }, claude: :claude_code }
+    # Each value is anything config.adapter takes. A step without adapter: uses config.adapter. Built when assigned.
+    attr_reader :adapters
+
+    # Squishling::Testing only: when set, every adapter name resolves to this adapter, so a scripted adapter answers
+    # for steps that pick another one.
+    attr_accessor :adapter_override
+
     def initialize
       @adapter = nil
+      @adapters = {}.freeze
+      @adapter_override = nil
       @detected_adapter = nil
       @adapter_lock = Mutex.new
       @observer = nil
@@ -100,6 +111,37 @@ module Squishling
       @adapter_lock.synchronize do
         @adapter = built
         @detected_adapter = nil
+      end
+    end
+
+    def adapters=(named)
+      unless named.nil? || named.is_a?(Hash)
+        raise ConfigurationError, "Squishling.configure: adapters must be a Hash of name => adapter, got #{named.class}"
+      end
+
+      built = {}
+      (named || {}).each do |name, adapter|
+        key = adapter_key(name, built)
+        built[key] = Adapter.build(adapter, "Squishling.configure adapters[#{key.inspect}]")
+      end
+      @adapter_lock.synchronize { @adapters = built.freeze }
+    end
+
+    # The adapter a step's adapter: names (nil is the default one, see #resolved_adapter). Raises ConfigurationError
+    # for a name that isn't configured.
+    def adapter_for(name)
+      return resolved_adapter if name.nil?
+
+      @adapter_override || named_adapter(name)
+    end
+
+    # The adapter configured under a name, whatever Squishling::Testing routes to. Raises ConfigurationError for a name
+    # that isn't configured.
+    def named_adapter(name)
+      named = @adapter_lock.synchronize { @adapters }
+      named.fetch(name) do
+        known = named.empty? ? "none; set config.adapters" : named.keys.map(&:inspect).join(", ")
+        raise ConfigurationError, "unknown adapter #{name.inspect} (configured: #{known})"
       end
     end
 
@@ -170,6 +212,19 @@ module Squishling
 
     def max_retries=(_value)
       raise ConfigurationError, MAX_RETRIES_REMOVED
+    end
+
+    private
+
+    # An adapters: name as a Symbol; a blank or non-name key, or one already in taken, is a ConfigurationError.
+    def adapter_key(name, taken)
+      unless (name.is_a?(Symbol) || name.is_a?(String)) && !name.to_s.strip.empty?
+        raise ConfigurationError, "Squishling.configure: an adapter name must be a Symbol, got #{name.inspect}"
+      end
+      key = name.to_sym
+      raise ConfigurationError, "Squishling.configure: adapters names #{key.inspect} twice" if taken.key?(key)
+
+      key
     end
   end
 end
