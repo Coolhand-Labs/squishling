@@ -221,6 +221,7 @@ module Squishling
       unless (name.is_a?(Symbol) || name.is_a?(String)) && !name.to_s.strip.empty?
         raise ConfigurationError, "Squishling.configure: an adapter name must be a Symbol, got #{name.inspect}"
       end
+
       key = name.to_sym
       raise ConfigurationError, "Squishling.configure: adapters names #{key.inspect} twice" if taken.key?(key)
 
