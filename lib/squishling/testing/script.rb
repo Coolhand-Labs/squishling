@@ -7,7 +7,7 @@ module Squishling
     class Rule
       # What a rule answers. nil means any. kind is :chat (Adapter#complete) or :judgment (Adapter#judge); role is
       # nil (an escalation attempt, or any role when the rule names none), :sample, or :judge.
-      Selector = Data.define(:kind, :role, :sample, :model, :provider, :attempt)
+      Selector = Data.define(:kind, :role, :sample, :model, :provider, :adapter, :attempt)
 
       # Rule#take when nothing is left to answer with.
       EXHAUSTED = Object.new.freeze
@@ -43,15 +43,15 @@ module Squishling
       def matches?(kind, call)
         selector.kind == kind && fits?(selector.role, call[:role]) && fits?(selector.sample, call[:sample]) &&
           fits?(selector.model, call[:model]) && fits?(selector.provider, call[:provider]) &&
-          fits?(selector.attempt, call[:attempt])
+          fits?(selector.adapter, call[:adapter]) && fits?(selector.attempt, call[:attempt])
       end
 
       # How narrowly the rule aims, lowest first: rules for a sample or the judge, then those naming the most of a
-      # model, a provider, and an attempt, then the rest.
+      # model, a provider, an adapter, and an attempt, then the rest.
       def specificity
         return 0 if selector.sample || selector.role
 
-        4 - [selector.model, selector.provider, selector.attempt].count { |named| !named.nil? }
+        5 - [selector.model, selector.provider, selector.adapter, selector.attempt].count { |named| !named.nil? }
       end
 
       # The next answer, or EXHAUSTED. Called with the script's lock held.
@@ -152,10 +152,11 @@ module Squishling
         @rules = []
       end
 
-      # Escalation attempts (and any other chat request no sample or judge rule claims) on a model, a provider, or
-      # :any model; attempt: narrows it to one attempt of the escalation (counting from 1).
-      def step(model = :any, provider: nil, attempt: nil)
-        add(:chat, model: model == :any ? nil : model, provider:, attempt:)
+      # Escalation attempts (and any other chat request no sample or judge rule claims) on a model, a provider, an
+      # adapter name (the step's adapter:), or :any model; attempt: narrows it to one attempt of the escalation
+      # (counting from 1).
+      def step(model = :any, provider: nil, adapter: nil, attempt: nil)
+        add(:chat, model: model == :any ? nil : model, provider:, adapter:, attempt:)
       end
 
       # A harness sample's requests ("a", "b", ...). Each sample has its own queue, so the order the sample threads
@@ -181,8 +182,9 @@ module Squishling
 
       private
 
-      def add(kind, role: nil, sample: nil, model: nil, provider: nil, attempt: nil)
-        Rule.new(Rule::Selector.new(kind:, role:, sample:, model:, provider:, attempt:)).tap { |rule| @rules << rule }
+      def add(kind, role: nil, sample: nil, model: nil, provider: nil, adapter: nil, attempt: nil)
+        selector = Rule::Selector.new(kind:, role:, sample:, model:, provider:, adapter:, attempt:)
+        Rule.new(selector).tap { |rule| @rules << rule }
       end
     end
   end

@@ -68,6 +68,7 @@ Anything else raises `ConfigurationError` when you assign it.
 | `sample` | `"a"`, `"b"`, ... for a sample, else `nil` |
 | `attempt`, `attempts` | This request's 1-based position in the steps it was asked on, and how many there are: the escalation's expanded steps (or, for a custom harness, those passed to `run.escalate`), the sample's stage, or the judge's steps |
 | `model`, `provider` | The step's model and provider (`provider` is `nil` unless declared) |
+| `adapter` | The name of the [adapter](adapters.md#mixing-adapters-in-one-escalation) the step picked (`nil` for the default one) |
 | `request` | `:chat`, or `:judgment` for a System One judge |
 
 It carries metadata, plus the rendered `purpose`. The method's inputs, its context, and the model's output never reach an

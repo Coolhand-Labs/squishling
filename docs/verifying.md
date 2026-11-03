@@ -40,7 +40,9 @@ For each squished method (inherited ones too, with the subclass's settings) it c
   keywords) can't take. Add `**` to accept any. A method that takes `**` or has no implementation can receive any
   keyword, so nothing is reported for it. `squish_fallback` and `squish_validate` are called with the inputs too, but
   aren't checked.
-- **The adapter** (once): that `config.adapter`, or RubyLLM's, can be built.
+- **The adapter** (once): that `config.adapter`, or RubyLLM's, can be built. When `config.adapters` names others, that
+  check moves to each method: every `adapter:` a step or judge names must be configured, and the default adapter is
+  only checked for the steps that use it.
 
 A problem in an inherited method is reported once for each subclass, since each is checked with its own settings.
 

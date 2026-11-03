@@ -222,7 +222,7 @@ sees it right where the value goes, and the purpose stays short and about the go
 - [Explainer site](https://coolhand-labs.github.io/squishling/): interactive walkthrough, spectrum slider, and
   token-cost calculator
 - [Configuration](docs/configuration.md): options, models and escalation, providers, generation params, inheritance
-- [Adapters](docs/adapters.md): the RubyLLM and OpenAI-compatible adapters, and writing your own
+- [Adapters](docs/adapters.md): the RubyLLM and OpenAI-compatible adapters, mixing them in one escalation, and your own
 - [Routing](docs/routing.md): when a call goes to the LLM, `squish!`, `append_to_purpose`, hardening a path,
   what the LLM sees
 - [Output schemas](docs/schemas.md): schema forms, strict mode, typed results, optional vs. empty, contracts

@@ -60,7 +60,11 @@ Flag any change that breaks one of these; they are behavior contracts, not style
   classified by its status when its body is compressed or over the cap (the body is dropped unread), so a limit never
   turns a credentials or endpoint mistake into an `LLMError`. Adapters run on worker
   threads for samples, so they hold no unsynchronized state. Built-in and custom adapters share one `Adapter::Registry`; there is no private path for the
-  built-ins. `config.adapter` is process-wide (not per class or step); unset, it auto-detects `ruby_llm`.
+  built-ins. `config.adapter` is the process-wide default; unset, it auto-detects `ruby_llm`. `config.adapters` names
+  more (built when assigned), and an escalation step picks one with `adapter:` (nil is the default), so one escalation
+  can mix adapters: `LLMClient` resolves each step's adapter once per call (`Configuration#adapter_for`), and an
+  unknown name is a `ConfigurationError` when a call starts, before its first request. Every adapter keeps this
+  contract on its own; a `ConfigurationError` from any of them still ends the call.
 - **Classifying a provider failure is the adapter's job; what happens next is Squishling's.** The line is fixed:
   - *The adapter defines* which error a provider failure is: `LLMError` (worth another attempt: rate limit, 5xx,
     timeout, connection, a prompt too long for the model), `ConfigurationError` (credentials, billing, model or
@@ -124,7 +128,7 @@ Flag any change that breaks one of these; they are behavior contracts, not style
   `squish!` call's `context:`, and source the developer explicitly passes to `append_to_purpose` — never
   instance variables wholesale. Exceptions in context are sent as class and message only. Model-generated output goes
   to a provider in two places. Escalating to a new step forwards the previous step's rejected output (capped at
-  `Invoker::MAX_FORWARDED_CHARS`) to that step's provider, which may differ; a step can opt out with
+  `Invoker::MAX_FORWARDED_CHARS`) to that step's provider (and adapter), which may differ; a step can opt out with
   `forward_rejected: false`. A judged harness sends the judge's provider the purpose, the call's full input, and both
   candidate outputs, uncapped and with no opt-out, so a judge on another provider sees the input too (see
   `docs/harnesses.md`, "The judge").
@@ -177,22 +181,22 @@ Flag any change that breaks one of these; they are behavior contracts, not style
 The public surface is `Squishling.configure`/`config`, the adapter plugin point (`config.adapter`,
 `Squishling.register_adapter`/`adapters`/`reset_adapters!`, `Squishling::Adapter::Base` (`complete`, the optional
 `judgments?`/`judge`/`capture_context`/`with_context`, the `http_failure`/`context_length?` classification
-helpers, and the `sanitized_cause` helper with its `Adapter::ProviderFailure`), `Adapter::Request` (with `cache`),
-`Adapter::Response`, and the built-in `Adapters::RubyLLM` and `Adapters::OpenAICompatible` with their options), the
-`include Squishling` DSL
+helpers, and the `sanitized_cause` helper with its `Adapter::ProviderFailure`), `Adapter::Request`
+(with `cache` and `adapter`), `Adapter::Response`, and the built-in `Adapters::RubyLLM` and
+`Adapters::OpenAICompatible` with their options), the `include Squishling` DSL
 (`squishling` — including its
-`model:`/`escalation:` (steps with `model:`, `attempts:`, `priority:`, `rotate:`, `provider:`, `params:`, `cache:`,
-`forward_rejected:`, `retry_temperature:`, `include_when:`)/`provider:`/`params:`/`cache:`/
+`model:`/`escalation:` (steps with `model:`, `attempts:`, `priority:`, `rotate:`, `provider:`, `adapter:`, `params:`,
+`cache:`, `forward_rejected:`, `retry_temperature:`, `include_when:`)/`provider:`/`params:`/`cache:`/
 `harness:` (`type:`, `compare:`, `judge:` (a step, plus `type: :chat | :judgment` and `min_confidence:`),
 `judge_instructions:`)/`append_to_purpose:`/`squawk:`/`squawk_on:` options — `purpose`, `append_to_purpose`,
 `output_schema`, `squish_when`, `squish_context`, `squish` (including `validate:`/`cache:`/`harness:`/`squawk:`/
 `squawk_on:`),
 `squish_validate`, `squish_fallback`, `result`/`squishling_result`, `squish!` (including
 `model:`/`escalation:`/`cache:`/`harness:`), and the `max_total_output_tokens:`/`max_total_input_tokens:` options of
-`squishling`, `squish`, and `squish!`), `Squishling::Configuration` options (including `default_harness`,
+`squishling`, `squish`, and `squish!`), `Squishling::Configuration` options (including `adapters`, `default_harness`,
 `default_cache`, `budget_counts_cache_reads`,
 `default_max_total_output_tokens`/`default_max_total_input_tokens`, `observer`, `squawk_on`, and `squawk`, whose
-`output:`/`metadata:`/`error:` keywords are public), `Squishling::Observer::Call`/`Usage`
+`output:`/`metadata:`/`error:` keywords are public), `Squishling::Observer::Call` (with `adapter`)/`Usage`
 (with `cache_read_tokens`/`cache_write_tokens`),
 `Squishling::Harness::DEFAULT_JUDGE_INSTRUCTIONS`, result objects (`squished?`, `to_h`, `[]`), and the error classes
 (including `InvalidOutputError#error_details` (`InvalidOutputError::Detail`: `message`, `source`,
@@ -208,8 +212,9 @@ helpers, and the `sanitized_cause` helper with its `Adapter::ProviderFailure`), 
 support is public too: `Squishling::Testing` (`install`, `forbid_provider_calls!`, `no_llm_call`, `reset!`,
 `stub_result`/`stub_error`, `validate`/`fallback_for`/`preview`, `valid_reply_for`/`invalid_reply_for`,
 `capture_squawk`/`with_squawk`), its script DSL (`step`/`sample`/`judge`, `reply`/`fail`/`once`, `Reply`),
-`Testing::Adapter#requests`/`conversations` with `Testing::Request`, and the `Testing::Minitest` / `Testing::RSpec`
-mixins. Don't break it without a clear migration path in the changelog.
+`Testing::Adapter#requests`/`conversations` with `Testing::Request` (with `adapter`, selectable with
+`step(adapter:)`), and the `Testing::Minitest` / `Testing::RSpec` mixins. Don't break it without a clear migration
+path in the changelog.
 
 ## Changelog and versioning
 
