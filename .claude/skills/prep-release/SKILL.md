@@ -33,7 +33,7 @@ what an individual PR's diff already contains.
 
 ## Phase 1: Survey open PRs, recommend a release set
 
-1. `gh pr list --state open --json number,title,author,isDraft,mergeable,mergeStateStatus,statusCheckRollup,additions,deletions,changedFiles,body,headRefName`.
+1. `gh pr list --state open --json number,title,author,isDraft,mergeable,mergeStateStatus,statusCheckRollup,authorAssociation,isCrossRepository,additions,deletions,changedFiles,body,headRefName`.
 2. For each PR, pull `gh pr diff <n>` and `gh pr checks <n>` and rate two
    independent axes:
    - **Quality** (High/Medium/Low): does the diff include spec coverage
@@ -49,13 +49,29 @@ what an individual PR's diff already contains.
      paths keep returning the same validated type; failing CI checks or a
      non-clean `mergeable` state also push risk up; an isolated additive
      feature or docs-only change is lower risk.
-3. Present one table: PR number, title, quality, risk, CI status,
+3. **Classify each PR's author** and keep a running contributor list that
+   Phase 3 and Phase 5 reuse:
+   - **bot**: `author.is_bot` (Dependabot and the like). Never thanked.
+   - **team**: `authorAssociation` is `MEMBER`, `OWNER` or `COLLABORATOR`.
+   - **outside contributor**: anyone else; `isCrossRepository` means a fork PR.
+   - **first-time contributor** (a subset of outside): the login has no
+     commit on `main` at or before the last tag
+     (`gh api "repos/Coolhand-Labs/squishling/commits?author=<login>&until=<last-tag-date>"`
+     returns `[]`, the date from `git log -1 --format=%cI <last-tag>`) and
+     `gh pr list --state merged --author <login>` is empty. Decide this now,
+     before Phase 2 merges anything: once their PR lands they stop looking new.
+     Record the GitHub `login` and the PR number(s).
+4. Present one table: PR number, title, **author** (login plus `team`, `bot`,
+   `outside contributor` or `first-time contributor`), quality, risk, CI status,
    mergeable state, and a one-line recommendation (include / exclude /
-   needs work before it can be considered). Call out anything that looks
+   needs work before it can be considered). Below the table, list every
+   outside and first-time contributor by `@login` with the PR they sent. An
+   outside PR has no CI run until a maintainer approves its workflows, so say
+   that instead of rating CI as passing. Call out anything that looks
    unfinished — draft, a WIP-sounding title, failing checks, an empty or
    placeholder description, visible `TODO`/`FIXME` in the diff — as
    "exclude, not ready" rather than rating it neutrally.
-4. Stop here and ask the user which PRs to include in this release. This
+5. Stop here and ask the user which PRs to include in this release. This
    is the one planned decision point in the whole skill — do not merge,
    write changelog entries, or touch `version.rb` until the user answers.
    (Phase 2 step 3 below has its own unplanned-error stop for an unclean
@@ -115,6 +131,20 @@ never on `main` directly.
      number in its title) for anything not merged in this run. If a
      change genuinely has no discoverable PR (a direct commit to `main`),
      write the entry without one rather than skipping it.
+     **Credit outside contributors.** For every change from an outside
+     contributor (the Phase 1 list; for changes not merged in this run, look
+     the author up with `gh pr view <n> --json author,authorAssociation` and
+     classify as in Phase 1 step 3), put `thanks @login` next to the PR
+     number, e.g. `(#79, thanks @login)`. Then end the version's section with
+     a `### Thanks` heading (after any `### Internal`) that names each
+     outside contributor and what they sent. For a first-time contributor,
+     add a shout-out saying it is their first contribution to Squishling and
+     welcoming them, e.g. "Welcome and thank you to @login, whose first
+     contribution to Squishling, #79, adds prompt caching." Contributors who
+     have landed before get the thanks without the first-time line. Skip bots
+     and team members, and omit `### Thanks` when there is nothing to put in
+     it. `/finish-release` carries this credit into the GitHub release notes,
+     which are written separately from the changelog.
    - `README.md` / `docs/*.md` — any new config option, DSL method, or
      behavior change needs the relevant section updated. Follow this
      repo's docs philosophy from `AGENTS.md`: the README stays a scannable
@@ -280,6 +310,9 @@ rule `/loop-review` uses for stuck findings.
    `rake release`/`gem push` yourself.
 2. Report one consolidated summary covering the whole run:
    - Phase 1's PR table and which PRs the user chose.
+   - Outside and first-time contributors in this release, by `@login` and PR,
+     and where their credit landed in `CHANGELOG.md` (the `thanks @login`
+     entry and the `### Thanks` section).
    - Phase 2's outcome: which PRs merged, which were skipped for new
      conflicts (and need a rebase before the next release).
    - The release-prep PR link, the version bump and why.

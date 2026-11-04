@@ -94,7 +94,8 @@ Never `rake release` or `gem push`; CI publishes.
    then `---`-separated emoji sections: `## ⚠️ Upgrading from <previous>` first
    when anything breaks or changes behavior, one per feature (e.g.
    `## 🧩 Custom Harnesses`), `## 🔒 Security` (or `Security and Fixes`),
-   `## ⚠️ Worth Knowing`, `## 🔗 Resources` (Documentation, Changelog,
+   `## ⚠️ Worth Knowing`, `## 🙏 Thanks` (only when the release has outside
+   contributors; see step 4), `## 🔗 Resources` (Documentation, Changelog,
    RubyGems). Keep only sections with content; there is no "Known Follow-ups"
    section. Re-derive the `Requires` line from the gemspec and README at the
    tag; it has changed between releases.
@@ -110,9 +111,22 @@ Never `rake release` or `gem push`; CI publishes.
    issue the release touches (partly fixed counts as still open, with a
    parenthetical saying what was fixed). Don't describe a behavior you haven't
    read in the code or the PR.
-4. Write the notes outside the repo, e.g. `$TMPDIR/squishling-release-notes-vX.Y.Z.md`
+4. **Credit outside contributors.** The notes are written here, not copied from
+   the changelog, so the credit has to be written in too. For every `(#N)` in
+   the `## [X.Y.Z]` CHANGELOG section, `gh pr view N --json author,authorAssociation`.
+   Each author who is neither a bot nor a team member (`authorAssociation` not
+   `MEMBER`, `OWNER` or `COLLABORATOR`) gets `thanks @login` next to their
+   change in the notes, and a `## 🙏 Thanks` section just before Resources names
+   them and what they sent. If that author had no commit on `main` before this
+   release (`gh api "repos/Coolhand-Labs/squishling/commits?author=<login>&until=<previous-tag-date>"`
+   is `[]`), say it is their first contribution and welcome them. Before
+   publishing, check the notes file has all of it. If the changelog's own
+   `thanks @login` entries or `### Thanks` are missing, stop and tell the user
+   instead of publishing, since the release notes are what the contributor sees;
+   don't edit the tagged changelog silently.
+5. Write the notes outside the repo, e.g. `$TMPDIR/squishling-release-notes-vX.Y.Z.md`
    (this repo has no gitignored scratch directory; never commit the file).
-5. `gh release create vX.Y.Z --verify-tag --title "vX.Y.Z" --notes-file
+6. `gh release create vX.Y.Z --verify-tag --title "vX.Y.Z" --notes-file
    <that file> --latest`. Not a draft and not a prerelease. Confirm with
    `gh release view vX.Y.Z --json name,tagName,isDraft,url`.
 
@@ -121,6 +135,8 @@ Never `rake release` or `gem push`; CI publishes.
 State, in the final message:
 - The merged PR number and its merge commit, and the tag pointing at it.
 - The release URL.
+- Outside and first-time contributors credited in the release notes, by `@login`
+  and PR (or that there were none).
 - The Publish workflow run (`gh run list --workflow publish.yml --limit 1`) and
   whether the build job passed and the publish job is waiting out the
   `rubygems-publish` timer. Do not approve, re-run, or publish by any other
