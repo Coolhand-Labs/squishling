@@ -46,6 +46,22 @@ RSpec.describe Squishling::Testing do
         .to raise_error(RSpec::Expectations::ExpectationNotMetError, /expected 2 LLM call\(s\), but there were 1/)
     end
 
+    it "compares a Struct argument by its members, as it was sent" do
+      fake = fake_squishling { |llm| llm.step(:any).reply({ "regex" => "Run.*" }) }
+      note = Struct.new(:body)
+      Class.new do
+        include Squishling
+
+        purpose "Extract the regex."
+        output_schema { string :regex }
+
+        def call(text:) = text && squish!
+      end.call(text: note.new("long text"))
+
+      assert_sent_arguments fake, { text: note.new("long text") }
+      assert_sent_arguments fake, { text: { body: "long text" } }
+    end
+
     it "accepts the requests themselves" do
       fake = fake_squishling { |llm| llm.step(:any).reply({ "regex" => "Run.*" }) }
       klass.call(text: "long text")

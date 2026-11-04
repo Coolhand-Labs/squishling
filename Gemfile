@@ -9,6 +9,7 @@ group :development, :test do
   gem "bundler-audit", "~> 0.9", require: false
   gem "coolhand", "~> 0.10", require: false # examples/coolhand_example.rb only
   gem "exhale", "~> 0.2", require: false
+  gem "ostruct", require: false # the OpenStruct argument spec; no longer a default gem on Ruby 4.0
   gem "simplecov", require: false
   gem "rake", "~> 13.0"
   gem "rspec", "~> 3.13"
