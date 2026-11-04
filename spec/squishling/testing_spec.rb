@@ -62,6 +62,22 @@ RSpec.describe Squishling::Testing do
       assert_sent_arguments fake, { text: { body: "long text" } }
     end
 
+    it "fails when a Struct argument's members differ from what was sent" do
+      fake = fake_squishling { |llm| llm.step(:any).reply({ "regex" => "Run.*" }) }
+      note = Struct.new(:body)
+      Class.new do
+        include Squishling
+
+        purpose "Extract the regex."
+        output_schema { string :regex }
+
+        def call(text:) = text && squish!
+      end.call(text: note.new("long text"))
+
+      expect { assert_sent_arguments fake, { text: note.new("other") } }
+        .to raise_error(RSpec::Expectations::ExpectationNotMetError, /but it was sent .*"body" ?=> ?"long text"/)
+    end
+
     it "accepts the requests themselves" do
       fake = fake_squishling { |llm| llm.step(:any).reply({ "regex" => "Run.*" }) }
       klass.call(text: "long text")

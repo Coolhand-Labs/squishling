@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "ostruct"
+
 require_relative "../fixtures/sourced_parser"
 
 RSpec.describe Squishling, "#squish!" do
@@ -282,12 +284,20 @@ RSpec.describe Squishling, "#squish!" do
     end
 
     it "sends an OpenStruct as its members" do
-      require "ostruct"
       chats = stub_llm({ "name" => "Ada" })
 
       klass.call(data: OpenStruct.new(a: 1, b: [2])) # rubocop:disable Style/OpenStructUse
 
       expect(sent(chats)).to eq("a" => 1, "b" => [2])
+    end
+
+    it "still sends a Struct when OpenStruct isn't loaded" do
+      hide_const("OpenStruct")
+      chats = stub_llm({ "name" => "Ada" })
+
+      klass.call(data: point.new(1, "a"))
+
+      expect(sent(chats)).to eq("x" => 1, "label" => "a")
     end
 
     it "walks nested members" do
@@ -324,6 +334,26 @@ RSpec.describe Squishling, "#squish!" do
       with_context.call(data: "x")
 
       expect(JSON.parse(chats.first.messages.first)["context"]).to eq("tier" => { "level" => "gold" }, "extra" => ["x"])
+    end
+
+    it "sends a Struct, Data, or Set that appears twice without calling it cyclic" do
+      chats = stub_llm({ "name" => "Ada" })
+      shared = point.new(1, nil)
+      set = Set[1]
+
+      klass.call(data: [shared, shared, pair.new(set, set)])
+
+      expect(sent(chats)).to eq([{ "x" => 1, "label" => nil }, { "x" => 1, "label" => nil },
+                                 { "left" => [1], "right" => [1] }])
+    end
+
+    it "raises a ConfigurationError for an OpenStruct that contains itself" do
+      chats = stub_llm({ "name" => "Ada" })
+      cyclic = OpenStruct.new(a: 1) # rubocop:disable Style/OpenStructUse
+      cyclic.me = cyclic
+
+      expect { klass.call(data: cyclic) }.to raise_error(Squishling::ConfigurationError, /contains itself/)
+      expect(chats).to be_empty
     end
 
     it "raises a ConfigurationError for a Struct that contains itself" do

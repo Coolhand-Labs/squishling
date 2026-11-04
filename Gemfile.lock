@@ -141,7 +141,7 @@ DEPENDENCIES
   bundler-audit (~> 0.9)
   coolhand (~> 0.10)
   exhale (~> 0.2)
-  ostruct
+  ostruct (~> 0.6)
   rake (~> 13.0)
   rspec (~> 3.13)
   rubocop (~> 1.92)

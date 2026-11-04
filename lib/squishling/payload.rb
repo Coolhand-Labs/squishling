@@ -1,10 +1,11 @@
 # frozen_string_literal: true
 
 module Squishling
-  # Turns a call's arguments and context into the plain JSON the model is sent.
+  # Turns a call's arguments and context into the plain JSON the model is sent. Internal: not part of the public API.
   module Payload
     module_function
 
+    # label names the call in a ConfigurationError.
     def jsonify(value, label)
       Schema.jsonify(describe(value, label))
     end
@@ -16,17 +17,15 @@ module Squishling
     def describe(value, label, path = [])
       case value
       when Exception then { class: exception_class_name(value.class), message: value.message }
-      when Hash
-        within(value, label, path) { |inner| value.transform_values { |item| describe(item, label, inner) } }
       when Array, Set then within(value, label, path) { |inner| value.map { |item| describe(item, label, inner) } }
-      else keyed?(value) ? members(value, label, path) : value
+      when Hash, Struct, Data then members(value, label, path)
+      else open_struct?(value) ? members(value, label, path) : value
       end
     end
 
-    def keyed?(value) = value.is_a?(Struct) || value.is_a?(Data) || open_struct?(value)
-
     def members(value, label, path)
-      within(value, label, path) { |inner| value.to_h.transform_values { |item| describe(item, label, inner) } }
+      pairs = value.is_a?(Hash) ? value : value.to_h
+      within(value, label, path) { |inner| pairs.transform_values { |item| describe(item, label, inner) } }
     end
 
     # OpenStruct is a default gem that Ruby 4.0 stops loading by default, so it can't be named unless it is loaded.
