@@ -232,6 +232,14 @@ Source is read with Ruby's own parser (Prism) the first time it's needed and cac
   `forward_rejected: false` on a step to start it from the original input only, without the rejected output or
   its errors. Don't put data in those messages that you wouldn't send as an argument.
 
+Arguments and context are converted to JSON before they are sent. A `Struct`, `Data`, or `OpenStruct` goes as an
+object of its members (its `to_h`, which must return a Hash, is the hook: a `to_json` on these types is not consulted,
+and the class name is not sent), a `Set` as an array, and Hashes and Arrays are walked
+recursively. An exception goes as its class and message. A value that contains itself raises a `ConfigurationError`.
+All members are sent, so pass a Hash or define `to_h` to leave a field out. Any other object goes as the loaded JSON
+library writes it (plain `JSON.generate` sends a `Range`, a `Time`, or a plain object as its `to_s`), so pass a Hash,
+or an object whose `to_json` sends what you mean, when that text isn't what the model should see.
+
 `squish_context` names are read from a method of that name if there is one, otherwise from the instance
 variable. Only context you name is sent. Instance variables are never dumped wholesale, so API clients,
 database connections, and secrets stay out of the prompt.
