@@ -20,7 +20,8 @@ module Squishling
     class OpenAICompatible < Adapter::Base
       Options = OpenAIOptions
       Transport = OpenAITransport
-      private_constant :Options, :Transport
+      Content = OpenAIContent
+      private_constant :Options, :Transport, :Content
 
       DEFAULT_BASE_URL = "https://api.openai.com/v1"
       STRUCTURED_OUTPUT = %i[json_schema json_object none].freeze
@@ -76,6 +77,11 @@ module Squishling
           "default_model=#{@default_model.inspect} structured_output=#{@structured_output.inspect}>"
       end
 
+      # Images go out as image_url content parts (a data: URI, or the image's own URL).
+      def images?
+        true
+      end
+
       def complete(request)
         model = request.model || @default_model
         unless model
@@ -117,7 +123,9 @@ module Squishling
 
       def messages(request)
         system = system_prompt(request)
-        turns = request.messages.map { |message| { "role" => message[:role].to_s, "content" => message[:content] } }
+        turns = request.messages.map do |message|
+          { "role" => message[:role].to_s, "content" => Content.of(message[:content]) }
+        end
         system ? [{ "role" => "system", "content" => system }] + turns : turns
       end
 
