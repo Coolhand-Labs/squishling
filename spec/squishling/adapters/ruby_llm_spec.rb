@@ -8,13 +8,14 @@ RSpec.describe Squishling::Adapters::RubyLLM do
   let(:fake_chat_class) do
     reply = reply_class
     Class.new do
-      attr_reader :options, :instructions, :schema, :added, :asked, :generation
+      attr_reader :options, :instructions, :schema, :added, :asked, :attached, :generation
 
       def initialize(options, responses)
         @options = options
         @responses = responses
         @added = []
         @asked = []
+        @attached = []
         @generation = {}
       end
 
@@ -31,8 +32,9 @@ RSpec.describe Squishling::Adapters::RubyLLM do
 
       def add_message(attributes) = @added << attributes
 
-      define_method(:ask) do |message|
+      define_method(:ask) do |message, with: nil|
         @asked << message
+        @attached << with if with
         response = @responses.shift
         raise response if response.is_a?(Exception)
 
@@ -123,6 +125,28 @@ RSpec.describe Squishling::Adapters::RubyLLM do
 
       expect(chats.first.added).to eq([{ role: :user, content: "first" }, { role: :assistant, content: "bad" }])
       expect(chats.first.asked).to eq(["try again"])
+    end
+
+    it "sends images as RubyLLM attachments, in the history and with the message it asks" do
+      stub_chat("{}")
+      png = "\x89PNG\r\n\x1A\n#{'x' * 8}".b
+      bytes = Squishling::Image.new(data: png, detail: :low)
+      linked = Squishling::Image.from_url("https://example.com/r.png")
+      first = [{ type: :text, text: "first" }, { type: :image, image: bytes }]
+      messages = [{ role: :user, content: first }, { role: :assistant, content: "bad" },
+                  { role: :user, content: [{ type: :text, text: "again" }, { type: :image, image: linked }] }]
+
+      expect(adapter.images?).to be(true)
+      adapter.complete(adapter_request(messages:))
+
+      added = chats.first.added
+      expect(added.first).to include(role: :user, content: "first")
+      expect(added.first[:attachments].size).to eq(1)
+      expect(added.first[:attachments].first).to have_attributes(filename: "image.png", mime_type: "image/png",
+        resolution: :low)
+      expect(added.last).to eq(role: :assistant, content: "bad")
+      expect(chats.first.asked).to eq(["again"])
+      expect(chats.first.attached.flatten.map { |attachment| attachment.source.to_s }).to eq(["https://example.com/r.png"])
     end
 
     it "assumes a model exists when it's missing from RubyLLM's registry and a provider is given" do

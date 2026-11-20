@@ -124,6 +124,10 @@ Flag any change that breaks one of these; they are behavior contracts, not style
   attempt of its own to report, so `Invoker` sends one final report for it (`stopped:`, `final: true`, no output), for
   built-in and custom harnesses alike, before `squish_fallback` runs. Each error is reported once, even when it passes
   through an outer squished call.
+- **Image bytes leave only to the provider.** A `Squishling::Image` argument goes to the provider (and a chat
+  judge's) as a content part, with a placeholder in the JSON input; `Image#inspect`/`to_s`/`as_json`/`to_json`
+  describe it without its bytes or a URL's query, so logs, errors, `squawk`, and serializers never carry them. An
+  adapter that doesn't declare `images?` is never sent content parts.
 - **Only named context leaves the process.** The LLM sees method arguments, `squish_context` values, a
   `squish!` call's `context:`, and source the developer explicitly passes to `append_to_purpose` — never
   instance variables wholesale. Exceptions in context are sent as class and message only. Model-generated output goes
@@ -180,10 +184,12 @@ Flag any change that breaks one of these; they are behavior contracts, not style
 
 The public surface is `Squishling.configure`/`config`, the adapter plugin point (`config.adapter`,
 `Squishling.register_adapter`/`adapters`/`reset_adapters!`, `Squishling::Adapter::Base` (`complete`, the optional
-`judgments?`/`judge`/`capture_context`/`with_context`, the `http_failure`/`context_length?` classification
+`judgments?`/`judge`/`images?`/`capture_context`/`with_context`, the `http_failure`/`context_length?` classification
 helpers, and the `sanitized_cause` helper with its `Adapter::ProviderFailure`), `Adapter::Request`
-(with `cache` and `adapter`), `Adapter::Response`, and the built-in `Adapters::RubyLLM` and
-`Adapters::OpenAICompatible` with their options), the `include Squishling` DSL
+(with `cache` and `adapter`), `Adapter::Response`, `Squishling::Image` (`new`/`from_path`/`from_url`, and what an
+adapter reads: `data`, `media_type`, `url`/`url?`, `detail`, `data_uri`, `filename`) with the content parts it puts in
+a message, and the built-in `Adapters::RubyLLM` and `Adapters::OpenAICompatible` with their options), the
+`include Squishling` DSL
 (`squishling` — including its
 `model:`/`escalation:` (steps with `model:`, `attempts:`, `priority:`, `rotate:`, `provider:`, `adapter:`, `params:`,
 `cache:`, `forward_rejected:`, `retry_temperature:`, `include_when:`)/`provider:`/`params:`/`cache:`/
@@ -213,8 +219,8 @@ support is public too: `Squishling::Testing` (`install`, `forbid_provider_calls!
 `stub_result`/`stub_error`, `validate`/`fallback_for`/`preview`, `valid_reply_for`/`invalid_reply_for`,
 `capture_squawk`/`with_squawk`), its script DSL (`step`/`sample`/`judge`, `reply`/`fail`/`once`, `Reply`),
 `Testing::Adapter#requests`/`conversations` with `Testing::Request` (with `adapter`, selectable with
-`step(adapter:)`), and the `Testing::Minitest` / `Testing::RSpec` mixins. Don't break it without a clear migration
-path in the changelog.
+`step(adapter:)`, and `images`), and the `Testing::Minitest` / `Testing::RSpec` mixins. Don't break it without a clear
+migration path in the changelog.
 
 ## Changelog and versioning
 

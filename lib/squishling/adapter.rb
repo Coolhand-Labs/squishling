@@ -8,7 +8,10 @@ module Squishling
   # and registering it (Squishling.register_adapter) or assigning an instance to config.adapter. See docs/adapters.md.
   module Adapter
     # One completion to make. messages holds the conversation so far as { role: :user | :assistant, content: String }
-    # Hashes, ending with the user message to answer; instructions is the system prompt. schema is the strict
+    # Hashes, ending with the user message to answer; instructions is the system prompt. When the call has images
+    # (see Image), a chat's first user message has an Array of content parts instead of a String: { type: :text,
+    # text: String } and then { type: :image, image: Squishling::Image } per image. Only adapters whose #images? is
+    # true are sent them. schema is the strict
     # structured-output payload ({ "name", "description", "schema", "strict" => true }). params is the resolved
     # generation params: the portable :temperature, :max_output_tokens, and :thinking, plus any provider-specific keys
     # (see Params). label ("Class#method") prefixes the adapter's error messages. model and provider are the step's
@@ -115,6 +118,12 @@ module Squishling
 
       # Whether #judge is supported (judges with type: :judgment).
       def judgments?
+        false
+      end
+
+      # Whether #complete takes images: a message whose content is an Array of parts (see Request). A call with images
+      # through an adapter that doesn't is a ConfigurationError, made before any request.
+      def images?
         false
       end
 

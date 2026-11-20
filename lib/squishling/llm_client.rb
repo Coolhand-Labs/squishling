@@ -5,8 +5,9 @@ module Squishling
   # when it names none). Squishling owns the conversation: each Conversation holds the system prompt, the output
   # schema, and the messages so far, and every request sends all of it to the adapter.
   class LLMClient
-    # One chat on one escalation step. messages are { role:, content: } Hashes, grown by #ask.
-    Conversation = Struct.new(:step, :instructions, :schema, :messages)
+    # One chat on one escalation step. messages are { role:, content: } Hashes, grown by #ask. images go with the
+    # chat's first message.
+    Conversation = Struct.new(:step, :instructions, :schema, :messages, :images)
 
     # purpose, harness (the harness type), and handed_off (squish! sent the call here) are only told to the observer.
     # budget (see Budget) caps the tokens the requests of this client may use between them.
@@ -54,9 +55,21 @@ module Squishling
       threads&.each { |thread| thread.kill.join if thread.alive? }
     end
 
-    # A fresh conversation on one escalation step, with the system prompt and the strict output schema.
-    def chat(step, instructions:, schema:)
-      Conversation.new(step, instructions, schema, [])
+    # A fresh conversation on one escalation step, with the system prompt, the strict output schema, and the Images
+    # its first message carries. Raises ConfigurationError for images when the step's adapter doesn't take them.
+    def chat(step, instructions:, schema:, images: [])
+      if images.any? && !images?(step)
+        raise ConfigurationError, "#{@label}: the call has images, but the #{adapter_for(step).class} adapter " \
+                                  "doesn't take them (see Adapter::Base#images?)"
+      end
+
+      Conversation.new(step, instructions, schema, [], images)
+    end
+
+    # Whether the step's adapter takes images in a message's content.
+    def images?(step)
+      adapter = adapter_for(step)
+      adapter.respond_to?(:images?) && adapter.images?
     end
 
     # One request in the conversation: the message goes in, and the adapter's answer is kept in it so the next
@@ -104,7 +117,7 @@ module Squishling
     end
 
     def complete(chat, message, step, reask)
-      messages = chat.messages + [{ role: :user, content: message }]
+      messages = chat.messages + [{ role: :user, content: content(chat, message) }]
       request = Adapter::Request.new(label: @label, model: step.model, provider: step.provider,
         instructions: chat.instructions, messages:, schema: chat.schema, params: step.request_params(reask),
         cache: step.cache, adapter: step.adapter)
@@ -128,6 +141,14 @@ module Squishling
 
     def capture_context(adapter)
       adapter.capture_context if adapter.respond_to?(:capture_context)
+    end
+
+    # A chat's first message carries its images, after the text, as content parts (see Adapter::Request); every other
+    # message is the text alone.
+    def content(chat, message)
+      return message unless chat.messages.empty? && chat.images&.any?
+
+      [{ type: :text, text: message }, *chat.images.map { |image| { type: :image, image: } }]
     end
 
     def with_context(adapter, context, &)

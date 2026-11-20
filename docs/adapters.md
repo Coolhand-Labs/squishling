@@ -223,7 +223,7 @@ Squishling.register_adapter(:acme, AcmeAdapter)
 | `model`, `provider` | The escalation step's, or `nil` when it names none (use your own default). What `provider:` means is up to you. |
 | `adapter` | The name your adapter was configured under in `config.adapters`, or `nil` when it is the default adapter. |
 | `instructions` | The system prompt. |
-| `messages` | The conversation so far, ending with the user message to answer. After invalid output, Squishling appends your previous answer and a retry message; you never keep history. |
+| `messages` | The conversation so far, ending with the user message to answer. After invalid output, Squishling appends your previous answer and a retry message; you never keep history. Each `content` is a String, except a chat's first user message in a call with [images](#images). |
 | `schema` | `{ "name", "description", "schema", "strict" => true }`: the strict structured-output payload, without the conditional keywords providers can't take. |
 | `params` | The resolved [generation params](configuration.md#generation-params): the portable `:temperature`, `:max_output_tokens`, `:thinking`, plus provider-specific keys. Squishling has already rejected the keys it owns. Translate the portable ones for your provider; pass the rest through if it takes them. |
 | `cache` | The [prompt caching](configuration.md#prompt-caching) to ask for: `false` (none), or a Hash of options (`{}` for the provider's default, `{ ttl: "1h" }`). Ignore it if your provider has no prompt caching or caches on its own. |
@@ -285,6 +285,15 @@ exception propagates unwrapped and is never retried, so map your transport's err
 - **`capture_context` and `with_context(context) { … }`**: samples (the `:squishsum` harnesses) send their requests from
   worker threads. `capture_context` runs on the caller's thread and returns whatever your tracing needs; `with_context`
   re-establishes it around each worker's request. The RubyLLM adapter uses this for its instrumentation workflow.
+
+### Images
+
+A call can carry [images](images.md). To take them, return `true` from `images?`; then a chat's first user message has
+an Array of content parts instead of a String: `{ type: :text, text: String }`, then `{ type: :image, image:
+Squishling::Image }` per image. An `Image` gives you `data` (the bytes) with `media_type`, `data_uri`, and
+`filename`, or, for `url?` images, the `url` for the provider to fetch, plus the `detail` asked for (`:low`, `:high`,
+or `nil`). Without `images?`, a call with images raises `ConfigurationError` before any request, so adapters that
+predate images keep getting Strings.
 
 ### Thread safety
 

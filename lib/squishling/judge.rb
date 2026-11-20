@@ -43,13 +43,15 @@ module Squishling
 
     # judge: is a normalized judge step (see Harness::JudgedSquishsum) or nil for the escalation's next stage,
     # instructions: a String, a Proc evaluated against the receiver, or nil for the default prompt.
+    # images: the call's Images, which a chat judge is sent with the input; a :judgment judge can't take them.
     def initialize(definition:, receiver:, client:, judge:, instructions:, path:, purpose:, payload:, escalate:,
-      log_failure:, guard:, budget_check:, harness_type:)
+      log_failure:, guard:, budget_check:, harness_type:, images: [])
       @definition = definition
       @receiver = receiver
       @client = client
       @judge = judge
       @instructions = instructions
+      @images = images
       check!
       check_judgments!
       @guard = guard
@@ -102,7 +104,13 @@ module Squishling
 
     # Raised before any request, like the rest of the judge's checks.
     def check_judgments!
-      return if !judgment? || @client.judgments?(judgment_steps(@judge).first)
+      return unless judgment?
+
+      if @images.any?
+        raise ConfigurationError, "#{@definition.label}: judge type: :judgment can't see the call's images; use " \
+                                  "type: :chat"
+      end
+      return if @client.judgments?(judgment_steps(@judge).first)
 
       raise ConfigurationError, "#{@definition.label}: judge type: :judgment needs an adapter that supports " \
                                 "judgments (the judge's adapter doesn't); use type: :chat or the :ruby_llm adapter"
@@ -142,8 +150,8 @@ module Squishling
     def chat(candidates)
       prompt = Invoker::Prompt.new(
         instructions: "#{judge_instructions}\n\nThe operation's purpose:\n<purpose>\n#{@purpose}\n" \
-                      "</purpose>\n\n#{INPUT_NOTE}",
-        schema: Schema.for(VERDICT_SCHEMA), input: JSON.generate(state(candidates)), role: :judge
+                      "</purpose>\n\n#{INPUT_NOTE}#{Invoker::IMAGE_NOTE if @images.any?}",
+        schema: Schema.for(VERDICT_SCHEMA), input: JSON.generate(state(candidates)), role: :judge, images: @images
       )
       result = @escalate.call(@steps, prompt)
       Verdict.new(choice: result[:verdict].to_sym, reason: result[:reason], detail: nil)
