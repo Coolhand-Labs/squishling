@@ -151,6 +151,23 @@ RSpec.describe Squishling::Adapters::OpenAICompatible do # rubocop:disable RSpec
       expect(response.tokens).to eq(input_tokens: 12, output_tokens: 4)
     end
 
+    it "sends images as image_url parts after the text: bytes as a data: URI, a URL as is, with any detail" do
+      stub_post.to_return(reply)
+      png = "\x89PNG\r\n\x1A\n#{'x' * 8}".b
+      bytes = Squishling::Image.new(data: png, detail: :high)
+      linked = Squishling::Image.from_url("https://example.com/r.png")
+      content = [{ type: :text, text: "hi" }, { type: :image, image: bytes }, { type: :image, image: linked }]
+
+      expect(adapter.images?).to be(true)
+      adapter.complete(adapter_request(messages: [{ role: :user, content: }]))
+
+      expect(sent_body["messages"].last["content"]).to eq([
+        { "type" => "text", "text" => "hi" },
+        { "type" => "image_url", "image_url" => { "url" => bytes.data_uri, "detail" => "high" } },
+        { "type" => "image_url", "image_url" => { "url" => "https://example.com/r.png" } }
+      ])
+    end
+
     it "sends the whole conversation, with assistant turns" do
       stub_post.to_return(reply)
       messages = [{ role: :user, content: "a" }, { role: :assistant, content: "bad" },

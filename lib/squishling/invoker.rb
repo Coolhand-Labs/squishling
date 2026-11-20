@@ -8,12 +8,20 @@ module Squishling
       present, holds additional state about the caller. Respond only with JSON matching the required schema.
     NOTE
 
+    IMAGE_NOTE = <<~NOTE
+      Images are attached to this message. Each {"attached_image": N} value in the input stands for the Nth image.
+    NOTE
+
     # The most of a rejected output that is forwarded to the next escalation step.
     MAX_FORWARDED_CHARS = 4_000
 
-    # One escalation's request: the system prompt, the output Schema, and the first user message. The judge's
-    # role (:judge) skips squish_validate and names the judge in errors and logs.
-    Prompt = Data.define(:instructions, :schema, :input, :role)
+    # One escalation's request: the system prompt, the output Schema, the first user message, and the Images that go
+    # with it. The judge's role (:judge) skips squish_validate and names the judge in errors and logs.
+    Prompt = Data.define(:instructions, :schema, :input, :role, :images) do
+      def initialize(instructions:, schema:, input:, role:, images: [])
+        super
+      end
+    end
 
     def initialize(definition, receiver, inputs)
       @definition = definition
@@ -55,8 +63,10 @@ module Squishling
       raise ConfigurationError, "#{@definition.label} has no purpose" if purpose.nil? || purpose.empty?
       raise ConfigurationError, "#{@definition.label} has no output_schema" unless schema
 
+      @images = []
       body = payload
-      prompt = Prompt.new(instructions: "#{purpose}\n\n#{INPUT_NOTE}", schema:, input: JSON.generate(body), role: nil)
+      instructions = "#{purpose}\n\n#{INPUT_NOTE}#{IMAGE_NOTE if @images.any?}"
+      prompt = Prompt.new(instructions:, schema:, input: JSON.generate(body), role: nil, images: @images.dup.freeze)
       Built.new(prompt:, payload: body, purpose:)
     end
 
@@ -82,6 +92,7 @@ module Squishling
     # Arrays being walked: one that contains itself is a ConfigurationError rather than a SystemStackError.
     def describe(value, path = [])
       case value
+      when Image then { attached_image: attach(value) }
       when Exception then { class: exception_class_name(value.class), message: value.message }
       when Hash then within(value, path) { |inner| value.transform_values { |item| describe(item, inner) } }
       when Array then within(value, path) { |inner| value.map { |item| describe(item, inner) } }
@@ -96,6 +107,15 @@ module Squishling
       end
 
       yield path + [container]
+    end
+
+    # The image's number in the message (1-based). The same Image passed twice is attached once.
+    def attach(image)
+      index = @images.index { |attached| attached.equal?(image) }
+      return index + 1 if index
+
+      @images << image
+      @images.size
     end
 
     # An anonymous error class (Class.new(StandardError)) is named after its closest named ancestor.

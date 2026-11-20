@@ -128,7 +128,8 @@ module Squishling
       owner!
       judge = judge_step(judge) unless judge.nil?
       Judge.new(definition: @definition, receiver: @receiver, client: @client, judge:, instructions:, path: steps,
-        purpose: @purpose, payload: @payload, escalate: method(:escalate_with), log_failure: method(:log_failure),
+        purpose: @purpose, payload: @payload, images: @prompt.images, escalate: method(:escalate_with),
+        log_failure: method(:log_failure),
         guard: method(:owner!), budget_check: method(:check_budget!), harness_type: @harness.type)
     end
 
@@ -287,7 +288,7 @@ module Squishling
     end
 
     def start_chat(step, prompt)
-      @client.chat(step, instructions: prompt.instructions, schema: prompt.schema.llm_schema)
+      @client.chat(step, instructions: prompt.instructions, schema: prompt.schema.llm_schema, images: prompt.images)
     end
 
     # following is the attempt that comes next, which is not the next one when a repeated reply skips ahead.
