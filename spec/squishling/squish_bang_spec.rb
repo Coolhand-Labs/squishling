@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "ostruct"
+
 require_relative "../fixtures/sourced_parser"
 
 RSpec.describe Squishling, "#squish!" do
@@ -255,6 +257,113 @@ RSpec.describe Squishling, "#squish!" do
 
     klass.call(data: [shared, shared])
     expect(JSON.parse(chats.first.messages.first)).to eq("arguments" => { "data" => [{ "x" => 1 }, { "x" => 1 }] })
+  end
+
+  describe "arguments that are Struct, Data, OpenStruct, or Set" do
+    let(:klass) do
+      Class.new do
+        include Squishling
+
+        purpose "Explain."
+        output_schema { string :name }
+
+        def call(data:) = data && squish!
+      end
+    end
+    let(:point) { Struct.new(:x, :label) }
+    let(:pair) { Data.define(:left, :right) }
+
+    def sent(chats) = JSON.parse(chats.first.messages.first)["arguments"]["data"]
+
+    it "sends their members as JSON, not Ruby's inspect text" do
+      chats = stub_llm({ "name" => "Ada" })
+
+      klass.call(data: [point.new(1, "secret"), pair.new("l", "r"), Set[1, 2]])
+
+      expect(sent(chats)).to eq([{ "x" => 1, "label" => "secret" }, { "left" => "l", "right" => "r" }, [1, 2]])
+    end
+
+    it "sends an OpenStruct as its members" do
+      chats = stub_llm({ "name" => "Ada" })
+
+      klass.call(data: OpenStruct.new(a: 1, b: [2])) # rubocop:disable Style/OpenStructUse
+
+      expect(sent(chats)).to eq("a" => 1, "b" => [2])
+    end
+
+    it "still sends a Struct when OpenStruct isn't loaded" do
+      hide_const("OpenStruct")
+      chats = stub_llm({ "name" => "Ada" })
+
+      klass.call(data: point.new(1, "a"))
+
+      expect(sent(chats)).to eq("x" => 1, "label" => "a")
+    end
+
+    it "walks nested members" do
+      chats = stub_llm({ "name" => "Ada" })
+
+      klass.call(data: point.new(pair.new(Set[point.new(1, nil)], 2), { "k" => point.new(3, 4) }))
+
+      expect(sent(chats)).to eq("x" => { "left" => [{ "x" => 1, "label" => nil }], "right" => 2 },
+        "label" => { "k" => { "x" => 3, "label" => 4 } })
+    end
+
+    it "sends members of keyword_init Structs and an exception held by one as class and message" do
+      chats = stub_llm({ "name" => "Ada" })
+      kw = Struct.new(:code, :error, keyword_init: true)
+
+      klass.call(data: kw.new(code: 7, error: ArgumentError.new("bad")))
+
+      expect(sent(chats)).to eq("code" => 7, "error" => { "class" => "ArgumentError", "message" => "bad" })
+    end
+
+    it "converts them in squish_context and a squish! call's context: too" do
+      with_context = Class.new do
+        include Squishling
+
+        purpose "Explain."
+        output_schema { string :name }
+        squish_context :tier
+
+        def tier = Struct.new(:level).new("gold")
+        def call(data:) = squish!(context: { extra: Set[data] })
+      end
+      chats = stub_llm({ "name" => "Ada" })
+
+      with_context.call(data: "x")
+
+      expect(JSON.parse(chats.first.messages.first)["context"]).to eq("tier" => { "level" => "gold" }, "extra" => ["x"])
+    end
+
+    it "sends a Struct, Data, or Set that appears twice without calling it cyclic" do
+      chats = stub_llm({ "name" => "Ada" })
+      shared = point.new(1, nil)
+      set = Set[1]
+
+      klass.call(data: [shared, shared, pair.new(set, set)])
+
+      expect(sent(chats)).to eq([{ "x" => 1, "label" => nil }, { "x" => 1, "label" => nil },
+                                 { "left" => [1], "right" => [1] }])
+    end
+
+    it "raises a ConfigurationError for an OpenStruct that contains itself" do
+      chats = stub_llm({ "name" => "Ada" })
+      cyclic = OpenStruct.new(a: 1) # rubocop:disable Style/OpenStructUse
+      cyclic.me = cyclic
+
+      expect { klass.call(data: cyclic) }.to raise_error(Squishling::ConfigurationError, /contains itself/)
+      expect(chats).to be_empty
+    end
+
+    it "raises a ConfigurationError for a Struct that contains itself" do
+      chats = stub_llm({ "name" => "Ada" })
+      cyclic = point.new(1, nil)
+      cyclic.label = [cyclic]
+
+      expect { klass.call(data: cyclic) }.to raise_error(Squishling::ConfigurationError, /contains itself/)
+      expect(chats).to be_empty
+    end
   end
 
   it "sends an exception passed as an argument as its class and message" do

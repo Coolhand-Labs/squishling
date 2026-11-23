@@ -12,7 +12,7 @@ module Squishling
         sent = requests_of(source)[request]
         return "expected request ##{request} to have been sent, but only #{requests_of(source).size} were" unless sent
 
-        wanted = Schema.jsonify(expected)
+        wanted = Payload.jsonify(expected, "sent_arguments")
         return nil if sent.arguments == wanted
 
         "expected the model to be sent arguments #{wanted.inspect}, but it was sent #{sent.arguments.inspect}"

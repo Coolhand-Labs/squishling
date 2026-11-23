@@ -71,37 +71,10 @@ module Squishling
 
     # Only the arguments, the declared squish_context names, and a squish! call's context leave the process.
     def payload
-      body = { arguments: Schema.jsonify(describe(@inputs)) }
+      body = { arguments: Payload.jsonify(@inputs, @definition.label) }
       context = @definition.context_names.to_h { |name| [name, context_value(name)] }.merge(@definition.call_context)
-      body[:context] = Schema.jsonify(describe(context)) if context.any?
+      body[:context] = Payload.jsonify(context, @definition.label) if context.any?
       body
-    end
-
-    # Exceptions are sent as their class and message. Plain JSON would send only the message, and with
-    # json/add/exception loaded it would also send the backtrace, which exposes file paths. path is the Hashes and
-    # Arrays being walked: one that contains itself is a ConfigurationError rather than a SystemStackError.
-    def describe(value, path = [])
-      case value
-      when Exception then { class: exception_class_name(value.class), message: value.message }
-      when Hash then within(value, path) { |inner| value.transform_values { |item| describe(item, inner) } }
-      when Array then within(value, path) { |inner| value.map { |item| describe(item, inner) } }
-      else value
-      end
-    end
-
-    def within(container, path)
-      if path.any? { |ancestor| ancestor.equal?(container) }
-        raise ConfigurationError, "#{@definition.label}: an argument or context value contains itself, " \
-                                  "so it can't be sent as JSON"
-      end
-
-      yield path + [container]
-    end
-
-    # An anonymous error class (Class.new(StandardError)) is named after its closest named ancestor.
-    def exception_class_name(klass)
-      klass = klass.superclass until klass.name
-      klass.name
     end
 
     def context_value(name)
