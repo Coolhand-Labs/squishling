@@ -100,6 +100,15 @@ module Squishling
       JSON.generate(inspect)
     end
 
+    # YAML gets the description, and Marshal refuses (the way Secret does), so a cache or job payload can't carry bytes.
+    def encode_with(coder)
+      coder.scalar = inspect
+    end
+
+    def marshal_dump
+      raise TypeError, "Squishling::Image can't be dumped: it holds the image's bytes"
+    end
+
     def ==(other)
       other.is_a?(Image) && other.state == state
     end
@@ -126,7 +135,7 @@ module Squishling
     end
 
     def checked_media_type(media_type)
-      return media_type if MEDIA_TYPES.key?(media_type)
+      return -media_type if MEDIA_TYPES.key?(media_type)
 
       problem = media_type ? "got #{media_type.inspect}" : "it couldn't be read from the bytes"
       raise ConfigurationError,

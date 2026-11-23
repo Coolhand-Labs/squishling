@@ -146,7 +146,18 @@ RSpec.describe Squishling::Adapters::RubyLLM do
         resolution: :low)
       expect(added.last).to eq(role: :assistant, content: "bad")
       expect(chats.first.asked).to eq(["again"])
-      expect(chats.first.attached.flatten.map { |attachment| attachment.source.to_s }).to eq(["https://example.com/r.png"])
+      sources = chats.first.attached.flatten.map { |attachment| attachment.source.to_s }
+      expect(sources).to eq(["https://example.com/r.png"])
+    end
+
+    it "reports a failure building a history attachment as an LLMError, like one from the request" do
+      stub_chat("{}")
+      linked = Squishling::Image.from_url("https://example.com/r")
+      allow(RubyLLM::Attachment).to receive(:new).and_raise(Faraday::ConnectionFailed, "down")
+      messages = [{ role: :user, content: [{ type: :image, image: linked }] }, { role: :assistant, content: "bad" },
+                  { role: :user, content: "again" }]
+
+      expect { adapter.complete(adapter_request(messages:)) }.to raise_error(Squishling::LLMError)
     end
 
     it "assumes a model exists when it's missing from RubyLLM's registry and a provider is given" do

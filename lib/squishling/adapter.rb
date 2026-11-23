@@ -11,9 +11,9 @@ module Squishling
     # Hashes, ending with the user message to answer; instructions is the system prompt. When the call has images
     # (see Image), a chat's first user message has an Array of content parts instead of a String: { type: :text,
     # text: String } and then { type: :image, image: Squishling::Image } per image. Only adapters whose #images? is
-    # true are sent them. schema is the strict
-    # structured-output payload ({ "name", "description", "schema", "strict" => true }). params is the resolved
-    # generation params: the portable :temperature, :max_output_tokens, and :thinking, plus any provider-specific keys
+    # true are sent them. schema is the strict structured-output payload
+    # ({ "name", "description", "schema", "strict" => true }). params is the resolved generation params: the
+    # portable :temperature, :max_output_tokens, and :thinking, plus any provider-specific keys
     # (see Params). label ("Class#method") prefixes the adapter's error messages. model and provider are the step's
     # (nil when it names none). adapter is the name this adapter was configured under (config.adapters), nil for the
     # default adapter. cache is the prompt caching to ask the provider for: false (none), or a Hash of options

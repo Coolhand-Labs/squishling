@@ -38,12 +38,7 @@ module Squishling
       # released ones) are only usable when a provider is named, so RubyLLM is told to assume they exist.
       def complete(request)
         chat = build_chat(request)
-        *history, last = request.messages
-        history.each do |message|
-          text, attachments = split(message[:content])
-          chat.add_message({ role: message[:role], content: text, attachments: }.compact)
-        end
-        response = guarded(request) { ask(chat, request, *split(last[:content])) }
+        response = guarded(request) { replay_and_ask(chat, request) }
         Adapter::Response.new(content: response.content, model: response.model, tokens: tokens_of(response),
           finish_reason: response.finish_reason)
       end
@@ -91,6 +86,18 @@ module Squishling
       end
 
       private
+
+      # The conversation so far added to the chat, then its last message asked. Building an attachment can fetch an
+      # image's URL (RubyLLM reads the media type from the response when the URL has no extension), so the history is
+      # guarded like the request itself.
+      def replay_and_ask(chat, request)
+        *history, last = request.messages
+        history.each do |message|
+          text, attachments = split(message[:content])
+          chat.add_message({ role: message[:role], content: text, attachments: }.compact)
+        end
+        ask(chat, request, *split(last[:content]))
+      end
 
       # RubyLLM checks a caching option against the provider when it renders the request, and raises ArgumentError for
       # one it can't use. That is the developer's setting, so it is a setup mistake rather than a failed request.

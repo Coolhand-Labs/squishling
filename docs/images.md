@@ -57,8 +57,9 @@ request is made.
 ## Privacy and logs
 
 An image is input, like any argument: it goes to the provider (and to a judge's provider). It never goes anywhere else.
-`Image#inspect`, `#to_s`, `#as_json`, and `#to_json` describe the image (media type and size, or the URL without its
-query or credentials), so an image that ends up in a log line, an error, or a serialized object carries no content.
+`Image#inspect`, `#to_s`, `#as_json`, `#to_json`, and YAML describe the image (media type and size, or the URL without its
+query or credentials), so an image that ends up in a log line, an error, or a serialized object carries no content. `Marshal.dump` of an
+image raises `TypeError`: keep the bytes (or a URL) in your own storage and build the `Image` where the call is made.
 `squawk` reports carry the JSON input with its placeholders, never the bytes, and observers never see input.
 
 Images are billed as input tokens by the provider, and the [token budget](failures.md#capping-a-calls-cost-token-budgets)

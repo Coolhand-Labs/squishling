@@ -125,9 +125,9 @@ Flag any change that breaks one of these; they are behavior contracts, not style
   built-in and custom harnesses alike, before `squish_fallback` runs. Each error is reported once, even when it passes
   through an outer squished call.
 - **Image bytes leave only to the provider.** A `Squishling::Image` argument goes to the provider (and a chat
-  judge's) as a content part, with a placeholder in the JSON input; `Image#inspect`/`to_s`/`as_json`/`to_json`
-  describe it without its bytes or a URL's query, so logs, errors, `squawk`, and serializers never carry them. An
-  adapter that doesn't declare `images?` is never sent content parts.
+  judge's) as a content part, with a placeholder in the JSON input; `Image#inspect`/`to_s`/`as_json`/`to_json`/YAML
+  describe it without its bytes or a URL's query (Marshal refuses), so logs, errors, `squawk`, and serializers never
+  carry them. An adapter that doesn't declare `images?` is never sent content parts.
 - **Only named context leaves the process.** The LLM sees method arguments, `squish_context` values, a
   `squish!` call's `context:`, and source the developer explicitly passes to `append_to_purpose` — never
   instance variables wholesale. Exceptions in context are sent as class and message only. Model-generated output goes

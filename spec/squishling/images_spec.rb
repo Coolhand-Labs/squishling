@@ -37,6 +37,30 @@ RSpec.describe "Images in a squished call" do # rubocop:disable RSpec/DescribeCl
     expect(request.system_prompt).to include(Squishling::Invoker::IMAGE_NOTE)
   end
 
+  it "sends an image from squish_context, or nested in a Hash inside an Array" do
+    klass.squish_context :badge
+    klass.define_method(:badge) { Squishling::Image.from_url("https://example.com/badge.png") }
+    fake = fake_squishling { |llm| llm.step(:any).reply(answer) }
+
+    klass.call(pages: [{ front: image }])
+
+    request = fake.requests.first
+    expect(request.arguments).to eq("pages" => [{ "front" => { "attached_image" => 1 } }])
+    expect(request.payload["context"]).to eq("badge" => { "attached_image" => 2 })
+    expect(request.images.size).to eq(2)
+  end
+
+  it "sends an image in a squish! call's context:" do
+    stamp = image
+    klass.define_method(:call) { |note:| squish!(context: { stamp: }) if note }
+    fake = fake_squishling { |llm| llm.step(:any).reply(answer) }
+
+    klass.call(note: "stamped")
+
+    expect(fake.requests.first.payload["context"]).to eq("stamp" => { "attached_image" => 1 })
+    expect(fake.requests.first.images.size).to eq(1)
+  end
+
   it "attaches an image passed twice once" do
     fake = fake_squishling { |llm| llm.step(:any).reply(answer) }
 

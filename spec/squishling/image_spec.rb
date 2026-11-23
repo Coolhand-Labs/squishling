@@ -63,11 +63,16 @@ RSpec.describe Squishling::Image do
     end
 
     it "refuses anything but an http or https URL, and a media type" do
-      %w[file:///etc/passwd ftp://example.com/a.png not-a-url].each do |url|
+      ["file:///etc/passwd", "ftp://example.com/a.png", "not-a-url", "https://example.com/a b.png"].each do |url|
         expect { described_class.from_url(url) }.to raise_error(Squishling::ConfigurationError, /http or https/)
       end
       expect { described_class.new(url: "https://example.com/a.png", media_type: "image/png") }
         .to raise_error(Squishling::ConfigurationError, /takes no media_type/)
+    end
+
+    it "keeps a refused URL out of the error" do
+      expect { described_class.from_url("https://example.com/a b.png?token=s3cret") }
+        .to raise_error(Squishling::ConfigurationError) { |error| expect(error.message).not_to include("s3cret") }
     end
   end
 
@@ -78,6 +83,14 @@ RSpec.describe Squishling::Image do
   end
 
   describe "keeping its content out of logs" do
+    it "refuses Marshal and dumps YAML as the description" do
+      image = described_class.new(data: png)
+
+      expect { Marshal.dump(image) }.to raise_error(TypeError, /can't be dumped/)
+      expect(image.to_yaml).to include("Squishling::Image image/png")
+      expect(image.to_yaml).not_to include("binary")
+    end
+
     it "describes bytes by media type and size" do
       image = described_class.new(data: png, detail: :low)
 
@@ -97,6 +110,15 @@ RSpec.describe Squishling::Image do
       expect(image.as_json).to eq(image.inspect)
       expect(JSON.generate({ image: })).to eq(JSON.generate({ image: image.inspect }))
     end
+  end
+
+  it "keeps its media type when the String it was given is changed" do
+    given = +"image/png"
+    image = described_class.new(data: png, media_type: given)
+    given << "x"
+
+    expect(image.media_type).to eq("image/png")
+    expect(image.media_type).to be_frozen
   end
 
   it "is frozen and compares by content" do
