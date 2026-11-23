@@ -4,6 +4,7 @@
 # default) and Squishling for one small model, and runs a set of scenarios that exercise the gem end to end.
 
 require "optparse"
+require "zlib"
 require "bundler/setup"
 require "squishling"
 
@@ -187,6 +188,25 @@ module LiveHarness
     end
   end
 
+  # Images: two images in one call, so the answer depends on each reaching the model, in order.
+  class ColorReader
+    include Squishling
+
+    purpose "Name the single dominant colour of each attached image: front_color for `front`, back_color for `back`."
+    output_schema do
+      string :front_color, enum: %w[red green blue]
+      string :back_color, enum: %w[red green blue]
+    end
+  end
+
+  # A solid-colour PNG, built in memory (large enough that the provider's vision model reads it reliably).
+  def solid_png(red, green, blue, size = 256)
+    chunk = ->(type, data) { [data.bytesize].pack("N") + type + data + [Zlib.crc32(type + data)].pack("N") }
+    rows = Array.new(size) { "\x00".b + ([red, green, blue].pack("C3") * size) }.join
+    "\x89PNG\r\n\x1A\n".b + chunk.call("IHDR", [size, size, 8, 2, 0, 0, 0].pack("NNCCCCC")) +
+      chunk.call("IDAT", Zlib::Deflate.deflate(rows)) + chunk.call("IEND", "")
+  end
+
   # Fallback that must never run for a setup mistake.
   class Echo
     include Squishling
@@ -337,6 +357,14 @@ module LiveHarness
       check(result.squished?, "expected an LLM result")
       check(result.sentiment == "positive", "sentiment was #{result.sentiment.inspect}")
       "judge picked #{result.sentiment} (#{result.confidence})"
+    }),
+    Scenario.new("the model reads two images sent with the call, in order", lambda {
+      red = Squishling::Image.new(data: solid_png(220, 20, 20))
+      blue = Squishling::Image.new(data: solid_png(20, 20, 220))
+      result = ColorReader.call(front: red, back: blue)
+      check(result.front_color == "red", "front_color was #{result.front_color.inspect}")
+      check(result.back_color == "blue", "back_color was #{result.back_color.inspect}")
+      "front #{result.front_color}, back #{result.back_color}"
     }),
     Scenario.new("params the model rejects raise ConfigurationError, not the fallback", lambda {
       klass = Class.new(Echo) { squishling params: LiveHarness.rejected_params }

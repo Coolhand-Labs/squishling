@@ -15,6 +15,7 @@ configures a default escalation (its model, with 2 attempts) and runs the same s
 | squish_validate rejection escalates to a fresh chat on the next step | `squish_validate`, a two-step `escalation:`, the escalation message |
 | squishsum accepts two agreeing samples and squawk reports each attempt | `harness: :squishsum` with a custom `compare:`, two concurrent samples, the `squawk` hook's output, `model`, and `usage` metadata from a real provider |
 | judged_squishsum samples concurrently and a chat judge picks a candidate | `harness:` concurrent samples, `compare:`, a dedicated chat `judge:` |
+| the model reads two images sent with the call, in order | `Squishling::Image` bytes (two solid-colour PNGs built in memory), the `attached_image` placeholders, image content parts through each adapter |
 | params the model rejects raise ConfigurationError, not the fallback | 400 handling, `squish_fallback` bypass |
 
 Every scenario runs with generation params the model supports (`config.default_params`). Each script also
