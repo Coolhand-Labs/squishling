@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "stringio"
+
 module Squishling
   module Adapters
     # Sends requests through RubyLLM (https://rubyllm.com): OpenAI, Anthropic Claude, Google Gemini, AWS Bedrock,
@@ -36,14 +38,17 @@ module Squishling
       # released ones) are only usable when a provider is named, so RubyLLM is told to assume they exist.
       def complete(request)
         chat = build_chat(request)
-        *history, last = request.messages
-        history.each { |message| chat.add_message(role: message[:role], content: message[:content]) }
-        response = guarded(request) { ask(chat, request, last[:content]) }
+        response = guarded(request) { replay_and_ask(chat, request) }
         Adapter::Response.new(content: response.content, model: response.model, tokens: tokens_of(response),
           finish_reason: response.finish_reason)
       end
 
       def judgments?
+        true
+      end
+
+      # Images go to RubyLLM as attachments: the bytes, or the image's URL.
+      def images?
         true
       end
 
@@ -82,15 +87,41 @@ module Squishling
 
       private
 
+      # The conversation so far added to the chat, then its last message asked. Building an attachment can fetch an
+      # image's URL (RubyLLM reads the media type from the response when the URL has no extension), so the history is
+      # guarded like the request itself.
+      def replay_and_ask(chat, request)
+        *history, last = request.messages
+        history.each do |message|
+          text, attachments = split(message[:content])
+          chat.add_message({ role: message[:role], content: text, attachments: }.compact)
+        end
+        ask(chat, request, *split(last[:content]))
+      end
+
       # RubyLLM checks a caching option against the provider when it renders the request, and raises ArgumentError for
       # one it can't use. That is the developer's setting, so it is a setup mistake rather than a failed request.
-      def ask(chat, request, content)
-        chat.ask(content)
+      def ask(chat, request, content, attachments = nil)
+        attachments ? chat.ask(content, with: attachments) : chat.ask(content)
       rescue ArgumentError => e
         raise unless request.cache && e.message.match?(/caching/i) && raised_by_ruby_llm?(e)
 
         raise configuration_error(request,
           "RubyLLM rejected the request, cache #{request.cache.inspect} (#{e.message})")
+      end
+
+      # A message's text and its images as RubyLLM attachments (nil when it has none).
+      def split(content)
+        return [content, nil] unless content.is_a?(Array)
+
+        text = content.filter_map { |part| part[:text] if part[:type] == :text }.join("\n\n")
+        images = content.filter_map { |part| attachment(part[:image]) if part[:type] == :image }
+        [text, images]
+      end
+
+      def attachment(image)
+        source = image.url? ? image.url : StringIO.new(image.data)
+        ::RubyLLM::Attachment.new(source, filename: image.filename, resolution: image.detail)
       end
 
       def tokens_of(response)

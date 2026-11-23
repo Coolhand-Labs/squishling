@@ -127,6 +127,20 @@ RSpec.describe Squishling::Testing do
       expect(klass.call(text: "long text").regex).to eq("x")
     end
 
+    it "stops a call with images the same way, rather than refusing the images" do
+      image = Squishling::Image.new(data: "\x89PNG\r\n\x1A\nxxxx".b)
+
+      reader = Class.new do
+        include Squishling
+
+        purpose "Read the image."
+        output_schema { string :text }
+        def self.to_s = "Reader"
+      end
+
+      expect { reader.call(image:) }.to raise_error(Squishling::Testing::ProviderCallError, /Reader#call/)
+    end
+
     it "also stops a judgment" do
       adapter = Squishling.config.adapter
 

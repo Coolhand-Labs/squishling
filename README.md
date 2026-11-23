@@ -225,6 +225,7 @@ sees it right where the value goes, and the purpose stays short and about the go
 - [Adapters](docs/adapters.md): the RubyLLM and OpenAI-compatible adapters, mixing them in one escalation, and your own
 - [Routing](docs/routing.md): when a call goes to the LLM, `squish!`, `append_to_purpose`, hardening a path,
   what the LLM sees
+- [Images](docs/images.md): pass a `Squishling::Image` (bytes, a file, or a URL) for the model to read
 - [Output schemas](docs/schemas.md): schema forms, strict mode, typed results, optional vs. empty, contracts
 - [Failure handling](docs/failures.md): escalation, `squish_validate`, error classes, fallbacks
 - [Harnesses](docs/harnesses.md): escalation, squishsum, judges (chat or Jev), and custom harnesses

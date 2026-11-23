@@ -24,6 +24,10 @@ module Squishling
         true
       end
 
+      def images?
+        true
+      end
+
       # Every request so far, in the order they arrived (Testing::Request).
       def requests
         @lock.synchronize { @requests.dup }
@@ -174,6 +178,10 @@ module Squishling
       end
 
       def judgments?
+        true
+      end
+
+      def images?
         true
       end
 

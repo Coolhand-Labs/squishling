@@ -37,7 +37,7 @@ module Squishling
       @steps = definition.escalation_path(receiver, inputs).freeze
       @client = LLMClient.new(definition.label, purpose:, harness: harness.type, handed_off: definition.handed_off,
         budget: definition.budget)
-      @client.check_adapters!(@steps)
+      @client.check_adapters!(@steps, prompt.images)
       @output_check = OutputCheck.new(definition, receiver, inputs)
       @owner = Thread.current
       @produced = {}.compare_by_identity
@@ -66,7 +66,7 @@ module Squishling
     # A stage (an Array of steps) is returned as is, and a single step is a stage of one attempt. A step's adapter
     # must be configured, which is checked here, before the stage makes a request.
     def stage(declaration)
-      declared_stage(declaration).tap { |steps| @client.check_adapters!(steps) }
+      declared_stage(declaration).tap { |steps| @client.check_adapters!(steps, @prompt.images) }
     end
 
     def declared_stage(declaration)
@@ -134,7 +134,8 @@ module Squishling
       owner!
       judge = judge_step(judge) unless judge.nil?
       Judge.new(definition: @definition, receiver: @receiver, client: @client, judge:, instructions:, path: steps,
-        purpose: @purpose, payload: @payload, escalate: method(:escalate_with), log_failure: method(:log_failure),
+        purpose: @purpose, payload: @payload, images: @prompt.images, escalate: method(:escalate_with),
+        log_failure: method(:log_failure),
         guard: method(:owner!), budget_check: method(:check_budget!), harness_type: @harness.type)
     end
 
@@ -293,7 +294,7 @@ module Squishling
     end
 
     def start_chat(step, prompt)
-      @client.chat(step, instructions: prompt.instructions, schema: prompt.schema.llm_schema)
+      @client.chat(step, instructions: prompt.instructions, schema: prompt.schema.llm_schema, images: prompt.images)
     end
 
     # following is the attempt that comes next, which is not the next one when a repeated reply skips ahead.
