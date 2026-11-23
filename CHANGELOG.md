@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-11-23
+
+Mix adapters in one escalation, and structured Ruby values now reach the model as structure. Read **Changed** before
+upgrading: a `Struct`, `Data`, `OpenStruct`, or `Set` argument is sent differently.
+
+### Added
+
+- `config.adapters`, a Hash of named adapters (each value takes anything `config.adapter` does, and is built when
+  assigned), and an `adapter:` key on escalation steps, so one escalation can run, say, Apple FM, Claude Code, and Ollama
+  in sequence. A step without `adapter:` keeps using `config.adapter`. `adapter:` also works on `squish!`'s
+  `escalation:`, on `default_escalation`, and on a harness's `judge:` step. An unknown adapter name raises
+  `ConfigurationError` before the call's first request (judge steps and custom-harness stages included), and
+  `Squishling.verify` reports it ahead of time. Error semantics are unchanged: an `LLMError` moves to the next step; a
+  `ConfigurationError` still ends the call. See [Mixing adapters](docs/adapters.md#mixing-adapters-in-one-escalation).
+  (#100)
+- `Adapter::Request#adapter`, `Observer::Call#adapter`, and `Testing::Request#adapter` carry the step's adapter name
+  (`nil` for the default adapter). In tests, `step(adapter: :name)` selects a reply by it, and `Squishling::Testing`
+  routes every name in `config.adapters` to its scripted adapter. (#100)
+
+### Changed
+
+- **Behavior change:** a `Struct`, `Data`, or `OpenStruct` argument or `squish_context` value now reaches the model as an
+  object of its members (its `to_h`), and a `Set` as an array, instead of Ruby's `inspect` text such as
+  `#<struct S a="secret">`. A model that was reading `#<struct S a="x">` now receives `{"a": "x"}`, and the class name is
+  no longer sent. All members are sent, so pass a Hash or define `to_h` to leave a field out. A value that contains
+  itself raises `ConfigurationError`. `assert_sent_arguments` compares against what was actually sent. See
+  [Routing](docs/routing.md). (#95, #106)
+- `Squishling.verify` checks the default adapter only for the steps that use it when `config.adapters` is set, and checks
+  every `adapter:` a step or judge names. (#100)
+
+### Internal
+
+- Development dependencies: `ruby_llm` 2.2, `coolhand` 0.11, RuboCop 1.92.2, and `ostruct` (no longer a default gem on
+  Ruby 4.0); `ruby/setup-ruby` 1.338.0 in CI. (#103, #107, #108, #109, #106)
+- The `prep-release` and `finish-release` skills credit outside and first-time contributors. (#105)
+
 ## [0.6.0] - 2026-11-01
 
 Prompt caching, on by default. Read **Changed** before upgrading: requests now ask the provider to cache the stable
