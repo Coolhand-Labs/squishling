@@ -5,27 +5,38 @@ module Squishling
   module Payload
     module_function
 
-    # label names the call in a ConfigurationError.
-    def jsonify(value, label)
-      Schema.jsonify(describe(value, label))
+    # label names the call in a ConfigurationError. images collects the Images found, in order: each goes into the
+    # JSON as {attached_image: N} (its 1-based number), and the same Image passed twice is attached once.
+    def jsonify(value, label, images = [])
+      Schema.jsonify(describe(value, label, images))
     end
 
     # Exceptions are sent as their class and message. Plain JSON would send only the message, and with
     # json/add/exception loaded it would also send the backtrace, which exposes file paths. A Struct, Data, or
     # OpenStruct is sent as its members (to_h) and a Set as its elements, not as Ruby's inspect text. path is the
     # containers being walked: one that contains itself is a ConfigurationError rather than a SystemStackError.
-    def describe(value, label, path = [])
+    def describe(value, label, images, path = [])
       case value
+      when Image then { attached_image: attach(value, images) }
       when Exception then { class: exception_class_name(value.class), message: value.message }
-      when Array, Set then within(value, label, path) { |inner| value.map { |item| describe(item, label, inner) } }
-      when Hash, Struct, Data then members(value, label, path)
-      else open_struct?(value) ? members(value, label, path) : value
+      when Array, Set then elements(value, label, images, path)
+      when Hash, Struct, Data then members(value, label, images, path)
+      else open_struct?(value) ? members(value, label, images, path) : value
       end
     end
 
-    def members(value, label, path)
+    def elements(value, label, images, path)
+      within(value, label, path) { |inner| value.map { |item| describe(item, label, images, inner) } }
+    end
+
+    def members(value, label, images, path)
       pairs = value.is_a?(Hash) ? value : value.to_h
-      within(value, label, path) { |inner| pairs.transform_values { |item| describe(item, label, inner) } }
+      unless pairs.is_a?(Hash)
+        raise ConfigurationError,
+          "#{label}: #{value.class}#to_h must return a Hash to be sent as JSON, got #{pairs.class}"
+      end
+
+      within(value, label, path) { |inner| pairs.transform_values { |item| describe(item, label, images, inner) } }
     end
 
     # OpenStruct is a default gem that Ruby 4.0 stops loading by default, so it can't be named unless it is loaded.
@@ -37,6 +48,15 @@ module Squishling
       end
 
       yield path + [container]
+    end
+
+    # The image's number in the message (1-based), added to images the first time it is seen.
+    def attach(image, images)
+      index = images.index { |attached| attached.equal?(image) }
+      return index + 1 if index
+
+      images << image
+      images.size
     end
 
     # An anonymous error class (Class.new(StandardError)) is named after its closest named ancestor.

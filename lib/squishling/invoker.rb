@@ -8,12 +8,20 @@ module Squishling
       present, holds additional state about the caller. Respond only with JSON matching the required schema.
     NOTE
 
+    IMAGE_NOTE = <<~NOTE
+      Images are attached to this message. Each {"attached_image": N} value in the input stands for the Nth image.
+    NOTE
+
     # The most of a rejected output that is forwarded to the next escalation step.
     MAX_FORWARDED_CHARS = 4_000
 
-    # One escalation's request: the system prompt, the output Schema, and the first user message. The judge's
-    # role (:judge) skips squish_validate and names the judge in errors and logs.
-    Prompt = Data.define(:instructions, :schema, :input, :role)
+    # One escalation's request: the system prompt, the output Schema, the first user message, and the Images that go
+    # with it. The judge's role (:judge) skips squish_validate and names the judge in errors and logs.
+    Prompt = Data.define(:instructions, :schema, :input, :role, :images) do
+      def initialize(instructions:, schema:, input:, role:, images: [])
+        super
+      end
+    end
 
     def initialize(definition, receiver, inputs)
       @definition = definition
@@ -49,8 +57,10 @@ module Squishling
       raise ConfigurationError, "#{@definition.label} has no purpose" if purpose.nil? || purpose.empty?
       raise ConfigurationError, "#{@definition.label} has no output_schema" unless schema
 
+      @images = []
       body = payload
-      prompt = Prompt.new(instructions: "#{purpose}\n\n#{INPUT_NOTE}", schema:, input: JSON.generate(body), role: nil)
+      instructions = "#{purpose}\n\n#{INPUT_NOTE}#{IMAGE_NOTE if @images.any?}"
+      prompt = Prompt.new(instructions:, schema:, input: JSON.generate(body), role: nil, images: @images.dup.freeze)
       Built.new(prompt:, payload: body, purpose:)
     end
 
@@ -84,9 +94,9 @@ module Squishling
 
     # Only the arguments, the declared squish_context names, and a squish! call's context leave the process.
     def payload
-      body = { arguments: Payload.jsonify(@inputs, @definition.label) }
+      body = { arguments: Payload.jsonify(@inputs, @definition.label, @images) }
       context = @definition.context_names.to_h { |name| [name, context_value(name)] }.merge(@definition.call_context)
-      body[:context] = Payload.jsonify(context, @definition.label) if context.any?
+      body[:context] = Payload.jsonify(context, @definition.label, @images) if context.any?
       body
     end
 

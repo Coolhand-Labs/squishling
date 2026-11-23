@@ -56,12 +56,25 @@ module Squishling
         role == :judge
       end
 
+      # The Squishling::Images sent with the conversation's first message (empty when none were).
+      def images
+        content = messages.first&.fetch(:content, nil)
+        content.is_a?(Array) ? content.filter_map { |part| part[:image] if part[:type] == :image } : []
+      end
+
       # The JSON payload of the first user message, parsed (an escalation message wraps it in its own text).
       def self.payload_of(messages)
-        text = messages.first.fetch(:content)
+        text = text_of(messages.first.fetch(:content))
         JSON.parse(MESSAGES.parse_escalation(text)&.input || text)
       rescue JSON::ParserError
         {}
+      end
+
+      # A message's text: the content itself, or its text part when it carries images.
+      def self.text_of(content)
+        return content unless content.is_a?(Array)
+
+        content.filter_map { |part| part[:text] if part[:type] == :text }.join
       end
 
       private
@@ -78,7 +91,7 @@ module Squishling
 
       def escalation
         text = messages.first&.fetch(:content, nil)
-        text && MESSAGES.parse_escalation(text)
+        text && MESSAGES.parse_escalation(self.class.text_of(text))
       end
     end
   end

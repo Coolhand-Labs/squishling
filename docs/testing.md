@@ -94,6 +94,7 @@ and `#verdict` are the real ones; rescue them as you would in production.
 | | |
 |---|---|
 | `arguments`, `context` | the method's arguments and the `squish_context` / `squish!` context the model was sent |
+| `images` | the [`Squishling::Image`s](images.md) sent with the conversation's first message (`[]` when none were) |
 | `system_prompt`, `output_schema` | the purpose (with `append_to_purpose` sections) and the strict schema |
 | `model`, `provider`, `adapter`, `params`, `cache` | the step it went to (`adapter` is its name from `config.adapters`, `nil` for the default; `cache` is `false` when [prompt caching](configuration.md#prompt-caching) was off for it) |
 | `role`, `sample`, `attempt`, `attempts` | `nil`/`:sample`/`:judge`, `"a"`, and where it is in the escalation |
@@ -145,7 +146,7 @@ removed the stub (it is inert, but keeps the class alive), so stub the classes o
 squishling_validate(Klass, { "regex" => "[bad(" }, text: "x")   # => ["regex is not a valid Ruby regex"]
 squishling_fallback_for(Klass, Squishling::LLMError.new("x"), text: "x")   # the typed fallback result
 squishling_preview(Klass, text: "x")
-# => { system_prompt:, user_message:, output_schema:, step: }   # for snapshot tests; makes no request
+# => { system_prompt:, user_message:, images:, output_schema:, step: }   # for snapshot tests; makes no request
 ```
 
 Arguments are keywords, or `args: [...]` for positional ones; `receiver:` supplies an instance for a class whose

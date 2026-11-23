@@ -34,6 +34,17 @@ configured RubyLLM before adapters existed keep working. Squishling no longer re
 app that doesn't load its Gemfile with `Bundler.require` should `require "ruby_llm"` before `RubyLLM.configure`. Without the gem, the first squished call
 raises `Squishling::ConfigurationError` saying what to add.
 
+### Known risk: the RubyLLM adapter downloads some image URLs itself
+
+When a call carries an [image given by URL](images.md#adapters), the RubyLLM adapter hands the URL to RubyLLM, which
+downloads it from your process whenever it can't tell the image type from the URL's path (any path with no image
+extension) or the provider can't fetch URLs itself. That download follows redirects and doesn't filter hosts, so a URL
+that points at `localhost`, a private address, or a cloud metadata endpoint is fetched, and what comes back is sent to
+the provider. If a user can choose an image URL, that is a server-side request forgery risk that comes with the RubyLLM
+adapter: allow-list the URL's host and scheme before building the `Image`, or download it yourself and pass the bytes
+with `Image.new(data:)`. The OpenAI-compatible adapter never downloads an image: it sends the URL on for the provider
+to fetch.
+
 ## Mixing adapters in one escalation
 
 Give `config.adapters` a name for each extra adapter, and pick one per step with `adapter:`:
@@ -223,7 +234,7 @@ Squishling.register_adapter(:acme, AcmeAdapter)
 | `model`, `provider` | The escalation step's, or `nil` when it names none (use your own default). What `provider:` means is up to you. |
 | `adapter` | The name your adapter was configured under in `config.adapters`, or `nil` when it is the default adapter. |
 | `instructions` | The system prompt. |
-| `messages` | The conversation so far, ending with the user message to answer. After invalid output, Squishling appends your previous answer and a retry message; you never keep history. |
+| `messages` | The conversation so far, ending with the user message to answer. After invalid output, Squishling appends your previous answer and a retry message; you never keep history. Each `content` is a String, except a chat's first user message in a call with [images](#images). |
 | `schema` | `{ "name", "description", "schema", "strict" => true }`: the strict structured-output payload, without the conditional keywords providers can't take. |
 | `params` | The resolved [generation params](configuration.md#generation-params): the portable `:temperature`, `:max_output_tokens`, `:thinking`, plus provider-specific keys. Squishling has already rejected the keys it owns. Translate the portable ones for your provider; pass the rest through if it takes them. |
 | `cache` | The [prompt caching](configuration.md#prompt-caching) to ask for: `false` (none), or a Hash of options (`{}` for the provider's default, `{ ttl: "1h" }`). Ignore it if your provider has no prompt caching or caches on its own. |
@@ -285,6 +296,15 @@ exception propagates unwrapped and is never retried, so map your transport's err
 - **`capture_context` and `with_context(context) { … }`**: samples (the `:squishsum` harnesses) send their requests from
   worker threads. `capture_context` runs on the caller's thread and returns whatever your tracing needs; `with_context`
   re-establishes it around each worker's request. The RubyLLM adapter uses this for its instrumentation workflow.
+
+### Images
+
+A call can carry [images](images.md). To take them, return `true` from `images?`; then a chat's first user message has
+an Array of content parts instead of a String: `{ type: :text, text: String }`, then `{ type: :image, image:
+Squishling::Image }` per image. An `Image` gives you `data` (the bytes) with `media_type`, `data_uri`, and
+`filename`, or, for `url?` images, the `url` for the provider to fetch, plus the `detail` asked for (`:low`, `:high`,
+or `nil`). Without `images?`, a call with images raises `ConfigurationError` before any request, so adapters that
+predate images keep getting Strings.
 
 ### Thread safety
 

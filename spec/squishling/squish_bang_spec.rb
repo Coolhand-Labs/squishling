@@ -364,6 +364,14 @@ RSpec.describe Squishling, "#squish!" do
       expect { klass.call(data: cyclic) }.to raise_error(Squishling::ConfigurationError, /contains itself/)
       expect(chats).to be_empty
     end
+
+    it "raises a ConfigurationError for a Struct whose to_h doesn't return a Hash" do
+      chats = stub_llm({ "name" => "Ada" })
+      broken = Struct.new(:a) { def to_h = "not a hash" }.new(1)
+
+      expect { klass.call(data: broken) }.to raise_error(Squishling::ConfigurationError, /to_h must return a Hash/)
+      expect(chats).to be_empty
+    end
   end
 
   it "sends an exception passed as an argument as its class and message" do
