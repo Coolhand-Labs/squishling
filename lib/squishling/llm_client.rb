@@ -1,9 +1,9 @@
 # frozen_string_literal: true
 
 module Squishling
-  # The requests for one squished method, made through the configured adapter (see Adapter). Squishling owns the
-  # conversation: each Conversation holds the system prompt, the output schema, and the messages so far, and every
-  # request sends all of it to the adapter.
+  # The requests for one squished method, made through the adapter each step names (see Adapter; the default one
+  # when it names none). Squishling owns the conversation: each Conversation holds the system prompt, the output
+  # schema, and the messages so far, and every request sends all of it to the adapter.
   class LLMClient
     # One chat on one escalation step. messages are { role:, content: } Hashes, grown by #ask.
     Conversation = Struct.new(:step, :instructions, :schema, :messages)
@@ -15,8 +15,16 @@ module Squishling
       @purpose = purpose
       @harness = harness
       @handed_off = handed_off
-      @adapter = Squishling.config.resolved_adapter
-      @tally = Budget::Tally.new(budget, cache_reads: Squishling.config.budget_counts_cache_reads)
+      @config = Squishling.config
+      @adapters = {}
+      @adapters_lock = Mutex.new
+      @tally = Budget::Tally.new(budget, cache_reads: @config.budget_counts_cache_reads)
+    end
+
+    # Raises ConfigurationError if any of the steps names an adapter that isn't configured, so a mistake ends the call
+    # before it has made a request.
+    def check_adapters!(steps)
+      steps.each { |step| adapter_for(step) }
     end
 
     # The budget limit this client's requests have reached ({ limit:, max:, used: }), or nil. Checked before each
@@ -25,17 +33,19 @@ module Squishling
       @tally.exhausted
     end
 
-    # Runs each job on its own thread and returns, in order, each job's [value, exception]. Only provider
-    # requests run here: parsing, validation, and the developer's callbacks stay on the caller's thread. Fiber
-    # storage is inherited by the threads, and the adapter carries over whatever request context it keeps (see
-    # Adapter::Base#capture_context). If the caller is interrupted while waiting (a timeout, Thread#raise), the
-    # requests still running are stopped rather than left running unobserved.
-    def concurrently(jobs)
+    # Runs each job on its own thread and returns, in order, each job's [value, exception]. steps are the
+    # escalation steps the jobs ask on, in the same order. Only provider requests run here: parsing, validation, and
+    # the developer's callbacks stay on the caller's thread. Fiber storage is inherited by the threads, and each
+    # job's adapter carries over whatever request context it keeps (see Adapter::Base#capture_context). If the
+    # caller is interrupted while waiting (a timeout, Thread#raise), the requests still running are stopped rather
+    # than left running unobserved.
+    def concurrently(jobs, steps)
       return jobs.map { |job| capture(job) } if jobs.size < 2
 
-      context = @adapter.capture_context if @adapter.respond_to?(:capture_context)
-      threads = jobs.map do |job|
-        thread = Thread.new { with_context(context) { capture(job) } }
+      adapters = steps.map { |step| adapter_for(step) }
+      contexts = captured_contexts(adapters)
+      threads = jobs.zip(adapters).map do |job, adapter|
+        thread = Thread.new { with_context(adapter, contexts.fetch(adapter)) { capture(job) } }
         thread.report_on_exception = false
         thread
       end
@@ -61,15 +71,16 @@ module Squishling
       Observer.around(call) { complete(chat, message, step, reask) }
     end
 
-    # Whether the adapter can make System One judgments (judges with type: :judgment).
-    def judgments?
-      @adapter.respond_to?(:judgments?) && @adapter.respond_to?(:judge) && @adapter.judgments?
+    # Whether the step's adapter can make System One judgments (judges with type: :judgment).
+    def judgments?(step)
+      adapter = adapter_for(step)
+      adapter.respond_to?(:judgments?) && adapter.respond_to?(:judge) && adapter.judgments?
     end
 
-    # A System One judgment on one step, through the adapter.
+    # A System One judgment on one step, through the step's adapter.
     # Judge#check_judgments! has already refused an adapter that can't.
     def judge(input, questions:, step:)
-      @tally.add(@adapter.judge(input, questions:, step:, label: @label))
+      @tally.add(adapter_for(step).judge(input, questions:, step:, label: @label))
     end
 
     # #judge inside the configured observer (see Observer), attempt counting in attempts.
@@ -79,6 +90,12 @@ module Squishling
     end
 
     private
+
+    # The step's adapter, looked up once per call: the adapter a job's context was captured from is the one that
+    # makes its request, even if the configuration changes meanwhile.
+    def adapter_for(step)
+      @adapters_lock.synchronize { @adapters[step.adapter] ||= @config.adapter_for(step.adapter) }
+    end
 
     def capture(job)
       [job.call, nil]
@@ -90,10 +107,11 @@ module Squishling
       messages = chat.messages + [{ role: :user, content: message }]
       request = Adapter::Request.new(label: @label, model: step.model, provider: step.provider,
         instructions: chat.instructions, messages:, schema: chat.schema, params: step.request_params(reask),
-        cache: step.cache)
-      response = @adapter.complete(request)
+        cache: step.cache, adapter: step.adapter)
+      adapter = adapter_for(step)
+      response = adapter.complete(request)
       unless response.is_a?(Adapter::Response)
-        raise ConfigurationError, "#{@label}: the #{@adapter.class} adapter must return a " \
+        raise ConfigurationError, "#{@label}: the #{adapter.class} adapter must return a " \
                                   "Squishling::Adapter::Response from #complete, got #{response.class}"
       end
 
@@ -101,15 +119,26 @@ module Squishling
       @tally.add(response)
     end
 
-    def with_context(context, &)
-      return yield unless @adapter.respond_to?(:with_context)
+    # Each distinct adapter's request context, taken once on the caller's thread.
+    def captured_contexts(adapters)
+      adapters.each_with_object({}.compare_by_identity) do |adapter, contexts|
+        contexts[adapter] = capture_context(adapter) unless contexts.key?(adapter)
+      end
+    end
 
-      @adapter.with_context(context, &)
+    def capture_context(adapter)
+      adapter.capture_context if adapter.respond_to?(:capture_context)
+    end
+
+    def with_context(adapter, context, &)
+      return yield unless adapter.respond_to?(:with_context)
+
+      adapter.with_context(context, &)
     end
 
     def call_info(step, request, attempt:, attempts:, role: nil, sample: nil)
       Observer::Call.new(label: @label, purpose: @purpose, harness: @harness, handed_off: @handed_off, role:, sample:,
-        attempt:, attempts:, model: step.model, provider: step.provider, request:)
+        attempt:, attempts:, model: step.model, provider: step.provider, adapter: step.adapter, request:)
     end
   end
 end

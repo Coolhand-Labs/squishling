@@ -16,11 +16,12 @@ module Squishling
   # method's inputs as keywords, on the instance) drops the step from any call where it is falsy.
   # retry_temperature: (a Numeric) is the temperature for the step's same-chat retries after the first attempt.
   module ModelPath
-    # One attempt: the model, its provider, the fully resolved generation params, whether the previous
+    # One attempt: the model, its provider, the name of the adapter that makes the request (nil for the default
+    # one, see Configuration#adapters), the fully resolved generation params, whether the previous
     # step's rejected output is shown to it, the temperature its retries in the same chat use, if any, and the
     # prompt caching options to request (false for none, see Cache).
-    Step = Data.define(:model, :provider, :params, :forward_rejected, :retry_temperature, :cache) do
-      def initialize(model:, provider:, params:, forward_rejected:, retry_temperature: nil, cache: false)
+    Step = Data.define(:model, :provider, :params, :forward_rejected, :retry_temperature, :cache, :adapter) do
+      def initialize(model:, provider:, params:, forward_rejected:, adapter: nil, retry_temperature: nil, cache: false)
         super
       end
 
@@ -36,7 +37,7 @@ module Squishling
       end
     end
 
-    STEP_KEYS = %i[model provider params cache attempts priority order rotate forward_rejected include_when
+    STEP_KEYS = %i[model provider adapter params cache attempts priority order rotate forward_rejected include_when
                    retry_temperature].freeze
 
     module_function
@@ -78,7 +79,7 @@ module Squishling
     # (see Rotation): each tier of tied priorities starts turn steps further along.
     def steps(path, provider:, params:, cache: false, turn: 0)
       rotated(path, turn).flat_map do |step|
-        attempt = Step.new(model: step[:model], provider: step[:provider] || provider,
+        attempt = Step.new(model: step[:model], provider: step[:provider] || provider, adapter: step[:adapter],
           params: Params.resolve(params, step[:params]), forward_rejected: step[:forward_rejected],
           retry_temperature: step[:retry_temperature], cache: Cache.resolve(cache, step[:cache]))
         [attempt] * step[:attempts]
@@ -133,7 +134,8 @@ module Squishling
     def normalize_step(step, label, extras: [])
       case step
       when String, Symbol
-        { model: model_name(step, label), provider: nil, params: nil, cache: nil, attempts: 1, forward_rejected: true }
+        { model: model_name(step, label), provider: nil, adapter: nil, params: nil, cache: nil, attempts: 1,
+          forward_rejected: true }
       when Hash then normalize_hash(step, label, extras)
       else
         raise ConfigurationError, "#{label}: each step must be a model name or a Hash with model:, got #{step.inspect}"
@@ -172,8 +174,21 @@ module Squishling
 
       params = step[:params] && Params.normalize(step[:params], "#{label} (#{model}) params")
       cache = Cache.normalize(step[:cache], "#{label} (#{model}) cache")
-      normalized = { model:, provider: step[:provider], params:, cache:, attempts:, forward_rejected: }
+      adapter = adapter_name(step[:adapter], label, model)
+      normalized = { model:, provider: step[:provider], adapter:, params:, cache:, attempts:, forward_rejected: }
       normalized.merge(step.slice(:priority, :rotate, :include_when, :retry_temperature, *extras))
+    end
+
+    # The name of a configured adapter (see Configuration#adapters) as a Symbol, or nil for the default adapter. Whether
+    # the name is configured is checked when the step is used, since a class can load before Squishling.configure runs.
+    def adapter_name(adapter, label, model)
+      return if adapter.nil?
+      unless (adapter.is_a?(Symbol) || adapter.is_a?(String)) && !adapter.to_s.strip.empty?
+        raise ConfigurationError,
+          "#{label} (#{model}): adapter: must be the name of a configured adapter, got #{adapter.inspect}"
+      end
+
+      adapter.to_sym
     end
 
     def check_include_when!(step, label, model)

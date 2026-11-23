@@ -37,6 +37,7 @@ module Squishling
       @steps = definition.escalation_path(receiver, inputs).freeze
       @client = LLMClient.new(definition.label, purpose:, harness: harness.type, handed_off: definition.handed_off,
         budget: definition.budget)
+      @client.check_adapters!(@steps)
       @output_check = OutputCheck.new(definition, receiver, inputs)
       @owner = Thread.current
       @produced = {}.compare_by_identity
@@ -62,8 +63,13 @@ module Squishling
     # A stage from a model name or a step Hash (model:, provider:, params:, attempts:, forward_rejected:,
     # retry_temperature:), the way a judge step is resolved: it keeps its own provider, and its params merge over
     # the method's.
-    # A stage (an Array of steps) is returned as is, and a single step is a stage of one attempt.
+    # A stage (an Array of steps) is returned as is, and a single step is a stage of one attempt. A step's adapter
+    # must be configured, which is checked here, before the stage makes a request.
     def stage(declaration)
+      declared_stage(declaration).tap { |steps| @client.check_adapters!(steps) }
+    end
+
+    def declared_stage(declaration)
       return checked_stage([declaration]) if declaration.is_a?(ModelPath::Step)
 
       if declaration.is_a?(Array)
@@ -225,15 +231,15 @@ module Squishling
 
     # One round of #samples: the pending samples' requests, sent concurrently, then each outcome recorded.
     def round(pending, attempt)
-      jobs = pending.map do |sample|
-        step = sample.stage[attempt - 1]
+      steps = pending.map { |sample| sample.stage[attempt - 1] }
+      jobs = pending.zip(steps).map do |sample, step|
         message = sample_message(sample, step)
         chat = sample.chat
         attempts = sample.stage.size
         reask = sample.reask
         -> { @client.ask(chat, message, step, attempt:, attempts:, role: :sample, sample: sample.name, reask:) }
       end
-      outcomes = @client.concurrently(jobs)
+      outcomes = @client.concurrently(jobs, steps)
       # A setup mistake (or anything that isn't a failed request) ends the call, whichever sample hit it.
       fatal = outcomes.map(&:last).find { |error| error && !error.is_a?(LLMError) }
       raise fatal if fatal

@@ -24,34 +24,35 @@ module Squishling
   # Squishling::Testing::Minitest and ::RSpec mixins.
   module Testing
     class << self
-      # Makes the scripted Adapter the one every squished call goes through, and returns it. The block scripts it
-      # (see Script); #script adds to it later.
+      # Makes the scripted Adapter the one every squished call goes through (also for steps that name another
+      # adapter: the requests record which), and returns it. The block scripts it (see Script); #script adds to it
+      # later.
       def install(adapter = Adapter.new)
         yield adapter.script if block_given?
         State.set(:observer, Observer.new(chained_observer(Squishling.config.observer)))
-        State.set(:adapter, adapter)
+        route_all_to(adapter)
         adapter
       end
 
       # Any request that reaches the provider seam raises ProviderCallError, naming the squished method. Call it in a
       # suite-wide before hook: a test that forgot to script its calls then fails at the call, not far from it.
       def forbid_provider_calls!
-        State.set(:adapter, ForbiddenAdapter.new)
+        route_all_to(ForbiddenAdapter.new)
       end
 
       # Runs the block with provider calls forbidden and returns the calls (the squished methods' labels) that tried
       # to reach the provider, even if the block rescued the error. The adapter is put back afterwards.
       def no_llm_call
         config = Squishling.config
-        previous = config.adapter
+        previous = [config.adapter, config.adapter_override]
         guard = ForbiddenAdapter.new
-        config.adapter = guard
+        config.adapter = config.adapter_override = guard
         begin
           yield
         rescue ProviderCallError
           nil
         ensure
-          config.adapter = previous
+          config.adapter, config.adapter_override = previous
         end
         guard.attempts
       end
@@ -112,6 +113,12 @@ module Squishling
       end
 
       private
+
+      # The adapter for every request: the default, and the one a step names with adapter:.
+      def route_all_to(adapter)
+        State.set(:adapter, adapter)
+        State.set(:adapter_override, adapter)
+      end
 
       # An observer the app configured itself (an object, or :coolhand) is kept in the chain; the default Coolhand
       # auto-detection, and our own observer from an earlier install, are not.

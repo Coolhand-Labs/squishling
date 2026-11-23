@@ -7,7 +7,7 @@ module Squishling
   class Verifier
     # Checks one squished method's Definition. Each check returns messages, or raises what the call would.
     class MethodCheck
-      CHECKS = %i[schema declarations harness callables].freeze
+      CHECKS = %i[schema declarations adapters harness callables].freeze
 
       def initialize(definition)
         @definition = definition
@@ -50,6 +50,24 @@ module Squishling
         []
       end
 
+      # The adapter of every escalation step and of the judge must be configured. The default one (a step or judge that
+      # names none) is checked here only when named adapters exist, since otherwise the whole run reports it once.
+      def adapters
+        names = @definition.declared_path.first.map { |step| step[:adapter] }
+        judge = @definition.harness.options[:judge]
+        names << judge[:adapter] if judge.is_a?(Hash)
+        names = names.compact unless Squishling.config.adapters.any?
+        names.uniq.filter_map { |name| adapter_problem(name) }
+      end
+
+      # A message when the step's adapter (nil, the default one) can't be used. Not through Testing's override.
+      def adapter_problem(name)
+        name.nil? ? Squishling.config.resolved_adapter : Squishling.config.named_adapter(name)
+        nil
+      rescue ConfigurationError => e
+        "adapter: #{e.message}"
+      end
+
       def harness
         harness = @definition.harness
         messages = []
@@ -62,7 +80,7 @@ module Squishling
 
       def unsupported_judgment?(harness)
         judge = harness.options[:judge]
-        judge.is_a?(Hash) && judge[:type] == :judgment && !Squishling.config.resolved_adapter.judgments?
+        judge.is_a?(Hash) && judge[:type] == :judgment && !Squishling.config.adapter_for(judge[:adapter]).judgments?
       rescue ConfigurationError
         false # no usable adapter: reported once, as the adapter's own problem
       end
@@ -152,9 +170,11 @@ module Squishling
       raise ConfigurationError, "#{klass.inspect} doesn't include Squishling"
     end
 
-    # The configured adapter, or RubyLLM's, must be usable.
+    # The configured adapter, or RubyLLM's, must be usable, unless named adapters are configured: then the default
+    # one is only needed by the steps that use it, which each method's check reports. The named adapters are built
+    # when assigned.
     def adapter_problems
-      Squishling.config.resolved_adapter
+      Squishling.config.resolved_adapter unless Squishling.config.adapters.any?
       []
     rescue ConfigurationError => e
       [Verification::Problem.new(label: "adapter", message: e.message)]

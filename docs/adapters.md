@@ -26,12 +26,59 @@ end
 ```
 
 An adapter is built when you assign it, so a missing gem or a bad option fails at boot, not on the first request.
-There is one adapter per process; every squishling class, method, and escalation step goes through it.
+`config.adapter` is the default: every squishling class, method, and escalation step goes through it unless the step
+picks another one (see [Mixing adapters](#mixing-adapters-in-one-escalation)).
 
 **When you set none**, Squishling uses the RubyLLM adapter if the `ruby_llm` gem is in your bundle, so apps that
 configured RubyLLM before adapters existed keep working. Squishling no longer requires `ruby_llm` when it loads, so an
 app that doesn't load its Gemfile with `Bundler.require` should `require "ruby_llm"` before `RubyLLM.configure`. Without the gem, the first squished call
 raises `Squishling::ConfigurationError` saying what to add.
+
+## Mixing adapters in one escalation
+
+Give `config.adapters` a name for each extra adapter, and pick one per step with `adapter:`:
+
+```ruby
+Squishling.configure do |config|
+  config.adapters = {
+    apple: :apple_fm,                                                        # squishling-apple_fm
+    claude: :claude_code,                                                    # squishling-claude_code
+    local: { type: :openai_compatible, base_url: "http://localhost:11434/v1" }
+  }
+end
+
+class Triage
+  include Squishling
+
+  squishling escalation: [
+    { model: "apple-fm", adapter: :apple },
+    { model: "sonnet", adapter: :claude },
+    { model: "llama3.2", adapter: :local, attempts: 2 },
+    "claude-opus-5-5"                          # no adapter: the default one (config.adapter, else RubyLLM)
+  ]
+end
+```
+
+Each value takes anything `config.adapter` does and is built when assigned. A step that names no adapter uses
+`config.adapter`, so existing setups are unchanged; if every step names one, you need no default (and no `ruby_llm`).
+`adapter:` works on any escalation step, on `squish!`'s `escalation:`, on `default_escalation`, and on a harness's
+`judge:` step. A single `model:` takes a bare name only, so use a one-step `escalation:` to put it on an adapter.
+
+- **The rest of the step is the adapter's to read.** `provider:` and `params:` mean what the chosen adapter makes of
+  them, so a step on `:local` doesn't need RubyLLM's `provider:`.
+- **An unknown name is a `ConfigurationError`** (naming the configured ones), raised when a call starts (before its first
+  request), not when the class loads, since a class can load before `Squishling.configure` runs.
+  [`Squishling.verify`](verifying.md) finds it ahead of time.
+- **Failures keep their meaning.** Each adapter classifies its own errors, then Squishling treats them as always: a
+  down Ollama is an `LLMError` and the call moves on to the next step, but a `ConfigurationError` (say, Claude Code
+  isn't logged in) ends the call and is never handed to the next adapter or to `squish_fallback`.
+- **Rejected output crosses adapters.** The step after a failed one is shown the failed step's rejected output (see
+  [escalation](configuration.md#models-and-escalation)), so it goes to the next step's adapter, possibly a different
+  vendor. Set `forward_rejected: false` on a step that shouldn't see it.
+- **A judge's adapter sees the full input**, like any judge's provider (see [the judge](harnesses.md#the-judge)).
+  `type: :judgment` judges need an adapter with judgments; the check is on the judge's own adapter.
+- **Observers and tests** are told the name: `Observer::Call#adapter`, `Adapter::Request#adapter` (handed to your
+  adapter, `nil` for the default), and `Testing::Request#adapter`.
 
 ## `:ruby_llm`
 
@@ -174,6 +221,7 @@ Squishling.register_adapter(:acme, AcmeAdapter)
 |---|---|
 | `label` | `"Class#method"`, to prefix your error messages (the `configuration_error` / `llm_error` helpers do; `http_failure(request, status:, body:, via:)` sorts an HTTP failure; `rejected_request_error(request, via:, body:, http_status:)` builds the error for a rejected request, from a JSON String or String-keyed Hash body). |
 | `model`, `provider` | The escalation step's, or `nil` when it names none (use your own default). What `provider:` means is up to you. |
+| `adapter` | The name your adapter was configured under in `config.adapters`, or `nil` when it is the default adapter. |
 | `instructions` | The system prompt. |
 | `messages` | The conversation so far, ending with the user message to answer. After invalid output, Squishling appends your previous answer and a retry message; you never keep history. |
 | `schema` | `{ "name", "description", "schema", "strict" => true }`: the strict structured-output payload, without the conditional keywords providers can't take. |

@@ -60,6 +60,7 @@ module Squishling
       @escalate = escalate
       @log_failure = log_failure
       @steps = resolve_steps(path)
+      @client.check_adapters!(@steps)
     end
 
     # The judge's first attempt, for logs and DisagreementError#models.
@@ -101,10 +102,10 @@ module Squishling
 
     # Raised before any request, like the rest of the judge's checks.
     def check_judgments!
-      return if !judgment? || @client.judgments?
+      return if !judgment? || @client.judgments?(judgment_steps(@judge).first)
 
       raise ConfigurationError, "#{@definition.label}: judge type: :judgment needs an adapter that supports " \
-                                "judgments (the configured adapter doesn't); use type: :chat or the :ruby_llm adapter"
+                                "judgments (the judge's adapter doesn't); use type: :chat or the :ruby_llm adapter"
     end
 
     def non_blank_string?(value)
