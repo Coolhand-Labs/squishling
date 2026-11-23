@@ -32,7 +32,7 @@ upgrading: a `Struct`, `Data`, `OpenStruct`, or `Set` argument is sent different
   object of its members (its `to_h`), and a `Set` as an array, instead of Ruby's `inspect` text such as
   `#<struct S a="secret">`. A model that was reading `#<struct S a="x">` now receives `{"a": "x"}`, and the class name is
   no longer sent. All members are sent, so pass a Hash or define `to_h` to leave a field out. A value that contains
-  itself raises `ConfigurationError`. `assert_sent_arguments` compares against what was actually sent. See
+  itself, or whose `to_h` doesn't return a Hash, raises `ConfigurationError`. `assert_sent_arguments` compares against what was actually sent. See
   [Routing](docs/routing.md). (#95, #106)
 - `Squishling.verify` checks the default adapter only for the steps that use it when `config.adapters` is set, and checks
   every `adapter:` a step or judge names. (#100)
