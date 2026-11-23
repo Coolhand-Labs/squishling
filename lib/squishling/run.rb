@@ -24,7 +24,7 @@ module Squishling
     SAMPLE_NAMES = ("a".."z").to_a.freeze
     private_constant :Sample, :SAMPLE_NAMES
 
-    attr_reader :receiver, :inputs, :steps
+    attr_reader :receiver, :inputs, :steps, :call_id
 
     def initialize(definition:, receiver:, inputs:, prompt:, payload:, purpose:, harness:)
       @definition = definition
@@ -35,8 +35,9 @@ module Squishling
       @purpose = purpose
       @harness = harness
       @steps = definition.escalation_path(receiver, inputs).freeze
+      @call_id = SecureRandom.uuid
       @client = LLMClient.new(definition.label, purpose:, harness: harness.type, handed_off: definition.handed_off,
-        budget: definition.budget)
+        budget: definition.budget, call_id: @call_id, apprentice: definition.apprentice_run)
       @client.check_adapters!(@steps)
       @output_check = OutputCheck.new(definition, receiver, inputs)
       @owner = Thread.current
@@ -49,6 +50,9 @@ module Squishling
     def produced?(value)
       @produced.key?(value)
     end
+
+    # The LLMClient::Origin of a result this run produced, or nil. Internal (an apprentice's review names the request).
+    def origin(value) = @produced[value]
 
     # The squished method, as "Class#method".
     def label
@@ -143,7 +147,7 @@ module Squishling
     # compare is the developer's own code, so its exceptions propagate unwrapped.
     def agree?(first, second, compare = nil)
       owner!
-      return Schema.jsonify(first.to_h) == Schema.jsonify(second.to_h) unless compare
+      return Schema.same?(first, second) unless compare
 
       @receiver.instance_exec(first, second, **@inputs, &compare) ? true : false
     end
@@ -214,7 +218,7 @@ module Squishling
         result, errors = @output_check.call(response.content, prompt)
         if errors.empty?
           squawk(prompt, path, attempt, response, nil, reask:)
-          return produce(result, prompt)
+          return produce(result, prompt, response)
         end
 
         repeated = reask && response.content == rejected.first
@@ -271,7 +275,7 @@ module Squishling
       result, errors = @output_check.call(response.content, @prompt)
       if errors.empty?
         squawk(@prompt, stage, attempt, response, nil, sample:, reask: sample.reask)
-        return sample.result = produce(result, @prompt)
+        return sample.result = produce(result, @prompt, response)
       end
 
       # A sample is one step (#samples refuses a stage that mixes them), so a repeat leaves nothing to move on to.
@@ -287,8 +291,8 @@ module Squishling
 
     # Remembers a result of the method's own output (a judge's verdict isn't one), so a harness can only return
     # what a primitive produced.
-    def produce(result, prompt)
-      @produced[result] = true unless prompt.role == :judge
+    def produce(result, prompt, response)
+      @produced[result] = @client.origin_of(response) unless prompt.role == :judge
       result
     end
 

@@ -70,9 +70,32 @@ Anything else raises `ConfigurationError` when you assign it.
 | `model`, `provider` | The step's model and provider (`provider` is `nil` unless declared) |
 | `adapter` | The name of the [adapter](adapters.md#mixing-adapters-in-one-escalation) the step picked (`nil` for the default one) |
 | `request` | `:chat`, or `:judgment` for a System One judge |
+| `call_id` | The squished call this request belongs to (a UUID, shared by all its requests) |
+| `request_id` | This request: `"<call_id>.<n>"`, numbered in the order the call's requests start |
+| `apprentice` | `true` for the requests of an [apprentice's](apprentice.md) shadow run, else `false` |
 
 It carries metadata, plus the rendered `purpose`. The method's inputs, its context, and the model's output never reach an
 observer: it gets the request's token [`Usage`](#what-yield-returns) back, and `squawk` is the route for output.
+
+## Apprentice reviews
+
+An observer that also responds to `apprentice(review)` is told how each [apprentice](apprentice.md) shadow run went, after
+its report hook. The `Squishling::Apprentice::Review` (a `Data`) has:
+
+- `label`: `"Class#method"`.
+- `call_id`: the shadow run's call, `nil` when it ended before it started (`when:` or building the request raised).
+- `request_id`: the request whose output was accepted, `nil` when none was.
+- `model`.
+- `ruby`: the Ruby result, as plain JSON data.
+- `match`: `true`, `false`, or `nil` when there was nothing to compare.
+- `error`: the class of the error that ended the run, or `nil`. Only the class is passed, because an
+  `InvalidOutputError` carries the model's output.
+
+It never carries the model's output. Because it does carry the Ruby result, a reviewing observer sees the method's
+output, which a request's `around` never does.
+
+The [Coolhand observer](coolhand.md#apprentice-feedback) uses `apprentice` to send the Ruby result as feedback on the
+request.
 
 ## Errors
 

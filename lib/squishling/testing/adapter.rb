@@ -84,7 +84,7 @@ module Squishling
           attempts: call[:attempts], model: step.model, provider: step.provider, adapter: step.adapter,
           params: step.params,
           cache: step.cache, system_prompt: nil, output_schema: nil, messages: [], conversation: nil, payload:,
-          reply: outcome)
+          reply: outcome, apprentice: apprentice?)
         outcome
       end
 
@@ -134,6 +134,11 @@ module Squishling
         base.merge(role: judge_schema?(request.schema) ? :judge : nil, sample: nil, attempt: nil, attempts: nil)
       end
 
+      # Whether the request being answered is one of an apprentice's shadow run.
+      def apprentice?
+        Observer.current&.apprentice ? true : false
+      end
+
       def judge_schema?(schema)
         schema["schema"] == Schema.for(Judge::VERDICT_SCHEMA).llm_schema["schema"]
       end
@@ -154,7 +159,7 @@ module Squishling
           attempt: call[:attempt], attempts: call[:attempts], model: request.model, provider: request.provider,
           adapter: request.adapter, params: request.params, cache: request.cache, system_prompt: request.instructions,
           output_schema: request.schema["schema"], messages: request.messages, conversation:,
-          payload: Request.payload_of(request.messages), reply: outcome)
+          payload: Request.payload_of(request.messages), reply: outcome, apprentice: apprentice?)
       end
     end
 

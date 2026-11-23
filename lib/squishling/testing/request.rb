@@ -14,11 +14,15 @@ module Squishling
     # index of the chat in Adapter#conversations (nil for a judgment): a retry is the same conversation, an
     # escalation a new one. adapter is the name the step picked (nil for the default adapter). reply is the
     # Adapter::Response, or the error raised instead. cache is the prompt caching
-    # asked for: false, or a Hash of options.
+    # asked for: false, or a Hash of options. apprentice is true for the requests of an apprentice's shadow run.
     Request = Data.define(:label, :type, :role, :sample, :attempt, :attempts, :model, :provider, :params,
-      :system_prompt, :output_schema, :messages, :conversation, :payload, :reply, :cache, :adapter) do
-      def initialize(reply:, cache: false, adapter: nil, **attributes)
+      :system_prompt, :output_schema, :messages, :conversation, :payload, :reply, :cache, :adapter, :apprentice) do
+      def initialize(reply:, cache: false, adapter: nil, apprentice: false, **attributes)
         super
+      end
+
+      def apprentice?
+        apprentice
       end
 
       def arguments

@@ -27,17 +27,41 @@ module Squishling
     # Runs the harness (Definition#harness) over a Run of the call: the harness decides how the escalation is
     # used, and what it returns is checked against the output schema's type. A call that ends on the token budget
     # or a disagreement is reported to squawk once here, as the stop no attempt of its own reported.
-    def call
-      built = build
+    # built is what #prepare returned, when the call's request was built ahead (an apprentice builds it on the
+    # caller's thread and runs the call on another).
+    def call(built = prepare)
       harness = @definition.harness
-      run = Run.new(definition: @definition, receiver: @receiver, inputs: @inputs, prompt: built.prompt,
+      @run = Run.new(definition: @definition, receiver: @receiver, inputs: @inputs, prompt: built.prompt,
         payload: built.payload, purpose: built.purpose, harness:)
-      accepted(call_harness(harness, run), run, harness)
+      accepted(call_harness(harness, @run), @run, harness)
     end
 
     # The first request the call would make (system prompt, output schema, user message), without making it.
     def prompt
-      build.prompt
+      prepare.prompt
+    end
+
+    # What the call sends, built from the purpose (its procs run here) and the payload (the arguments and the
+    # squish_context values, read here).
+    def prepare
+      purpose = @definition.purpose(@receiver)
+      schema = @definition.schema
+      raise ConfigurationError, "#{@definition.label} has no purpose" if purpose.nil? || purpose.empty?
+      raise ConfigurationError, "#{@definition.label} has no output_schema" unless schema
+
+      body = payload
+      prompt = Prompt.new(instructions: "#{purpose}\n\n#{INPUT_NOTE}", schema:, input: JSON.generate(body), role: nil)
+      Built.new(prompt:, payload: body, purpose:)
+    end
+
+    # The id of the call #call made (see Observer::Call#call_id), or nil before it started.
+    def call_id
+      @run&.call_id
+    end
+
+    # Where a result #call returned came from (LLMClient::Origin), or nil.
+    def origin(result)
+      @run&.origin(result)
     end
 
     private
@@ -47,17 +71,6 @@ module Squishling
     rescue BudgetExhaustedError, DisagreementError => e
       run.report_stop(e)
       raise
-    end
-
-    def build
-      purpose = @definition.purpose(@receiver)
-      schema = @definition.schema
-      raise ConfigurationError, "#{@definition.label} has no purpose" if purpose.nil? || purpose.empty?
-      raise ConfigurationError, "#{@definition.label} has no output_schema" unless schema
-
-      body = payload
-      prompt = Prompt.new(instructions: "#{purpose}\n\n#{INPUT_NOTE}", schema:, input: JSON.generate(body), role: nil)
-      Built.new(prompt:, payload: body, purpose:)
     end
 
     # What a harness returns must be a result its run produced: validated output, typed like the deterministic

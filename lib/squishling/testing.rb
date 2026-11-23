@@ -105,14 +105,32 @@ module Squishling
         config.squawk = previous
       end
 
-      # Puts back what the helpers changed (the adapter and observer) and clears the stubs. The mixins do this
-      # after every test; call it yourself with a custom setup.
+      # Puts back what the helpers changed (the adapter and observer) and clears the stubs, after waiting for any
+      # apprentice shadow runs still pending on a background runner (see Apprentice.drain). The mixins do this after
+      # every test; call it yourself with a custom setup.
       def reset!
+        # Raises a background run's UnscriptedRequestError, failing the test.
+        drained = Squishling::Apprentice.drain(timeout: 5)
+      rescue StandardError
+        restore
+        raise
+      else
+        return restore if drained
+
+        # Runs still pending would reach a real adapter put back under them: they get one that refuses instead, until a
+        # later reset! finds them done.
         Stubs.clear!
-        State.restore!
+        forbid_provider_calls!
+        raise SetupError, "apprentice shadow runs were still pending after 5 seconds; drain them " \
+                          "(Squishling::Apprentice.drain) before the test ends"
       end
 
       private
+
+      def restore
+        Stubs.clear!
+        State.restore!
+      end
 
       # The adapter for every request: the default, and the one a step names with adapter:.
       def route_all_to(adapter)

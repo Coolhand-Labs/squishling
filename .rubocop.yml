@@ -189,3 +189,4 @@ RSpec/DescribeClass:
     - 'spec/harness_spec.rb'
     - 'spec/custom_harness_spec.rb'
     - 'spec/multiple_adapters_spec.rb'
+    - 'spec/apprentice_spec.rb'

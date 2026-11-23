@@ -62,5 +62,24 @@ So `Parser#call/squish:L2` is the second attempt of `Parser#call`, e.g. `Parser#
 - The description never contains the purpose text, which can be a proc that differs per call. The workload's key
   and name stay `Class#method` either way, so calls that went through `squish!` and calls that didn't share one
   workload.
+- When the coolhand gem's `Coolhand.with_context` takes `client_unique_id:`, each request is also tagged with its
+  [`request_id`](observers.md#the-call), so feedback can name it (see below).
 - `observer = :coolhand` loads the gem when it is assigned, so assign it after `coolhand` is available (the default
   needs no ordering).
+
+## Apprentice feedback
+
+With [apprentice mode](apprentice.md), every shadow run also becomes feedback in Coolhand on the request whose output was
+accepted:
+
+| Outcome | Feedback |
+|---|---|
+| The LLM matched the Ruby result | `sentiment: "like"` |
+| It differed | `sentiment: "dislike"`, with the Ruby result (JSON) as `revised_output` |
+| The shadow run failed, or `compare:` raised | none |
+
+The feedback finds its log by `client_unique_id`, the request's `request_id`. So this needs a coolhand gem that tags
+logs with it (`Coolhand.with_context(client_unique_id:)`); with an older one, no feedback is sent. The feedback is
+sent from the shadow run's job, so with a [background runner](apprentice.md#running-it-in-the-background) it adds
+nothing to the call's latency. Each apprentice request's workload is described as `Class#method (apprentice)`, under the
+same workload and template keys as the method's other calls.

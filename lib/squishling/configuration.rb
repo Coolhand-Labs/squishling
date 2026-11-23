@@ -60,6 +60,15 @@ module Squishling
     # loaded and configured, and nothing otherwise; false never wraps.
     attr_reader :observer
 
+    # The report hook of every apprentice (see Apprentice) that doesn't declare its own: a callable taking keywords
+    # (ruby:, llm:, match:, error:, inputs:, metadata:), e.g. ->(match:, metadata:, **) { Stats.record(...) }.
+    attr_reader :apprentice_report
+
+    # Where an apprentice's shadow run (see Apprentice) runs: :inline (the default; on the caller's thread, after the
+    # Ruby result), :thread (the built-in Apprentice::ThreadRunner, so the caller doesn't wait), or anything that
+    # responds to call(job) and runs the job eventually, e.g. ->(job) { pool.post(&job) }.
+    attr_reader :apprentice_runner
+
     # How Squishling reaches a model (see Adapter): :ruby_llm, :openai_compatible, an adapter you registered, a Hash
     # with type: and that adapter's options, or an adapter instance. nil (the default) uses RubyLLM when the ruby_llm
     # gem is available. Built when assigned, so a mistake fails at setup rather than on the first request.
@@ -92,6 +101,8 @@ module Squishling
       @logger = nil
       @squawk = nil
       @squawk_on = :all
+      @apprentice_report = nil
+      @apprentice_runner = :inline
     end
 
     def default_model=(model)
@@ -170,6 +181,14 @@ module Squishling
 
     def squawk_on=(on)
       @squawk_on = Squawk.validate_on(on, "Squishling.configure") || :all
+    end
+
+    def apprentice_report=(hook)
+      @apprentice_report = Apprentice.validate_report(hook, "Squishling.configure", name: "apprentice_report") || nil
+    end
+
+    def apprentice_runner=(runner)
+      @apprentice_runner = Apprentice.validate_runner(runner, "Squishling.configure:")
     end
 
     def observer=(observer)

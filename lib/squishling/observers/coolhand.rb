@@ -7,6 +7,9 @@ module Squishling
     # ("Class#method", described as that, plus "(rescue)" when squish! handed the call over); the template is the
     # call's place in it: "Class#method/squish:L2" (an escalation attempt), "/sample:a", or "/judge". The model
     # isn't in the key: it's on the log, and the place is the stable identity.
+    # With a coolhand gem that takes client ids (Coolhand.with_context(client_unique_id:)), each log also carries the
+    # request's id (Observer::Call#request_id), and an apprentice's review (see Apprentice) is sent as feedback on the
+    # request that produced the LLM's result: the Ruby result as the revised output when they differ.
     # Used automatically when the coolhand gem is loaded and configured (see Observer.resolve). See docs/coolhand.md.
     class Coolhand
       REPORTER = "squishling"
@@ -24,6 +27,15 @@ module Squishling
         configuration.enabled != false && !configuration.api_key.to_s.strip.empty?
       rescue StandardError
         false # nobody asked for this observer, so a Coolhand that can't say whether it's set up isn't ours to break
+      end
+
+      # Whether the coolhand gem can tag a log with Squishling's id for the request, which feedback then names.
+      def self.client_ids?
+        ::Coolhand.method(:with_context).parameters.any? do |type, name|
+          KeywordHook::KEYWORD_TYPES.include?(type) && name == :client_unique_id
+        end
+      rescue StandardError
+        false
       end
 
       def self.load_library
@@ -47,12 +59,33 @@ module Squishling
         template = "#{workload}/#{role_key(call)}"
         return yield unless declarable?(workload) && declarable?(template)
 
-        ::Coolhand.with_context(
+        declared = {
           reporter: REPORTER,
           workload: { key: workload, name: workload, description: description(call) },
-          template: { key: template, name: "#{workload} · #{role_name(call)}" },
-          &
-        )
+          template: { key: template, name: "#{workload} · #{role_name(call)}" }
+        }
+        declared[:client_unique_id] = call.request_id if call.request_id && self.class.client_ids?
+        ::Coolhand.with_context(**declared, &)
+      end
+
+      # Sends an apprentice's review (see Apprentice::Review) as feedback on the request that produced the LLM's
+      # result, found by its client id: liked when it matched the Ruby result, otherwise disliked with the Ruby result
+      # as the revised output. Nothing is sent without such a request (the LLM failed), without a verdict (compare:
+      # raised), or with a coolhand gem that can't tag logs with client ids. Coolhand's feedback call doesn't raise.
+      def apprentice(review)
+        return if review.request_id.nil? || review.match.nil?
+        return unless self.class.client_ids? && ::Coolhand.respond_to?(:feedback_service)
+
+        feedback = {
+          client_unique_id: review.request_id,
+          sentiment: review.match ? "like" : "dislike",
+          explanation: "#{review.label}'s Ruby implementation " \
+                       "#{review.match ? 'returned the same result' : 'returned the revised output'} " \
+                       "(Squishling apprentice)",
+          creator_unique_id: REPORTER
+        }
+        feedback[:revised_output] = JSON.generate(review.ruby) unless review.match
+        ::Coolhand.feedback_service.create_feedback(feedback)
       end
 
       private
@@ -60,6 +93,8 @@ module Squishling
       # The squished method, marked "(rescue)" when squish! handed it to the LLM. Not the purpose text, which can be
       # a proc that differs per call.
       def description(call)
+        return "#{call.label} (apprentice)" if call.apprentice
+
         call.handed_off ? "#{call.label} (rescue)" : call.label
       end
 
