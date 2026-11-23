@@ -19,10 +19,14 @@ module Squishling
       case value
       when Image then { attached_image: attach(value, images) }
       when Exception then { class: exception_class_name(value.class), message: value.message }
-      when Array, Set then within(value, label, path) { |inner| value.map { |item| describe(item, label, images, inner) } }
+      when Array, Set then elements(value, label, images, path)
       when Hash, Struct, Data then members(value, label, images, path)
       else open_struct?(value) ? members(value, label, images, path) : value
       end
+    end
+
+    def elements(value, label, images, path)
+      within(value, label, path) { |inner| value.map { |item| describe(item, label, images, inner) } }
     end
 
     def members(value, label, images, path)

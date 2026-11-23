@@ -22,10 +22,13 @@ module Squishling
       @tally = Budget::Tally.new(budget, cache_reads: @config.budget_counts_cache_reads)
     end
 
-    # Raises ConfigurationError if any of the steps names an adapter that isn't configured, so a mistake ends the call
-    # before it has made a request.
-    def check_adapters!(steps)
-      steps.each { |step| adapter_for(step) }
+    # Raises ConfigurationError if any of the steps names an adapter that isn't configured, or (given images) names one
+    # that doesn't take them, so a mistake ends the call before it has made a request.
+    def check_adapters!(steps, images = [])
+      steps.each do |step|
+        adapter_for(step)
+        check_images!(step, images)
+      end
     end
 
     # The budget limit this client's requests have reached ({ limit:, max:, used: }), or nil. Checked before each
@@ -58,18 +61,8 @@ module Squishling
     # A fresh conversation on one escalation step, with the system prompt, the strict output schema, and the Images
     # its first message carries. Raises ConfigurationError for images when the step's adapter doesn't take them.
     def chat(step, instructions:, schema:, images: [])
-      if images.any? && !images?(step)
-        raise ConfigurationError, "#{@label}: the call has images, but the #{adapter_for(step).class} adapter " \
-                                  "doesn't take them (see Adapter::Base#images?)"
-      end
-
+      check_images!(step, images)
       Conversation.new(step, instructions, schema, [], images)
-    end
-
-    # Whether the step's adapter takes images in a message's content.
-    def images?(step)
-      adapter = adapter_for(step)
-      adapter.respond_to?(:images?) && adapter.images?
     end
 
     # One request in the conversation: the message goes in, and the adapter's answer is kept in it so the next
@@ -106,6 +99,16 @@ module Squishling
 
     # The step's adapter, looked up once per call: the adapter a job's context was captured from is the one that
     # makes its request, even if the configuration changes meanwhile.
+    def check_images!(step, images)
+      return if images.empty?
+
+      adapter = adapter_for(step)
+      return if adapter.respond_to?(:images?) && adapter.images?
+
+      raise ConfigurationError, "#{@label}: the call has images, but the #{adapter.class} adapter doesn't take " \
+                                "them (see Adapter::Base#images?)"
+    end
+
     def adapter_for(step)
       @adapters_lock.synchronize { @adapters[step.adapter] ||= @config.adapter_for(step.adapter) }
     end

@@ -121,6 +121,29 @@ RSpec.describe "Images in a squished call" do # rubocop:disable RSpec/DescribeCl
     expect { klass.call(image:) }.to raise_error(Squishling::ConfigurationError, /has images, but the .* adapter/)
   end
 
+  it "refuses a later step on an adapter that doesn't take images, before the first step makes a request" do
+    requests = []
+    seeing = Class.new(Squishling::Adapter::Base) do
+      define_method(:images?) { true }
+      define_method(:complete) { |request| requests << request }
+    end.new
+    blind = Class.new(Squishling::Adapter::Base) do
+      def complete(_request) = raise("no request should be made")
+    end.new
+    Squishling.configure { |config| config.adapters = { seeing:, blind: } }
+    mixed = Class.new do
+      include Squishling
+
+      squishling escalation: [{ model: "a", adapter: :seeing }, { model: "b", adapter: :blind }]
+      purpose "Read the receipt."
+      output_schema { integer :total_cents }
+    end
+
+    expect { mixed.call(image:) }
+      .to raise_error(Squishling::ConfigurationError, /has images, but the .* adapter doesn't take/)
+    expect(requests).to be_empty
+  end
+
   describe "judges" do
     let(:samples) { [{ "total_cents" => 1 }, { "total_cents" => 2 }] }
 

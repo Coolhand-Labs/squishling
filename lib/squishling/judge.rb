@@ -62,7 +62,7 @@ module Squishling
       @escalate = escalate
       @log_failure = log_failure
       @steps = resolve_steps(path)
-      @client.check_adapters!(@steps)
+      @client.check_adapters!(@steps, @images)
     end
 
     # The judge's first attempt, for logs and DisagreementError#models.
