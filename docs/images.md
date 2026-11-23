@@ -54,6 +54,18 @@ be reachable from your process too. A [custom adapter](adapters.md#images) opts
 in with `images?`. A call with images through an adapter that doesn't take them raises `ConfigurationError` before any
 request is made.
 
+## Untrusted URLs and paths
+
+Build an `Image` only from sources you trust, or check them first. Squishling doesn't filter hosts or paths:
+
+- **`Image.from_url`**: with the OpenAI-compatible adapter the provider fetches the URL. With the RubyLLM adapter your
+  own process may download it (see [Adapters](#adapters)), following redirects, from any host it can reach, including
+  `localhost`, private addresses, and cloud metadata endpoints. What it fetches is then sent to the provider. If a user
+  can choose the URL, allow-list its host (and scheme) before building the `Image`, or download it yourself and pass
+  the bytes with `Image.new(data:)`.
+- **`Image.from_path`**: reads whatever file the path names, so never pass it a path a user chose without confining it
+  to a directory you control.
+
 ## Privacy and logs
 
 An image is input, like any argument: it goes to the provider (and to a judge's provider). It never goes anywhere else.

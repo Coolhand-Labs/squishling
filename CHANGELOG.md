@@ -9,11 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.7.0] - 2026-11-23
 
-Mix adapters in one escalation, and structured Ruby values now reach the model as structure. Read **Changed** before
-upgrading: a `Struct`, `Data`, `OpenStruct`, or `Set` argument is sent differently.
+Images as call inputs, mixing adapters in one escalation, and structured Ruby values that now reach the model as
+structure. Read **Changed** before upgrading: a `Struct`, `Data`, `OpenStruct`, or `Set` argument is sent differently.
 
 ### Added
 
+- `Squishling::Image`: a squished method can read images. Build one from bytes (`Image.new(data:)`, the media type read
+  from the bytes), a file (`Image.from_path`), or a URL the provider fetches (`Image.from_url`), with an optional
+  `detail: :low | :high`, and pass it as an argument, inside a Hash or Array, or as a `squish_context` value. The JSON
+  input carries `{"attached_image": N}` in its place and the images go with each chat's first message, after the text;
+  the Ruby path gets the `Image` unchanged. A retry continues the chat, an escalation starts a fresh chat that carries
+  them again, samples and a `:chat` judge are sent them, and a `type: :judgment` judge can't see them, so that
+  combination raises `ConfigurationError`. PNG, JPEG, GIF, and WebP are supported. An image's `inspect`, `to_s`,
+  `as_json`, `to_json`, and YAML describe it (media type and size, or a URL without its query), and `Marshal` refuses
+  it, so its bytes don't reach logs, errors, or `squawk`. Only build an `Image` from a URL or path you trust: see
+  [Images](docs/images.md#untrusted-urls-and-paths). (#110)
+- `Adapter::Base#images?` (default `false`): an adapter that takes images sets it, and then receives a chat's first
+  message as content parts (`{ type: :text, ... }`, then `{ type: :image, image: Squishling::Image }`). A call with
+  images through an adapter without it, on any of its steps, raises `ConfigurationError` before the first request, so
+  existing custom adapters keep getting String content. The RubyLLM and OpenAI-compatible adapters take images, and
+  `Testing::Request#images` and `squishling_preview`'s `images:` show what was sent. See [Images](docs/images.md). (#110)
 - `config.adapters`, a Hash of named adapters (each value takes anything `config.adapter` does, and is built when
   assigned), and an `adapter:` key on escalation steps, so one escalation can run, say, Apple FM, Claude Code, and Ollama
   in sequence. A step without `adapter:` keeps using `config.adapter`. `adapter:` also works on `squish!`'s
