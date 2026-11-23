@@ -22,7 +22,8 @@ structure. Read **Changed** before upgrading: a `Struct`, `Data`, `OpenStruct`, 
   them again, samples and a `:chat` judge are sent them, and a `type: :judgment` judge can't see them, so that
   combination raises `ConfigurationError`. PNG, JPEG, GIF, and WebP are supported. An image's `inspect`, `to_s`,
   `as_json`, `to_json`, and YAML describe it (media type and size, or a URL without its query), and `Marshal` refuses
-  it, so its bytes don't reach logs, errors, or `squawk`. Only build an `Image` from a URL or path you trust: see
+  it, so its bytes don't reach logs, errors, or `squawk`. Known risk: with the RubyLLM adapter, RubyLLM may download an
+  image's URL from your process, from any host it can reach, so only build an `Image` from a URL or path you trust: see
   [Images](docs/images.md#untrusted-urls-and-paths). (#110)
 - `Adapter::Base#images?` (default `false`): an adapter that takes images sets it, and then receives a chat's first
   message as content parts (`{ type: :text, ... }`, then `{ type: :image, image: Squishling::Image }`). A call with

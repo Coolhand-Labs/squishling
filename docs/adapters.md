@@ -34,6 +34,17 @@ configured RubyLLM before adapters existed keep working. Squishling no longer re
 app that doesn't load its Gemfile with `Bundler.require` should `require "ruby_llm"` before `RubyLLM.configure`. Without the gem, the first squished call
 raises `Squishling::ConfigurationError` saying what to add.
 
+### Known risk: the RubyLLM adapter downloads some image URLs itself
+
+When a call carries an [image given by URL](images.md#adapters), the RubyLLM adapter hands the URL to RubyLLM, which
+downloads it from your process whenever it can't tell the image type from the URL's path (any path with no image
+extension) or the provider can't fetch URLs itself. That download follows redirects and doesn't filter hosts, so a URL
+that points at `localhost`, a private address, or a cloud metadata endpoint is fetched, and what comes back is sent to
+the provider. If a user can choose an image URL, that is a server-side request forgery risk that comes with the RubyLLM
+adapter: allow-list the URL's host and scheme before building the `Image`, or download it yourself and pass the bytes
+with `Image.new(data:)`. The OpenAI-compatible adapter never downloads an image: it sends the URL on for the provider
+to fetch.
+
 ## Mixing adapters in one escalation
 
 Give `config.adapters` a name for each extra adapter, and pick one per step with `adapter:`:
