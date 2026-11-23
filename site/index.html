@@ -243,17 +243,17 @@
 </header>
 
 <aside class="release" id="latest-release" aria-label="Latest release">
-  <p class="kicker">Latest release · v0.6.0 · <time datetime="2026-11-01">November 1, 2026</time></p>
-  <p>Squishling turns any Ruby class into a hybrid of code and LLM inference working together. v0.6.0 makes the LLM
-  half cheaper to run: the stable part of every prompt is now cached by the provider, and you can see and budget for it.</p>
+  <p class="kicker">Latest release · v0.7.0 · <time datetime="2026-11-23">November 23, 2026</time></p>
+  <p>Squishling turns any Ruby class into a hybrid of code and LLM inference working together. v0.7.0 lets a method read
+  images, gives you more control over which models do the inferring, and sends the model cleaner data.</p>
   <ul>
-    <li>💸 <strong>Prompt caching, on by default:</strong> repeated calls reuse the cached prompt instead of paying for it again. Some providers charge extra to write the cache, so set <code>cache: false</code> (or <code>config.default_cache = false</code>) to opt out</li>
-    <li>🎛️ <strong>Control it where you need it:</strong> set <code>cache</code> per class, method, escalation step, or <code>squish!</code> call, with options like <code>{ ttl: "1h" }</code></li>
-    <li>👀 <strong>See whether it hits:</strong> <code>cache_read_tokens</code> and <code>cache_write_tokens</code> show up in <code>squawk</code> usage and on observers</li>
-    <li>🧮 <strong>Budgets that understand the cache:</strong> <code>max_total_input_tokens</code> counts cache writes but not cheap reads (set <code>budget_counts_cache_reads = true</code> to count them)</li>
-    <li>🔌 <strong>More adapters:</strong> the docs now point to the Apple on-device and Claude Code adapter gems</li>
+    <li>🖼️ <strong>Images as inputs:</strong> pass a <code>Squishling::Image</code> (from a file, bytes, or URL) to a squished method and the model reads it, with no OCR step. Only build one from a URL or path you trust</li>
+    <li>🔀 <strong>Mix adapters in one escalation:</strong> name adapters in <code>config.adapters</code> and pick one per step with <code>adapter:</code>, so a single method can try Apple FM, then Claude Code, then Ollama</li>
+    <li>🧱 <strong>Structs reach the model as structure:</strong> a <code>Struct</code>, <code>Data</code>, <code>OpenStruct</code> or <code>Set</code> argument is now sent as an object or array of its members instead of Ruby's <code>inspect</code> text. Pass a Hash or define <code>to_h</code> to leave a field out</li>
+    <li>🧪 <strong>Tests and observers know the adapter:</strong> <code>Observer::Call#adapter</code>, and <code>step(adapter:)</code> in test scripts</li>
+    <li>🔎 <strong>Verified ahead of time:</strong> <code>Squishling.verify</code> catches an unknown adapter name before any request</li>
   </ul>
-  <p class="more"><a href="https://github.com/Coolhand-Labs/squishling/releases/tag/v0.6.0">Release notes</a> ·
+  <p class="more"><a href="https://github.com/Coolhand-Labs/squishling/releases/tag/v0.7.0">Release notes</a> ·
   <a href="https://github.com/Coolhand-Labs/squishling/blob/main/CHANGELOG.md">Changelog</a></p>
 </aside>
 

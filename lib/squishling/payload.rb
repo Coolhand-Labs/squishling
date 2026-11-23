@@ -31,6 +31,11 @@ module Squishling
 
     def members(value, label, images, path)
       pairs = value.is_a?(Hash) ? value : value.to_h
+      unless pairs.is_a?(Hash)
+        raise ConfigurationError,
+          "#{label}: #{value.class}#to_h must return a Hash to be sent as JSON, got #{pairs.class}"
+      end
+
       within(value, label, path) { |inner| pairs.transform_values { |item| describe(item, label, images, inner) } }
     end
 

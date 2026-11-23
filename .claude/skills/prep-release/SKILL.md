@@ -88,13 +88,24 @@ Process the user's chosen PRs one at a time, not as a batch:
    conflicts, skip it, note it in the running list as "skipped — needs
    rebase," and continue with the rest. Don't resolve conflicts on someone
    else's branch unilaterally.
-2. `gh pr merge <n> --squash --delete-branch` for each surviving PR.
-3. After each merge, sync local `main` before evaluating the next PR.
-   First check `git status --porcelain` — if it's not empty, stop and
-   surface it to the user rather than discarding unknown local state;
-   otherwise `git fetch origin main && git checkout main && git reset
-   --hard origin/main` is safe, since it only overwrites a working tree
-   already confirmed clean with the just-fetched remote `main`.
+2. `gh pr merge <n> --squash --delete-branch --admin` for each surviving PR.
+   The repo's "only maintainers can merge" ruleset blocks a plain merge
+   (`the base branch policy prohibits the merge`) even when every check is
+   green, so `--admin` is the standing, user-approved way to merge here. It
+   covers only the PRs chosen in Phase 1 that are `MERGEABLE`; it never
+   covers a conflicting PR, a draft the user didn't explicitly include (a
+   draft must also be made ready with `gh pr ready <n>`, which is only done
+   when the user named it), or the Phase 5 release PR. A dependabot PR can
+   read `UNKNOWN` mergeability for a few seconds right after an earlier
+   merge, so poll until it resolves before deciding to skip it.
+3. After each merge, sync before evaluating the next PR. First check
+   `git status --porcelain` — if it's not empty, stop and surface it to the
+   user rather than discarding unknown local state. Then `git fetch origin
+   main --tags`. In a Conductor workspace `main` is checked out in the primary
+   worktree, so `git checkout main` fails; don't force it. Branch the release
+   off `origin/main` instead (`git checkout -b release/vX.Y.Z origin/main`).
+   Where `main` can be checked out, `git checkout main && git reset --hard
+   origin/main` is safe once the tree is confirmed clean.
 
 Keep a running list of what actually merged vs. what got skipped — Phase 5
 reports both.
@@ -330,7 +341,8 @@ rule `/loop-review` uses for stuck findings.
   running `bundle install` for the lockfile are all in scope and don't
   need a stop-and-ask — they're mechanical, reversible, and gated on Phase
   4 already being green before the PR opens.
-- Squash-merging PRs the user explicitly chose in Phase 1, and pushing the
+- Squash-merging PRs the user explicitly chose in Phase 1 (with `--admin`, to
+  get past the repo's merge ruleset; see Phase 2 step 2), and pushing the
   `release/vX.Y.Z` branch to open its own PR and comment the social drafts on
   it, are all in scope. Posting them to LinkedIn or Twitter/X is not: the
   user does that.
