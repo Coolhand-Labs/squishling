@@ -381,7 +381,9 @@ RSpec.describe Squishling::CallId do
       declared.squishling(call_id: ->(record_id:, **) { (reads << record_id) && record_id })
       declared.class_eval do
         def call(record_id:, note: nil)
-          note == "ruby" ? result(priority: record_id.size > 100 ? "high" : "low") : squish!(context: { record_id: })
+          return squish!(context: { record_id: }) unless note == "ruby"
+
+          result(priority: record_id.size > 100 ? "high" : "low")
         end
       end
       stub_llm(high)
