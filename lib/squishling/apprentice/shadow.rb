@@ -68,7 +68,7 @@ module Squishling
           next Apprentice.hold(e) if Apprentice.unabsorbable?(e) # raised by the next Apprentice.drain
 
           Squishling.config.logger&.error("[Squishling] #{@definition.label} apprentice report failed: " \
-                                          "#{e.class}: #{e.message}")
+                                          "#{Apprentice.describe(e)}")
         end
       end
 
@@ -120,7 +120,7 @@ module Squishling
         return unless logger
 
         if error
-          logger.warn("[Squishling] #{@definition.label} apprentice LLM run failed: #{error.class}: #{error.message}")
+          logger.warn("[Squishling] #{@definition.label} apprentice LLM run failed: #{Apprentice.describe(error)}")
         else
           logger.debug("[Squishling] #{@definition.label} apprentice: the LLM #{match ? 'matched' : 'differed'}")
         end

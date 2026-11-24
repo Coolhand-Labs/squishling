@@ -46,7 +46,8 @@ RSpec.describe Squishling::Apprentice::ThreadRunner do
     runner.drain(timeout: 5)
 
     expect(ran.pop).to eq(:second)
-    expect(io.string).to include("apprentice run failed: IOError: stats down")
+    expect(io.string).to include("apprentice run failed: IOError")
+    expect(io.string).not_to include("stats down")
   end
 
   it "counts a job that raises a non-StandardError as finished" do
@@ -56,7 +57,7 @@ RSpec.describe Squishling::Apprentice::ThreadRunner do
 
     expect(runner.drain(timeout: 5)).to be(true)
     expect(runner.pending).to eq(0)
-    expect(io.string).to include("apprentice run failed: NotImplementedError: todo")
+    expect(io.string).to include("apprentice run failed: NotImplementedError")
   end
 
   it "doesn't count a run whose thread couldn't start" do

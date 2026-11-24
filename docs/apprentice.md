@@ -95,7 +95,8 @@ It runs only when the Ruby implementation answered the call, which means all of 
 ## Failures never reach the caller
 
 A shadow run can't change what the caller gets. Whatever ends it goes to the report hook's `error:` and to the logger as a
-warning, and is never raised. That covers:
+warning, and is never raised. The log line names an exception from your own code by its class only, because its
+message may quote the model's output; the full exception is in `error:`. That covers:
 
 - an `InvalidOutputError` or `LLMError` after the escalation,
 - a `BudgetExhaustedError`,
@@ -107,7 +108,7 @@ warning, and is never raised. That covers:
 The exceptions are what you'd want to hear about at once:
 
 - An exception your report hook (or an observer's `apprentice`) raises propagates on the inline runner, as any of your
-  code would. On a background runner there is no caller left to raise to, so it is logged as an error.
+  code would. On a background runner there is no caller left to raise to, so it is logged as an error (by class only).
 - The errors of [`Squishling::Testing`](testing.md) (an unscripted request in a test) propagate, so a test can't pass
   by accident. On a background runner they are held and raised by the next `Squishling::Apprentice.drain`, which
   `Testing.reset!` calls after each test.
@@ -157,9 +158,10 @@ request:
 - a match is sent as "like";
 - a mismatch as "dislike", with the Ruby result as the revised output.
 
-Over time that gives you the model's agreement rate with your Ruby code, per workload, in Coolhand. It needs a
-`coolhand` gem whose `Coolhand.with_context` takes `client_unique_id:`, which tags each log with the request's id. With
-an older gem the logs carry no id, so no feedback is sent and everything else works as before.
+Over time that gives you the model's agreement rate with your Ruby code, per workload, in Coolhand. It needs coolhand
+0.12.0 or later, which tags each log with the request's id (`Coolhand.with_context(client_unique_id:)`), and a Coolhand
+server that matches feedback by that id (see [Apprentice feedback](coolhand.md#apprentice-feedback)). With an older gem
+the logs carry no id, so no feedback is sent and everything else works as before.
 
 ## Testing
 

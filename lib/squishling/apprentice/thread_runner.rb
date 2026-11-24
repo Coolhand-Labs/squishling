@@ -117,7 +117,7 @@ module Squishling
         executor = rails_executor
         executor ? executor.wrap { job.call } : job.call
       rescue StandardError, ScriptError => e # a job's own failure must not stop the worker
-        Squishling.config.logger&.error("[Squishling] apprentice run failed: #{e.class}: #{e.message}")
+        Squishling.config.logger&.error("[Squishling] apprentice run failed: #{Apprentice.describe(e)}")
       end
 
       def rails_executor

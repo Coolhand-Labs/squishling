@@ -7,7 +7,7 @@ module Squishling
     # ("Class#method", described as that, plus "(rescue)" when squish! handed the call over); the template is the
     # call's place in it: "Class#method/squish:L2" (an escalation attempt), "/sample:a", or "/judge". The model
     # isn't in the key: it's on the log, and the place is the stable identity.
-    # With a coolhand gem that takes client ids (Coolhand.with_context(client_unique_id:)), each log also carries the
+    # With coolhand 0.12.0+ (Coolhand.with_context(client_unique_id:)), each log also carries the
     # request's id (Observer::Call#request_id), and an apprentice's review (see Apprentice) is sent as feedback on the
     # request that produced the LLM's result: the Ruby result as the revised output when they differ.
     # Used automatically when the coolhand gem is loaded and configured (see Observer.resolve). See docs/coolhand.md.
@@ -16,6 +16,9 @@ module Squishling
 
       # Coolhand rejects keys longer than this.
       MAX_KEY_LENGTH = 255
+
+      # How long apprentice feedback waits for Coolhand's queued logs to be sent, so the log it names is there first.
+      FLUSH_TIMEOUT = 0.5
 
       # Whether Coolhand is loaded, new enough to declare workloads, and set up to send logs.
       def self.available?
@@ -71,7 +74,9 @@ module Squishling
       # Sends an apprentice's review (see Apprentice::Review) as feedback on the request that produced the LLM's
       # result, found by its client id: liked when it matched the Ruby result, otherwise disliked with the Ruby result
       # as the revised output. Nothing is sent without such a request (the LLM failed), without a verdict (compare:
-      # raised), or with a coolhand gem that can't tag logs with client ids. Coolhand's feedback call doesn't raise.
+      # raised), or with a coolhand gem that can't tag logs with client ids. Coolhand logs in the background, so its
+      # queue is flushed first (briefly), for the feedback not to arrive before its log. Coolhand's feedback call
+      # doesn't raise.
       def apprentice(review)
         return if review.request_id.nil? || review.match.nil?
         return unless self.class.client_ids? && ::Coolhand.respond_to?(:feedback_service)
@@ -85,6 +90,7 @@ module Squishling
           creator_unique_id: REPORTER
         }
         feedback[:revised_output] = JSON.generate(review.ruby) unless review.match
+        ::Coolhand.flush(timeout: FLUSH_TIMEOUT) if ::Coolhand.respond_to?(:flush)
         ::Coolhand.feedback_service.create_feedback(feedback)
       end
 

@@ -130,6 +130,13 @@ module Squishling
       Process.clock_gettime(Process::CLOCK_MONOTONIC)
     end
 
+    # An absorbed error as a log line names it: a Squishling::Error with its message (which carries no model output or
+    # provider text), anything else by its class alone, since its message may quote the LLM's result (compare:,
+    # squish_validate and the report hook all handle it). The full error still reaches the report hook's error:.
+    def describe(error)
+      error.is_a?(Squishling::Error) ? "#{error.class}: #{error.message}" : error.class.to_s
+    end
+
     # Errors a shadow run doesn't absorb: those of Squishling::Testing (a test's setup mistake, e.g. an unscripted
     # request), which no squish_fallback absorbs either.
     def unabsorbable?(error)

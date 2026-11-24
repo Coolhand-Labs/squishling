@@ -245,6 +245,31 @@ RSpec.describe "Squishling apprentice mode" do
       expect(io.string).not_to include("SECRET_OUTPUT_1")
     end
 
+    it "logs only the class of an exception from the developer's code, whose message may quote the model's output" do
+      io = StringIO.new
+      Squishling.configure { |c| c.logger = Logger.new(io) }
+      klass.squishling(apprentice: {
+        report: recorder, compare: ->(_ruby, llm, **) { Integer(llm.priority) }
+      })
+      stub_llm({ "priority" => "SECRET_OUTPUT_3" })
+
+      expect(klass.call(text: "site down").priority).to eq("high")
+      expect(io.string).to include("Triage#call apprentice LLM run failed: ArgumentError")
+      expect(io.string).not_to include("SECRET_OUTPUT_3")
+      expect(sole(reports)[:error].message).to include("SECRET_OUTPUT_3")
+    end
+
+    it "names an anonymous exception class in the log" do
+      io = StringIO.new
+      Squishling.configure { |c| c.logger = Logger.new(io) }
+      anonymous = Class.new(StandardError)
+      klass.squishling(apprentice: { report: recorder, when: ->(**) { raise anonymous } })
+
+      klass.call(text: "site down")
+
+      expect(io.string).to include("apprentice LLM run failed: #<Class:0x")
+    end
+
     it "lets the report hook's own exception reach the caller on the inline runner" do
       klass.squishling(apprentice: { report: ->(**) { raise IOError, "stats down" } })
       stub_llm(high)
@@ -409,7 +434,8 @@ RSpec.describe "Squishling apprentice mode" do
       klass.call(text: "site down")
       expect { sole(jobs).call }.not_to raise_error
 
-      expect(io.string).to include("Triage#call apprentice report failed: IOError: stats down")
+      expect(io.string).to include("Triage#call apprentice report failed: IOError")
+      expect(io.string).not_to include("stats down")
     end
 
     it "runs off the caller's thread with :thread, and drains" do

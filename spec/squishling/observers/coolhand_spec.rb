@@ -221,6 +221,7 @@ RSpec.describe Squishling::Observers::Coolhand do
 
   describe "apprentice mode" do
     let(:feedback) { [] }
+    let(:flushed) { [] }
 
     # The coolhand gem with client ids: with_context takes client_unique_id:, and feedback is recorded.
     let(:coolhand_with_ids) do
@@ -228,7 +229,12 @@ RSpec.describe Squishling::Observers::Coolhand do
       sent = feedback
       config = settings
       service = Object.new.tap { |object| object.define_singleton_method(:create_feedback) { |hash| sent << hash } }
+      flushes = flushed
       Module.new do
+        define_singleton_method(:flush) do |timeout:|
+          flushes << [timeout, sent.size]
+          true
+        end
         define_singleton_method(:with_context) do |reporter: nil, workload: nil, template: nil, client_unique_id: nil,
                                                    &block|
           log << [{ reporter:, workload:, template:, client_unique_id: }.compact, Thread.current]
@@ -259,6 +265,16 @@ RSpec.describe Squishling::Observers::Coolhand do
         explanation: "TicketTriage#call's Ruby implementation returned the revised output (Squishling apprentice)",
         creator_unique_id: "squishling", revised_output: '{"priority":"high","team":"api"}'
       }])
+    end
+
+    it "flushes Coolhand's queued logs before sending feedback, so the log it names arrives first" do
+      stub_const("Coolhand", coolhand_with_ids)
+      stub_llm(high)
+
+      klass.call(text: "site down")
+
+      expect(flushed).to eq([[described_class::FLUSH_TIMEOUT, 0]])
+      expect(feedback.size).to eq(1)
     end
 
     it "likes a match, without a revised output" do
