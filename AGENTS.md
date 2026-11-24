@@ -110,7 +110,8 @@ Flag any change that breaks one of these; they are behavior contracts, not style
   adapter's HTTP retries, `cause` per the adapter, see the invariant on provider text below). Never wrap or swallow
   exceptions raised by the user's own Ruby code.
 - **Model output leaves the process only through `InvalidOutputError#raw`, the opt-in `squawk` hook, and an
-  apprentice's opt-in `report:` hook** (its `llm:` result). Error
+  apprentice's opt-in `report:` hook** (its `llm:` result; `config.apprentice_listener`, set only by
+  `Testing.with_apprentice`, gets the same report). Error
   messages and `config.logger` lines carry parse positions and schema paths, never the response itself (the
   documented exceptions are model-chosen extra key names, which `InvalidOutputError#error_details` tags
   `model_derived?`, and the developer's own `squish_validate` messages).
@@ -121,7 +122,7 @@ Flag any change that breaks one of these; they are behavior contracts, not style
   `Adapter::ProviderFailure` with the class, HTTP status, and backtrace, built fresh, never a copy of the original).
   The RubyLLM adapter's `keep_cause: true` is the developer's opt-in to the original; core never touches `cause`.
   Transport errors that carry no body may stay as the cause.
-- **Apprentice mode never changes what the caller gets.** With `apprentice:` (class, method; `config.apprentice_report`
+- **Apprentice mode never changes what the caller gets.** With `apprentice_mode:` (class, method; `config.apprentice_report`
   and `config.apprentice_runner`), a call that the Ruby implementation answered returns that result, and `Apprentice.shadow`
   also runs the LLM path (`Invoker` directly, never `invoke_llm`, so `squish_fallback` is not used). It doesn't run after
   `squish_when` routed the call, after `squish!`, when the Ruby path raised, or on an inner call (`super`, or recursion: `Router.nested?`). Every failure of the
@@ -206,7 +207,10 @@ Flag any change that breaks one of these; they are behavior contracts, not style
   any provider SDK. Its stand-ins must stay honest: `stub_result` builds results through the method's schema, and the
   re-ask/escalation parsing reads `Run::Messages`, the one source of those texts. Its errors (`UnscriptedRequestError`,
   `ProviderCallError`, `SetupError`) are not `Squishling::Error`s, so a `squish_fallback` can't absorb them.
-  `Testing.reset!` restores only what the helpers changed.
+  `Testing.reset!` restores only what the helpers changed. An apprentice's shadow runs go through the same scripted
+  adapter (`script.apprentice` only narrows which rule answers); `disable_apprentice!` sets the real
+  `config.apprentice_enabled`, and `with_apprentice` listens through `config.apprentice_listener` (Testing only),
+  told after the class's own report hook, never instead of it.
 
 ## Public API
 
@@ -227,9 +231,9 @@ a message, and the built-in `Adapters::RubyLLM` and `Adapters::OpenAICompatible`
 `squawk_on:`),
 `squish_validate`, `squish_fallback`, `result`/`squishling_result`, `squish!` (including
 `model:`/`escalation:`/`cache:`/`harness:`), and the `max_total_output_tokens:`/`max_total_input_tokens:` options of
-`squishling`, `squish`, and `squish!`, and the `apprentice:` option (`when:`, `compare:`, `report:`) of `squishling` and
+`squishling`, `squish`, and `squish!`, and the `apprentice_mode:` option (`when:`, `compare:`, `report:`) of `squishling` and
 `squish`), `Squishling::Configuration` options (including `adapters`, `default_harness`, `apprentice_report`,
-`apprentice_runner`,
+`apprentice_runner`, `apprentice_enabled`,
 `default_cache`, `budget_counts_cache_reads`,
 `default_max_total_output_tokens`/`default_max_total_input_tokens`, `observer`, `squawk_on`, and `squawk`, whose
 `output:`/`metadata:`/`error:` keywords are public), `Squishling::Observer::Call` (with `adapter`, `call_id`, `request_id`, `apprentice`)/`Usage`
@@ -251,8 +255,9 @@ and `squish`. The verification surface is public too: `Squishling.verify`/`verif
 `Squishling::Judge::Verdict`, and the squawk `metadata` keys `role:`/`sample:`/`repeated:`/`stopped:`. The opt-in test
 support is public too: `Squishling::Testing` (`install`, `forbid_provider_calls!`, `no_llm_call`, `reset!`,
 `stub_result`/`stub_error`, `validate`/`fallback_for`/`preview`, `valid_reply_for`/`invalid_reply_for`,
-`capture_squawk`/`with_squawk`), its script DSL (`step`/`sample`/`judge`, `reply`/`fail`/`once`, `Reply`),
-`Testing::Adapter#requests`/`conversations` with `Testing::Request` (with `adapter`, selectable with
+`capture_squawk`/`with_squawk`, `disable_apprentice!`/`without_apprentice`/`capture_apprentice`/`with_apprentice` with
+`ApprenticeCapture`), its script DSL (`step`/`sample`/`judge`/`apprentice`, `reply`/`fail`/`once`, `Reply`),
+`Testing::Adapter#requests`/`conversations`/`requests_for` (with `apprentice:`) with `Testing::Request` (with `adapter`, selectable with
 `step(adapter:)`, `images`, and `apprentice?`), and the `Testing::Minitest` / `Testing::RSpec` mixins. Don't break it
 without a clear migration path in the changelog.
 

@@ -92,23 +92,29 @@ module Squishling
           [step[:include_when], "escalation step #{step[:model].inspect} include_when:"] if step[:include_when]
         end
         gates << [@definition.predicate, "squish_when"] if @definition.predicate
-        gates << [@definition.apprentice[:when], "apprentice when:"] if @definition.apprentice&.dig(:when)
+        gates << [shadowed_apprentice[:when], "apprentice_mode when:"] if shadowed_apprentice&.dig(:when)
         gates.flat_map { |callable, what| KeywordCheck.messages(callable, names, open).map { "#{what} #{_1}" } }
       end
 
       # Apprentice mode shadows the Ruby implementation, so a method that declares it needs one. compare: gets the two
       # results, then the inputs as keywords.
       def apprentice
-        settings = @definition.apprentice
+        settings = shadowed_apprentice
         return [] unless settings
 
-        messages = []
-        # Declared on a class, it applies to the methods that have one; on a method, the method must.
-        if @definition.apprentice_declared? && !@definition.implemented?
-          messages << "apprentice: has no Ruby implementation to run alongside the LLM"
-        end
         compare = settings[:compare]
-        messages + (compare ? KeywordCheck.compare_messages(compare, *@definition.input_names) : [])
+        messages = compare ? KeywordCheck.compare_messages(compare, *@definition.input_names) : []
+        return messages if @definition.implemented?
+
+        ["apprentice_mode: has no Ruby implementation to run alongside the LLM", *messages]
+      end
+
+      # The apprentice settings of a method that can be shadowed, or nil. Declared on a class, they apply only to the
+      # methods with a Ruby implementation, so an LLM-only method isn't checked against them; declared on a method,
+      # they always apply (and the method must have one).
+      def shadowed_apprentice
+        settings = @definition.apprentice
+        settings if settings && (@definition.apprentice_declared? || @definition.implemented?)
       end
 
       # A call_id: that names an input the method has, or a Proc that accepts the inputs as keywords.
@@ -183,7 +189,7 @@ module Squishling
         unless open
           messages += [missing_keywords(parameters, inputs), unaccepted_keywords(callable, parameters, inputs)].compact
         end
-        messages.map { |message| "apprentice compare: #{message}" }
+        messages.map { |message| "apprentice_mode compare: #{message}" }
       end
 
       # A compare: takes the two results positionally, then the inputs as keywords. A proc, or a lambda that names no

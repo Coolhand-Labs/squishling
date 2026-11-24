@@ -11,7 +11,7 @@ RSpec.describe "Squishling apprentice mode" do
     Class.new do
       include Squishling
 
-      squishling model: "test-model", apprentice: { report: hook }
+      squishling model: "test-model", apprentice_mode: { report: hook }
       purpose "Classify the ticket."
       output_schema do
         string :priority
@@ -65,7 +65,7 @@ RSpec.describe "Squishling apprentice mode" do
 
     it "compares with compare:, evaluated against the instance with both results and the inputs" do
       klass.class_eval { def strict? = false }
-      klass.squishling(apprentice: {
+      klass.squishling(apprentice_mode: {
         report: recorder,
         compare: ->(ruby, llm, text:) { strict? ? ruby == llm : [ruby.priority, llm.priority, text].size == 3 }
       })
@@ -77,7 +77,7 @@ RSpec.describe "Squishling apprentice mode" do
     end
 
     it "runs only on the calls when: picks, evaluated against the instance with the inputs" do
-      klass.squishling(apprentice: { report: recorder, when: ->(text:) { text.start_with?("shadow") && ready? } })
+      klass.squishling(apprentice_mode: { report: recorder, when: ->(text:) { text.start_with?("shadow") && ready? } })
       klass.class_eval { def ready? = true }
       chats = stub_llm(high)
 
@@ -90,7 +90,7 @@ RSpec.describe "Squishling apprentice mode" do
 
     it "gets the reports the hook names, and only those" do
       seen = []
-      klass.squishling(apprentice: { report: ->(match:, metadata:) { seen << [match, metadata[:label]] } })
+      klass.squishling(apprentice_mode: { report: ->(match:, metadata:) { seen << [match, metadata[:label]] } })
       stub_llm(high)
 
       klass.call(text: "site down")
@@ -141,7 +141,7 @@ RSpec.describe "Squishling apprentice mode" do
         output_schema { integer :n }
         def call(n:) = n.zero? ? { n: 0 } : { n: call(n: n - 1).n + 1 }
       end
-      counter.squishling(apprentice: { report: recorder })
+      counter.squishling(apprentice_mode: { report: recorder })
       chats = stub_llm({ "n" => 3 })
 
       expect(counter.call(n: 3).n).to eq(3)
@@ -208,14 +208,14 @@ RSpec.describe "Squishling apprentice mode" do
     end
 
     it "reports an exception from when:" do
-      klass.squishling(apprentice: { report: recorder, when: ->(**) { raise KeyError, "no sampler" } })
+      klass.squishling(apprentice_mode: { report: recorder, when: ->(**) { raise KeyError, "no sampler" } })
 
       expect(klass.call(text: "site down").priority).to eq("high")
       expect(sole(reports)[:error]).to be_a(KeyError)
     end
 
     it "reports a NotImplementedError from compare:, which isn't a StandardError" do
-      klass.squishling(apprentice: { report: recorder, compare: ->(*, **) { raise NotImplementedError, "todo" } })
+      klass.squishling(apprentice_mode: { report: recorder, compare: ->(*, **) { raise NotImplementedError, "todo" } })
       stub_llm(high)
 
       expect(klass.call(text: "site down").priority).to eq("high")
@@ -223,7 +223,7 @@ RSpec.describe "Squishling apprentice mode" do
     end
 
     it "reports an exception from compare:, with the LLM's result" do
-      klass.squishling(apprentice: { report: recorder, compare: ->(*, **) { raise ZeroDivisionError } })
+      klass.squishling(apprentice_mode: { report: recorder, compare: ->(*, **) { raise ZeroDivisionError } })
       stub_llm(high)
 
       expect(klass.call(text: "site down").priority).to eq("high")
@@ -248,7 +248,7 @@ RSpec.describe "Squishling apprentice mode" do
     it "logs only the class of an exception from the developer's code, whose message may quote the model's output" do
       io = StringIO.new
       Squishling.configure { |c| c.logger = Logger.new(io) }
-      klass.squishling(apprentice: {
+      klass.squishling(apprentice_mode: {
         report: recorder, compare: ->(_ruby, llm, **) { Integer(llm.priority) }
       })
       stub_llm({ "priority" => "SECRET_OUTPUT_3" })
@@ -263,7 +263,7 @@ RSpec.describe "Squishling apprentice mode" do
       io = StringIO.new
       Squishling.configure { |c| c.logger = Logger.new(io) }
       anonymous = Class.new(StandardError)
-      klass.squishling(apprentice: { report: recorder, when: ->(**) { raise anonymous } })
+      klass.squishling(apprentice_mode: { report: recorder, when: ->(**) { raise anonymous } })
 
       klass.call(text: "site down")
 
@@ -271,7 +271,7 @@ RSpec.describe "Squishling apprentice mode" do
     end
 
     it "lets the report hook's own exception reach the caller on the inline runner" do
-      klass.squishling(apprentice: { report: ->(**) { raise IOError, "stats down" } })
+      klass.squishling(apprentice_mode: { report: ->(**) { raise IOError, "stats down" } })
       stub_llm(high)
 
       expect { klass.call(text: "site down") }.to raise_error(IOError, "stats down")
@@ -326,10 +326,10 @@ RSpec.describe "Squishling apprentice mode" do
 
   describe "declaring" do
     it "turns off for a method with false, and merges a method's settings over the class's" do
-      klass.squish :quiet, apprentice: false do
+      klass.squish :quiet, apprentice_mode: false do
         string :priority
       end
-      klass.squish :sampled, apprentice: { when: ->(**) { false } } do
+      klass.squish :sampled, apprentice_mode: { when: ->(**) { false } } do
         string :priority
       end
       klass.define_method(:quiet) { { priority: "low" } }
@@ -343,7 +343,7 @@ RSpec.describe "Squishling apprentice mode" do
     it "turns on for one method of a class without it" do
       plain = squishling_class do
         squishling model: "test-model", purpose: "Classify."
-        squish :call, apprentice: true do
+        squish :call, apprentice_mode: true do
           string :priority
         end
         def call = { priority: "low" }
@@ -358,7 +358,7 @@ RSpec.describe "Squishling apprentice mode" do
 
     it "inherits the configured report for report: nil" do
       Squishling.configure { |c| c.apprentice_report = ->(**report) { reports << report } }
-      klass.squishling(apprentice: { report: nil, when: nil })
+      klass.squishling(apprentice_mode: { report: nil, when: nil })
       stub_llm(high)
 
       klass.call(text: "site down")
@@ -368,11 +368,11 @@ RSpec.describe "Squishling apprentice mode" do
 
     it "uses the configured report, which a class's report: false silences" do
       Squishling.configure { |c| c.apprentice_report = ->(**report) { reports << report } }
-      klass.squishling(apprentice: true)
+      klass.squishling(apprentice_mode: true)
       stub_llm(high, high)
 
       klass.call(text: "site down")
-      klass.squishling(apprentice: { report: false })
+      klass.squishling(apprentice_mode: { report: false })
       klass.call(text: "site down")
 
       expect(reports.size).to eq(1)
@@ -380,7 +380,7 @@ RSpec.describe "Squishling apprentice mode" do
     end
 
     it "is inherited, and a subclass's false turns it off" do
-      child = Class.new(klass) { squishling apprentice: false }
+      child = Class.new(klass) { squishling apprentice_mode: false }
       stub_llm(high)
 
       expect(Class.new(klass).squishling_definition(:call).apprentice).not_to be_nil
@@ -388,18 +388,18 @@ RSpec.describe "Squishling apprentice mode" do
     end
 
     it "rejects a mistake at setup" do
-      expect { klass.squishling(apprentice: { sample: 0.1 }) }
-        .to raise_error(Squishling::ConfigurationError, /apprentice: unknown key\(s\) :sample/)
-      expect { klass.squishling(apprentice: { when: 0.1 }) }
-        .to raise_error(Squishling::ConfigurationError, /apprentice when: must be a Proc/)
-      expect { klass.squishling(apprentice: { report: ->(output) {} }) }
+      expect { klass.squishling(apprentice_mode: { sample: 0.1 }) }
+        .to raise_error(Squishling::ConfigurationError, /apprentice_mode: unknown key\(s\) :sample/)
+      expect { klass.squishling(apprentice_mode: { when: 0.1 }) }
+        .to raise_error(Squishling::ConfigurationError, /apprentice_mode when: must be a Proc/)
+      expect { klass.squishling(apprentice_mode: { report: ->(output) {} }) }
         .to raise_error(Squishling::ConfigurationError, /report is called with keywords \(ruby:, llm:/)
-      expect { klass.squishling(apprentice: { report: ->(verdict:) {} }) }
+      expect { klass.squishling(apprentice_mode: { report: ->(verdict:) {} }) }
         .to raise_error(Squishling::ConfigurationError, /report requires unknown keyword\(s\) verdict/)
-      expect { klass.squishling(apprentice: "yes") }
-        .to raise_error(Squishling::ConfigurationError, /apprentice must be true, false, or a Hash/)
-      expect { klass.squish(:other, apprentice: :on) }
-        .to raise_error(Squishling::ConfigurationError, /squish apprentice must be/)
+      expect { klass.squishling(apprentice_mode: "yes") }
+        .to raise_error(Squishling::ConfigurationError, /apprentice_mode must be true, false, or a Hash/)
+      expect { klass.squish(:other, apprentice_mode: :on) }
+        .to raise_error(Squishling::ConfigurationError, /squish apprentice_mode must be/)
       expect { Squishling.configure { |c| c.apprentice_report = Object.new } }
         .to raise_error(Squishling::ConfigurationError, /apprentice_report must respond to call/)
       expect { Squishling.configure { |c| c.apprentice_runner = :sidekiq } }
@@ -428,7 +428,7 @@ RSpec.describe "Squishling apprentice mode" do
         c.logger = Logger.new(io)
         c.apprentice_runner = ->(job) { jobs << job }
       end
-      klass.squishling(apprentice: { report: ->(**) { raise IOError, "stats down" } })
+      klass.squishling(apprentice_mode: { report: ->(**) { raise IOError, "stats down" } })
       stub_llm(high)
 
       klass.call(text: "site down")
@@ -440,7 +440,7 @@ RSpec.describe "Squishling apprentice mode" do
 
     it "runs off the caller's thread with :thread, and drains" do
       threads = []
-      klass.squishling(apprentice: { report: ->(**) { threads << Thread.current } })
+      klass.squishling(apprentice_mode: { report: ->(**) { threads << Thread.current } })
       Squishling.configure { |c| c.apprentice_runner = :thread }
       stub_llm(high)
 
@@ -450,10 +450,29 @@ RSpec.describe "Squishling apprentice mode" do
       expect(sole(threads)).not_to equal(Thread.current)
     end
 
+    it "compares against a copy of the Ruby result, which the caller may change once the call returns" do
+      tagger = squishling_class do
+        squishling model: "test-model", purpose: "Tag."
+        output_schema { array :tags, of: :string }
+        def call = { tags: ["a"] }
+      end
+      jobs = []
+      tagger.squishling(apprentice_mode: { report: recorder })
+      Squishling.configure { |c| c.apprentice_runner = ->(job) { jobs << job } }
+      stub_llm({ "tags" => ["a"] })
+
+      result = tagger.call
+      result.tags << "changed by the caller"
+      sole(jobs).call
+
+      expect(sole(reports)).to include(match: true)
+      expect(sole(reports)[:ruby].tags).to eq(["a"])
+    end
+
     it "keeps a failure before the request, and its report, off the caller's thread" do
       jobs = []
       Squishling.configure { |c| c.apprentice_runner = ->(job) { jobs << job } }
-      klass.squishling(apprentice: { when: ->(**) { raise KeyError }, report: lambda { |error:, **|
+      klass.squishling(apprentice_mode: { when: ->(**) { raise KeyError }, report: lambda { |error:, **|
         raise IOError, error.class.name
       } })
 
@@ -571,7 +590,7 @@ RSpec.describe "Squishling apprentice mode" do
     it "accepts a compare: lambda that takes the inputs as a third positional Hash" do
       positional = squishling_class do
         squishling model: "test-model", purpose: "Classify.",
-          apprentice: { compare: ->(ruby, llm, inputs) { ruby == llm && inputs.key?(:text) } }
+          apprentice_mode: { compare: ->(ruby, llm, inputs) { ruby == llm && inputs.key?(:text) } }
         output_schema { string :priority }
         def call(text:) = { priority: text }
       end
@@ -581,7 +600,8 @@ RSpec.describe "Squishling apprentice mode" do
 
     it "leaves a class's LLM-only methods alone" do
       mixed = squishling_class do
-        squishling model: "test-model", purpose: "Classify.", apprentice: true
+        squishling model: "test-model", purpose: "Classify.",
+          apprentice_mode: { when: ->(text:) { text }, compare: ->(ruby, llm) { ruby == llm } }
         squish :summarize do
           string :summary
         end
@@ -589,20 +609,20 @@ RSpec.describe "Squishling apprentice mode" do
         def call = { priority: "low" }
       end
 
-      expect(Squishling.verify(mixed).problems).to be_empty
+      expect(Squishling.verify(mixed).problems.map(&:label)).not_to include(a_string_ending_with("#summarize"))
     end
 
     it "flags a method without a Ruby implementation, and when: or compare: that can't take the inputs" do
       broken = squishling_class do
         def self.to_s = "Broken"
         squishling model: "test-model", purpose: "Classify."
-        squish :call, apprentice: { when: ->(missing:) { missing }, compare: ->(a, b) { a == b } } do
+        squish :call, apprentice_mode: { when: ->(missing:) { missing }, compare: ->(a, b) { a == b } } do
           string :priority
         end
-        squish :ghost, apprentice: true do
+        squish :ghost, apprentice_mode: true do
           string :priority
         end
-        squish :other, apprentice: { compare: ->(**) { true } } do
+        squish :other, apprentice_mode: { compare: ->(**) { true } } do
           string :priority
         end
         def call(text:) = { priority: text }
@@ -612,11 +632,11 @@ RSpec.describe "Squishling apprentice mode" do
       messages = Squishling.verify(broken).problems.map { |problem| "#{problem.label} #{problem.message}" }
 
       expect(messages).to include(
-        "Broken#call apprentice when: requires missing:, which is not an input of the method",
-        "Broken#call apprentice compare: doesn't take the method's inputs as keywords (add **)",
-        "Broken#other apprentice compare: doesn't take the two results (the Ruby result and the LLM's) as positional " \
-        "arguments",
-        "Broken#ghost apprentice: has no Ruby implementation to run alongside the LLM"
+        "Broken#call apprentice_mode when: requires missing:, which is not an input of the method",
+        "Broken#call apprentice_mode compare: doesn't take the method's inputs as keywords (add **)",
+        "Broken#other apprentice_mode compare: doesn't take the two results (the Ruby result and the LLM's) as " \
+        "positional arguments",
+        "Broken#ghost apprentice_mode: has no Ruby implementation to run alongside the LLM"
       )
     end
   end

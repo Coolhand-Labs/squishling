@@ -66,6 +66,22 @@ module Squishling
       def with_squawk(capture = capture_squawk, &)
         Testing.with_squawk(capture, &)
       end
+
+      def disable_apprentice!
+        Testing.disable_apprentice!
+      end
+
+      def without_apprentice(&)
+        Testing.without_apprentice(&)
+      end
+
+      def capture_apprentice
+        Testing.capture_apprentice
+      end
+
+      def with_apprentice(capture = capture_apprentice, &)
+        Testing.with_apprentice(capture, &)
+      end
     end
   end
 end

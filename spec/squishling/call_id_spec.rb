@@ -205,7 +205,7 @@ RSpec.describe Squishling::CallId do
       Class.new do
         include Squishling
 
-        squishling model: "test-model", apprentice: { report: hook }
+        squishling model: "test-model", apprentice_mode: { report: hook }
         purpose "Classify the ticket."
         output_schema do
           string :priority
@@ -219,7 +219,7 @@ RSpec.describe Squishling::CallId do
 
     it "reports the id even when the shadow run ends before it makes a request" do
       hook = ->(**report) { reports << report }
-      klass.squishling(apprentice: { when: ->(**) { raise KeyError, "no sampler" }, report: hook })
+      klass.squishling(apprentice_mode: { when: ->(**) { raise KeyError, "no sampler" }, report: hook })
 
       Squishling.with_call_id("ticket-123") { klass.call }
 
@@ -322,7 +322,7 @@ RSpec.describe Squishling::CallId do
       shadowed = Class.new do
         include Squishling
 
-        squishling model: "test-model", call_id: :record_id, apprentice: true
+        squishling model: "test-model", call_id: :record_id, apprentice_mode: true
         purpose "Triage the record."
         output_schema { string :priority }
         def call(record_id:) = result(priority: record_id.empty? ? "low" : "high")
@@ -434,13 +434,13 @@ RSpec.describe Squishling::CallId do
       shadowed = Class.new do
         include Squishling
 
-        squishling model: "test-model", apprentice: true, call_id: ->(**) { raise KeyError, "no id" }
+        squishling model: "test-model", apprentice_mode: true, call_id: ->(**) { raise KeyError, "no id" }
         purpose "Triage."
         output_schema { string :priority }
         def call = result(priority: "high")
       end
       reported = []
-      shadowed.squishling(apprentice: { report: ->(error:, metadata:, **) { reported << [error, metadata] } })
+      shadowed.squishling(apprentice_mode: { report: ->(error:, metadata:, **) { reported << [error, metadata] } })
       stub_llm(high)
 
       expect(shadowed.call.priority).to eq("high")

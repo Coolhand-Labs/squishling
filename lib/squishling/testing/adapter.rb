@@ -38,9 +38,11 @@ module Squishling
         requests.select(&:conversation).group_by(&:conversation).sort.map(&:last)
       end
 
-      def requests_for(role: nil, sample: nil)
+      # The requests of a role and sample; apprentice: true keeps only an apprentice's shadow run's, false the rest.
+      def requests_for(role: nil, sample: nil, apprentice: nil)
         requests.select do |request|
-          (role.nil? || request.role == role) && (sample.nil? || request.sample == sample.to_s)
+          (role.nil? || request.role == role) && (sample.nil? || request.sample == sample.to_s) &&
+            (apprentice.nil? || request.apprentice? == apprentice)
         end
       end
 
@@ -81,7 +83,7 @@ module Squishling
 
       def judged(input, _questions, step, label)
         call = { role: :judge, sample: nil, attempt: Observer.current&.attempt, attempts: Observer.current&.attempts,
-                 model: step.model, provider: step.provider, adapter: step.adapter }
+                 model: step.model, provider: step.provider, adapter: step.adapter, apprentice: apprentice? || nil }
         outcome = outcome_for(:judgment, call, label, step.model)
         payload = Schema.jsonify(input)
         @requests << Request.new(label:, type: :judgment, role: :judge, sample: nil, attempt: call[:attempt],
@@ -132,7 +134,7 @@ module Squishling
         base = { model: request.model, provider: request.provider, adapter: request.adapter }
         if observed
           return base.merge(role: observed.role, sample: observed.sample, attempt: observed.attempt,
-            attempts: observed.attempts)
+            attempts: observed.attempts, apprentice: observed.apprentice || nil)
         end
 
         base.merge(role: judge_schema?(request.schema) ? :judge : nil, sample: nil, attempt: nil, attempts: nil)

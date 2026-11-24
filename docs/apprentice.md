@@ -10,7 +10,7 @@ class TicketTriage
   include Squishling
 
   squishling model: "claude-haiku-4-5",
-    apprentice: {
+    apprentice_mode: {
       when: ->(**) { rand < 0.05 },                       # shadow 5% of calls (default: every call)
       report: ->(match:, metadata:, **) { Stats.increment("triage.apprentice", tags: ["match:#{match}"]) }
     }
@@ -27,13 +27,13 @@ class TicketTriage
 end
 ```
 
-`TicketTriage.call(ticket_text: "...")` returns the Ruby result, as it would without `apprentice:`. On the calls `when:`
-picks, the LLM runs as well, and `report:` hears how it did.
+`TicketTriage.call(ticket_text: "...")` returns the Ruby result, as it would without `apprentice_mode:`. On the calls
+`when:` picks, the LLM runs as well, and `report:` hears how it did.
 
 ## Declaring it
 
-`apprentice:` goes on the class (`squishling apprentice: ...`, inherited by subclasses) or on one method
-(`squish :name, apprentice: ...`). It takes:
+`apprentice_mode:` goes on the class (`squishling apprentice_mode: ...`, inherited by subclasses) or on one method
+(`squish :name, apprentice_mode: ...`). It takes:
 
 | Value | Meaning |
 |---|---|
@@ -51,14 +51,14 @@ A method's Hash is merged over the class's key by key, so a class can set the `r
 
 ```ruby
 squish :categorize,
-  apprentice: { compare: ->(ruby, llm, **) { ruby.category == llm.category } } # ignore the free-text fields
+  apprentice_mode: { compare: ->(ruby, llm, **) { ruby.category == llm.category } } # ignore the free-text fields
 ```
 
 The report hook receives:
 
 | Keyword | |
 |---|---|
-| `ruby:` | The Ruby result (what the caller got) |
+| `ruby:` | The Ruby result (what the caller got; on a background runner, a copy taken before the call returned) |
 | `llm:` | The LLM's typed result, or `nil` when the shadow run failed before producing one |
 | `match:` | `true` or `false`, or `nil` when there is nothing to compare (the shadow run failed, or `compare:` raised) |
 | `error:` | `nil`, or the error that ended the shadow run |
@@ -164,16 +164,26 @@ Over time that gives you the model's agreement rate with your Ruby code, per wor
 server that matches feedback by that id (see [Apprentice feedback](coolhand.md#apprentice-feedback)). With an older gem
 the logs carry no id, so no feedback is sent and everything else works as before.
 
+## Turning it off
+
+`config.apprentice_enabled = false` stops every shadow run, whatever the classes declare: a kill switch for an incident,
+or for an environment where the LLM shouldn't run. Calls keep returning their Ruby results.
+
 ## Testing
 
-On the default inline runner, a shadow run is part of the call, so a [`Squishling::Testing`](testing.md) script answers
-it like any other request. Its requests are recorded with `apprentice?` true:
+A shadow run makes real requests, so a class's existing tests start failing once it declares `apprentice_mode:` (a
+forbidden or unscripted request). [`Squishling::Testing`](testing.md#apprentice-mode) turns shadow runs off for the
+tests that don't care (`disable_apprentice!`), scripts them separately (`script.apprentice`), and records their reports
+(`with_apprentice`):
 
 ```ruby
-adapter = Squishling::Testing.install { |script| script.step.reply(priority: "high", team: "api") }
-TicketTriage.call(ticket_text: "Checkout is down")
-adapter.requests.select(&:apprentice?).size # => 1
+fake_squishling { |script| script.apprentice.reply(priority: "low", team: "api") }
+capture = with_apprentice { TicketTriage.call(ticket_text: "Checkout is down") }
+capture.reports.first.match # => false
 ```
 
-[`Squishling.verify`](verifying.md) flags an `apprentice:` declared on a method with no Ruby implementation (a class's
-`apprentice:` simply skips its LLM-only methods), and a `when:` or `compare:` that can't take what it is called with.
+[`Squishling.verify`](verifying.md) flags an `apprentice_mode:` declared on a method with no Ruby implementation (a
+class's `apprentice_mode:` simply skips its LLM-only methods), and a `when:` or `compare:` that can't take what it is
+called with. A method whose body only raises `NotImplementedError` counts as implemented to `verify`, which can't tell
+the stub from real Ruby: give it `apprentice_mode: false`, since it never answers a call itself and so is never
+shadowed.

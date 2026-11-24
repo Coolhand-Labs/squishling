@@ -247,7 +247,7 @@ RSpec.describe Squishling::Observers::Coolhand do
 
     before do
       klass.class_eval { def call(text:) = { priority: text.include?("down") ? "high" : "low", team: "api" } }
-      klass.squishling(apprentice: true)
+      klass.squishling(apprentice_mode: true)
     end
 
     it "tags each request with its id, marks the workload, and sends the Ruby result as feedback on a mismatch" do
