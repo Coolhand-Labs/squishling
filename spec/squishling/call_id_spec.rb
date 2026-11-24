@@ -236,4 +236,232 @@ RSpec.describe Squishling::CallId do
       expect(reports.first[:metadata]).to include(call_id: "ticket-123", request_id: "ticket-123.1")
     end
   end
+
+  describe "a declared call_id:" do
+    let(:declared) do
+      Class.new do
+        include Squishling
+
+        squishling model: "test-model", call_id: :record_id
+        purpose "Triage the record."
+        output_schema { string :priority }
+
+        def self.to_s = "RecordTriage"
+
+        def call(record_id:, note: nil) = squish!(context: { record_id:, note: })
+      end
+    end
+    let(:logged) { StringIO.new }
+
+    before do
+      Squishling::CallId.reset!
+      Squishling.configure { |config| config.logger = Logger.new(logged, level: Logger::WARN) }
+    end
+
+    it "takes each call's id from the named input" do
+      stub_llm(high, high)
+
+      declared.call(record_id: "rec-1")
+      declared.call(record_id: "rec-2")
+
+      expect(events.map(&:request_id)).to eq(%w[rec-1.1 rec-2.1])
+    end
+
+    it "takes a non-String input (an Integer, a Symbol) as its text, and a nil one as no declaration" do
+      stub_llm(high, high, high)
+
+      declared.call(record_id: 42)
+      declared.call(record_id: :sym)
+      declared.call(record_id: nil)
+
+      expect(events.map(&:call_id).first(2)).to eq(%w[42 sym])
+      expect(events.last.call_id).to match(uuid)
+    end
+
+    it "takes a Proc, which gets the inputs, for an id built from several" do
+      declared.squishling(call_id: ->(record_id:, note:) { "#{record_id}-#{note}" })
+      stub_llm(high)
+
+      declared.call(record_id: "rec-1", note: "a")
+
+      expect(events.first.call_id).to eq("rec-1-a")
+    end
+
+    it "is overridden by a method's own declaration, and turned off by false" do
+      declared.squish(:call, call_id: ->(record_id:, **) { "m-#{record_id}" })
+      stub_llm(high)
+      declared.call(record_id: "rec-1")
+      declared.squish(:call, call_id: false)
+      stub_llm(high)
+      declared.call(record_id: "rec-1")
+
+      expect(events.map(&:call_id).first).to eq("m-rec-1")
+      expect(events.map(&:call_id).last).to match(uuid)
+    end
+
+    it "is inherited by a subclass" do
+      stub_llm(high)
+
+      Class.new(declared).call(record_id: "rec-1")
+
+      expect(events.first.call_id).to eq("rec-1")
+    end
+
+    it "yields to Squishling.with_call_id for the call that block names" do
+      stub_llm(high, high)
+
+      Squishling.with_call_id("ticket-123") do
+        declared.call(record_id: "rec-1")
+        declared.call(record_id: "rec-2")
+      end
+
+      expect(events.map(&:call_id)).to eq(%w[ticket-123 rec-2])
+    end
+
+    it "is used by an apprentice's shadow run" do
+      shadowed = Class.new do
+        include Squishling
+
+        squishling model: "test-model", call_id: :record_id, apprentice: true
+        purpose "Triage the record."
+        output_schema { string :priority }
+        def call(record_id:) = result(priority: record_id.empty? ? "low" : "high")
+      end
+      stub_llm(high)
+
+      shadowed.call(record_id: "rec-1")
+
+      expect(events.map(&:request_id)).to eq(["rec-1.1"])
+    end
+
+    it "raises ConfigurationError for an input that isn't an acceptable id, before any request" do
+      stub_llm(high)
+
+      expect { declared.call(record_id: " padded ") }
+        .to raise_error(Squishling::ConfigurationError, /RecordTriage#call call_id: needs a String/)
+      expect(events).to be_empty
+    end
+
+    it "refuses a declaration that is neither an input name, a Proc nor false" do
+      expect { declared.squishling(call_id: "record_id") }.to raise_error(Squishling::ConfigurationError, /call_id:/)
+      expect { declared.squish(:call, call_id: 5) }.to raise_error(Squishling::ConfigurationError, /call_id:/)
+    end
+
+    it "is checked by Squishling.verify against the method's inputs" do
+      declared.squishling(call_id: :nope)
+      problems = Squishling.verify(declared).problems.map(&:message)
+
+      expect(problems).to include(a_string_matching(/call_id: names :nope.*inputs: record_id, note/))
+
+      declared.squishling(call_id: ->(wrong:) { wrong })
+      expect(Squishling.verify(declared).problems.map(&:message)).to include(a_string_matching(/call_id:/))
+
+      declared.squishling(call_id: :record_id)
+      expect(Squishling.verify(declared)).to be_ok
+    end
+
+    it "reads a positional input too" do
+      positional = Class.new do
+        include Squishling
+
+        squishling model: "test-model", call_id: :record_id
+        purpose "Triage the record."
+        output_schema { string :priority }
+        def call(record_id) = squish!(context: { record_id: })
+      end
+      stub_llm(high)
+
+      positional.call("rec-9")
+
+      expect(events.first.call_id).to eq("rec-9")
+    end
+
+    it "isn't read by a Ruby-only call, or by the call a with_call_id block names" do
+      reads = []
+      declared.squishling(call_id: ->(record_id:, **) { (reads << record_id) && record_id })
+      declared.class_eval do
+        def call(record_id:, note: nil)
+          note == "ruby" ? result(priority: record_id.size > 100 ? "high" : "low") : squish!(context: { record_id: })
+        end
+      end
+      stub_llm(high)
+
+      declared.call(record_id: "ruby-only", note: "ruby")
+      Squishling.with_call_id("ticket-123") { declared.call(record_id: "named") }
+
+      expect(reads).to be_empty
+    end
+
+    it "lets a subclass override an inherited declaration, or turn it off" do
+      stub_llm(high, high)
+
+      Class.new(declared) { squishling call_id: ->(record_id:, **) { "sub-#{record_id}" } }.call(record_id: "1")
+      Class.new(declared) { squishling call_id: false }.call(record_id: "1")
+
+      expect(events.first.call_id).to eq("sub-1")
+      expect(events.last.call_id).to match(uuid)
+    end
+
+    it "does not leave a Proc's own error to squish_fallback, or wrap it" do
+      declared.squishling(call_id: ->(**) { raise KeyError, "no id" })
+      declared.squish_fallback { |_error, **| { priority: "fallback" } }
+      stub_llm(high)
+
+      expect { declared.call(record_id: "rec-1") }.to raise_error(KeyError, "no id")
+    end
+
+    it "is flagged by Squishling.verify for a class's method that lacks the input, which needs its own declaration" do
+      two = Class.new do
+        include Squishling
+
+        squishling model: "test-model", call_id: :record_id
+        purpose "Triage."
+        output_schema { string :priority }
+        def call(record_id:) = squish!(context: { record_id: })
+        def other(text:) = squish!(context: { text: })
+        squish :other
+      end
+
+      expect(Squishling.verify(two).problems.map(&:message)).to include(a_string_matching(/not an input of the method/))
+
+      two.squish :other, call_id: false
+      expect(Squishling.verify(two)).to be_ok
+    end
+
+    it "keeps an apprentice's shadow run from raising when the declared id is unusable" do
+      shadowed = Class.new do
+        include Squishling
+
+        squishling model: "test-model", apprentice: true, call_id: ->(**) { raise KeyError, "no id" }
+        purpose "Triage."
+        output_schema { string :priority }
+        def call = result(priority: "high")
+      end
+      reported = []
+      shadowed.squishling(apprentice: { report: ->(error:, metadata:, **) { reported << [error, metadata] } })
+      stub_llm(high)
+
+      expect(shadowed.call.priority).to eq("high")
+      expect(reported.first.first).to be_a(KeyError)
+      expect(events).to be_empty
+    end
+
+    it "warns once per method, never naming the id, when a declared id comes up again" do
+      stub_llm(high, high, high)
+
+      3.times { declared.call(record_id: "rec-1") }
+
+      expect(logged.string.scan("RecordTriage#call call_id:").size).to eq(1)
+      expect(logged.string).not_to include("rec-1")
+    end
+
+    it "doesn't warn for ids that differ" do
+      stub_llm(high, high)
+
+      declared.call(record_id: "rec-1")
+      declared.call(record_id: "rec-2")
+
+      expect(logged.string).to be_empty
+    end
+  end
 end

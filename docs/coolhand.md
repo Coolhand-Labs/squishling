@@ -69,7 +69,7 @@ So `Parser#call/squish:L2` is the second attempt of `Parser#call`, e.g. `Parser#
 
 ## Correlating with your own ids
 
-Give a call your own id, and Coolhand's `client_unique_id` for its requests is built from it (`"<id>.1"`, `"<id>.2"`, ...),
+Give a call your own id (with `with_call_id`, or a [`call_id:` declaration](observers.md#declaring-the-call-id)), and Coolhand's `client_unique_id` for its requests is built from it (`"<id>.1"`, `"<id>.2"`, ...),
 so you can send feedback against a request without storing Squishling's UUID:
 
 ```ruby
