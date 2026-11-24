@@ -450,6 +450,25 @@ RSpec.describe "Squishling apprentice mode" do
       expect(sole(threads)).not_to equal(Thread.current)
     end
 
+    it "compares against a copy of the Ruby result, which the caller may change once the call returns" do
+      tagger = squishling_class do
+        squishling model: "test-model", purpose: "Tag."
+        output_schema { array :tags, of: :string }
+        def call = { tags: ["a"] }
+      end
+      jobs = []
+      tagger.squishling(apprentice_mode: { report: recorder })
+      Squishling.configure { |c| c.apprentice_runner = ->(job) { jobs << job } }
+      stub_llm({ "tags" => ["a"] })
+
+      result = tagger.call
+      result.tags << "changed by the caller"
+      sole(jobs).call
+
+      expect(sole(reports)).to include(match: true)
+      expect(sole(reports)[:ruby].tags).to eq(["a"])
+    end
+
     it "keeps a failure before the request, and its report, off the caller's thread" do
       jobs = []
       Squishling.configure { |c| c.apprentice_runner = ->(job) { jobs << job } }
@@ -581,7 +600,8 @@ RSpec.describe "Squishling apprentice mode" do
 
     it "leaves a class's LLM-only methods alone" do
       mixed = squishling_class do
-        squishling model: "test-model", purpose: "Classify.", apprentice_mode: true
+        squishling model: "test-model", purpose: "Classify.",
+          apprentice_mode: { when: ->(text:) { text }, compare: ->(ruby, llm) { ruby == llm } }
         squish :summarize do
           string :summary
         end
@@ -589,7 +609,7 @@ RSpec.describe "Squishling apprentice mode" do
         def call = { priority: "low" }
       end
 
-      expect(Squishling.verify(mixed).problems).to be_empty
+      expect(Squishling.verify(mixed).problems.map(&:label)).not_to include(a_string_ending_with("#summarize"))
     end
 
     it "flags a method without a Ruby implementation, and when: or compare: that can't take the inputs" do

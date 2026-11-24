@@ -3,12 +3,14 @@
 module Squishling
   module Apprentice
     # One shadow run: the LLM path of a call whose Ruby result the caller already has. Starts on the caller's thread
-    # (when:, then the request is built, so the instance's state is read before the caller moves on), and the rest
-    # (the requests, validation, compare:, the report) runs as a job on the configured runner.
+    # (when:, then the request is built, so the instance's state is read before the caller moves on; on a background
+    # runner the Ruby result is copied too, since the caller may change it), and the rest (the requests, validation,
+    # compare:, the report) runs as a job on the configured runner.
     class Shadow
       # What a shadow run absorbs and reports: errors, and a NotImplementedError (a ScriptError) from the developer's
       # callbacks. Not the rest of Exception (an Interrupt, a SignalException, an exit), which still ends the process.
       ABSORBED = [StandardError, NotImplementedError].freeze
+
       def initialize(frame, definition, settings, ruby, ruby_seconds)
         @frame = frame
         @definition = definition
@@ -28,6 +30,7 @@ module Squishling
         begin
           return unless chosen?
 
+          @ruby = snapshot(@ruby) unless @runner.equal?(INLINE)
           invoker = Invoker.new(@definition, @receiver, @inputs)
           built = invoker.prepare
         rescue *ABSORBED => e
@@ -41,6 +44,13 @@ module Squishling
       end
 
       private
+
+      # A copy of the Ruby result the caller can't reach: a typed result's nested arrays and hashes stay mutable, and a
+      # background job reads it after the call returned. Built like the original (a typed result of the schema).
+      def snapshot(ruby)
+        schema = @definition.schema
+        schema ? schema.build(Schema.plain(ruby), squished: false) : ruby
+      end
 
       def chosen?
         condition = @settings[:when]

@@ -58,7 +58,7 @@ The report hook receives:
 
 | Keyword | |
 |---|---|
-| `ruby:` | The Ruby result (what the caller got) |
+| `ruby:` | The Ruby result (what the caller got; on a background runner, a copy taken before the call returned) |
 | `llm:` | The LLM's typed result, or `nil` when the shadow run failed before producing one |
 | `match:` | `true` or `false`, or `nil` when there is nothing to compare (the shadow run failed, or `compare:` raised) |
 | `error:` | `nil`, or the error that ended the shadow run |
@@ -183,4 +183,6 @@ capture.reports.first.match # => false
 
 [`Squishling.verify`](verifying.md) flags an `apprentice_mode:` declared on a method with no Ruby implementation (a
 class's `apprentice_mode:` simply skips its LLM-only methods), and a `when:` or `compare:` that can't take what it is
-called with.
+called with. A method whose body only raises `NotImplementedError` counts as implemented to `verify`, which can't tell
+the stub from real Ruby: give it `apprentice_mode: false`, since it never answers a call itself and so is never
+shadowed.
