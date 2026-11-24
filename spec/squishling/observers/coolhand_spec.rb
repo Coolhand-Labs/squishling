@@ -267,6 +267,16 @@ RSpec.describe Squishling::Observers::Coolhand do
       }])
     end
 
+    it "tags the request with the caller's own call id, and sends the feedback against it" do
+      stub_const("Coolhand", coolhand_with_ids)
+      stub_llm(low)
+
+      Squishling.with_call_id("ticket-123") { klass.call(text: "site down") }
+
+      expect(sole(contexts)[:client_unique_id]).to eq("ticket-123.1")
+      expect(sole(feedback)).to include(client_unique_id: "ticket-123.1", sentiment: "dislike")
+    end
+
     it "flushes Coolhand's queued logs before sending feedback, so the log it names arrives first" do
       stub_const("Coolhand", coolhand_with_ids)
       stub_llm(high)

@@ -70,12 +70,35 @@ Anything else raises `ConfigurationError` when you assign it.
 | `model`, `provider` | The step's model and provider (`provider` is `nil` unless declared) |
 | `adapter` | The name of the [adapter](adapters.md#mixing-adapters-in-one-escalation) the step picked (`nil` for the default one) |
 | `request` | `:chat`, or `:judgment` for a System One judge |
-| `call_id` | The squished call this request belongs to (a UUID, shared by all its requests) |
+| `call_id` | The squished call this request belongs to (a UUID, or the id you gave [`with_call_id`](#supplying-your-own-call-id), shared by all its requests) |
 | `request_id` | This request: `"<call_id>.<n>"`, numbered in the order the call's requests start |
 | `apprentice` | `true` for the requests of an [apprentice's](apprentice.md) shadow run, else `false` |
 
 It carries metadata, plus the rendered `purpose`. The method's inputs, its context, and the model's output never reach an
 observer: it gets the request's token [`Usage`](#what-yield-returns) back, and `squawk` is the route for output.
+
+## Supplying your own call id
+
+To join Squishling's logs and feedback to your own records, give the call an id of your own:
+
+```ruby
+Squishling.with_call_id("ticket-123") { triage.call(ticket) }
+```
+
+The first squished call started inside the block uses `"ticket-123"` as its `call_id`, and its requests are
+`"ticket-123.1"`, `"ticket-123.2"`, ... Any other squished call in the block (a second one, or one the first makes)
+gets a generated UUID, so no two requests in the block share an id. The first call keeps the id even when it runs its
+Ruby implementation and never reaches the LLM. Across blocks, uniqueness is yours to keep: reusing an id (a job retried
+under the same ticket id, say) repeats `request_id`s such as `ticket-123.1`, and Coolhand feedback matched by
+`client_unique_id` then becomes ambiguous. The id is a String of 1-250 characters without surrounding
+whitespace and without control or invisible (zero-width, bidi, line-separator) characters, or `with_call_id` raises
+`ConfigurationError`. A call that fails to bind its arguments doesn't use the id. It is fiber-local, so it applies to calls
+made on the block's own fiber, not to those on threads or fibers the block starts (give those their own
+`with_call_id`); an [apprentice](apprentice.md) shadow run uses it wherever the run happens.
+
+The id reaches observers, `squawk` metadata, apprentice reports and, through the Coolhand observer, Coolhand
+(see [Correlating with your own ids](coolhand.md#correlating-with-your-own-ids)). It never goes to the provider. Because it
+leaves your process to those tools, don't put personal data in it.
 
 ## Apprentice reviews
 

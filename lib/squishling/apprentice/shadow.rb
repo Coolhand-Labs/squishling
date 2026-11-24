@@ -28,7 +28,7 @@ module Squishling
         begin
           return unless chosen?
 
-          invoker = Invoker.new(@definition, @receiver, @inputs)
+          invoker = Invoker.new(@definition, @receiver, @inputs, call_id: @frame.call_id)
           built = invoker.prepare
         rescue *ABSORBED => e
           raise if Apprentice.unabsorbable?(e)
@@ -100,7 +100,7 @@ module Squishling
 
       def deliver(llm:, match:, error:, invoker:, llm_seconds:)
         origin = llm.nil? ? nil : invoker&.origin(llm)
-        call_id = invoker&.call_id
+        call_id = invoker&.call_id || @frame.call_id
         log(match, error)
         metadata = { label: @definition.label, call_id:, request_id: origin&.request_id, model: origin&.model,
                      ruby_seconds: @ruby_seconds, llm_seconds: }
