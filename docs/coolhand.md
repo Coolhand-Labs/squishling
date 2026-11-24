@@ -86,8 +86,8 @@ The feedback finds its log by `client_unique_id`, the request's `request_id`. So
   alongside coolhand 0.12.0.
 
 Squishling doesn't depend on the coolhand gem; add `gem "coolhand", ">= 0.12"` to your own Gemfile. The feedback is
-sent from the shadow run's job, after waiting up to half a second for Coolhand's queued logs to be sent, so it doesn't
-arrive before the log it names. Under steady logging traffic the queue is rarely empty, so expect the full half second
-per apprentice run. With a [background runner](apprentice.md#running-it-in-the-background) none of this adds to the
-call's latency. Each apprentice request's workload is described as `Class#method (apprentice)`, under the
-same workload and template keys as the method's other calls.
+sent from the shadow run's job as soon as the run ends. Coolhand sends its logs from a background queue, so the
+feedback can reach Coolhand before the log it names; whether it is still attached then is up to the Coolhand server,
+which matches the two by `client_unique_id`. With a [background runner](apprentice.md#running-it-in-the-background),
+sending it adds nothing to the call's latency. Each apprentice request's workload is described as
+`Class#method (apprentice)`, under the same workload and template keys as the method's other calls.

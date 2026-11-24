@@ -17,9 +17,6 @@ module Squishling
       # Coolhand rejects keys longer than this.
       MAX_KEY_LENGTH = 255
 
-      # How long apprentice feedback waits for Coolhand's queued logs to be sent, so the log it names is there first.
-      FLUSH_TIMEOUT = 0.5
-
       # Whether Coolhand is loaded, new enough to declare workloads, and set up to send logs.
       def self.available?
         return false unless defined?(::Coolhand) && ::Coolhand.respond_to?(:with_context)
@@ -74,8 +71,10 @@ module Squishling
       # Sends an apprentice's review (see Apprentice::Review) as feedback on the request that produced the LLM's
       # result, found by its client id: liked when it matched the Ruby result, otherwise disliked with the Ruby result
       # as the revised output. Nothing is sent without such a request (the LLM failed), without a verdict (compare:
-      # raised), or with a coolhand gem that can't tag logs with client ids. Coolhand logs in the background, so its
-      # queue is flushed first (briefly), for the feedback not to arrive before its log. Coolhand's feedback call
+      # raised), or with a coolhand gem that can't tag logs with client ids. It is sent right away, from the shadow
+      # run's job: Coolhand sends its logs from a background queue, so the feedback can arrive before the log it names;
+      # attaching it then is up to the Coolhand server, which matches the two by client_unique_id. (Coolhand.flush
+      # can't confirm the log was delivered, and waits on every queued log, so it isn't used.) Coolhand's feedback call
       # doesn't raise.
       def apprentice(review)
         return if review.request_id.nil? || review.match.nil?
@@ -90,7 +89,6 @@ module Squishling
           creator_unique_id: REPORTER
         }
         feedback[:revised_output] = JSON.generate(review.ruby) unless review.match
-        ::Coolhand.flush(timeout: FLUSH_TIMEOUT) if ::Coolhand.respond_to?(:flush)
         ::Coolhand.feedback_service.create_feedback(feedback)
       end
 

@@ -231,8 +231,8 @@ RSpec.describe Squishling::Observers::Coolhand do
       service = Object.new.tap { |object| object.define_singleton_method(:create_feedback) { |hash| sent << hash } }
       flushes = flushed
       Module.new do
-        define_singleton_method(:flush) do |timeout:|
-          flushes << [timeout, sent.size]
+        define_singleton_method(:flush) do |**|
+          flushes << :called
           true
         end
         define_singleton_method(:with_context) do |reporter: nil, workload: nil, template: nil, client_unique_id: nil,
@@ -267,13 +267,13 @@ RSpec.describe Squishling::Observers::Coolhand do
       }])
     end
 
-    it "flushes Coolhand's queued logs before sending feedback, so the log it names arrives first" do
+    it "sends the feedback right away, without waiting on Coolhand's log queue" do
       stub_const("Coolhand", coolhand_with_ids)
       stub_llm(high)
 
       klass.call(text: "site down")
 
-      expect(flushed).to eq([[described_class::FLUSH_TIMEOUT, 0]])
+      expect(flushed).to be_empty
       expect(feedback.size).to eq(1)
     end
 
