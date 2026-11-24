@@ -115,9 +115,9 @@ RecordTriage.call(record_id: "rec-42", text: "...") # call_id "rec-42", requests
 
 `call_id:` takes the name of an input (a Symbol), or a Proc that gets the inputs as keywords and returns the id, such
 as `->(ticket:, **) { "ticket-#{ticket.id}" }` (the `**` is for the method's other inputs). Set it on the class or, with `squish :call, call_id: ...`, on one method
-(the method's wins; `false` turns off an inherited one; subclasses inherit it). The value is used as text (a number or
+(the method's wins; `false` turns off an inherited one; subclasses inherit it). The value is used as text (an Integer or
 Symbol is converted), must be a valid id as above, and a `nil` one gives that call a generated UUID. The input
-must be a String, Symbol or number (anything else raises). It is read when the call reaches the LLM, or when an
+must be a String, Symbol or Integer (anything else raises). It is read when the call reaches the LLM, or when an
 apprentice shadows it (its `when:` skipping the call skips this too), so a Ruby-only call never evaluates it. Nested
 calls each get their own. An id from `with_call_id` wins for the call it names, and the declaration isn't read for that
 call. Declared on a class, it applies to every squished method of the class: a method without the input gets a

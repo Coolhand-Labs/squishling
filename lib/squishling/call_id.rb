@@ -67,7 +67,7 @@ module Squishling
       value = source.is_a?(Proc) ? receiver.instance_exec(**inputs, &source) : inputs[source]
       return if value.nil?
 
-      id = validate(value.is_a?(Symbol) || value.is_a?(Numeric) ? value.to_s : value, "#{label} call_id:")
+      id = validate(value.is_a?(Symbol) || value.is_a?(Integer) ? value.to_s : value, "#{label} call_id:")
       warn_if_repeated(label, id)
       id
     end

@@ -31,6 +31,7 @@ module Squishling
         begin
           return unless chosen?
 
+          # Copied first, so that whatever fails after it is reported on the copy, never the caller's live result.
           @ruby = snapshot(@ruby) unless @runner.equal?(INLINE)
           @call_id = @definition.call_id_for(@receiver, @inputs, @frame.call_id)
           invoker = Invoker.new(@definition, @receiver, @inputs, call_id: @call_id)
@@ -112,6 +113,7 @@ module Squishling
 
       def deliver(llm:, match:, error:, invoker:, llm_seconds:)
         origin = llm.nil? ? nil : invoker&.origin(llm)
+        # The invoker has no id until its Run starts; a failure before that still reports the one resolved above.
         call_id = invoker&.call_id || @call_id
         log(match, error)
         metadata = { label: @definition.label, call_id:, request_id: origin&.request_id, model: origin&.model,

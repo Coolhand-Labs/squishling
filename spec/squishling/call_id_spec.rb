@@ -334,6 +334,45 @@ RSpec.describe Squishling::CallId do
       expect(events.map(&:request_id)).to eq(["rec-1.1"])
     end
 
+    it "is read for a shadow run on a background runner, and yields to a with_call_id id there" do
+      shadowed = Class.new do
+        include Squishling
+
+        squishling model: "test-model", apprentice_mode: true, call_id: ->(record_id:) { "decl-#{record_id}" }
+        purpose "Triage."
+        output_schema { string :priority }
+        def call(record_id:) = result(priority: record_id.empty? ? "low" : "high")
+      end
+      Squishling.configure { |config| config.apprentice_runner = ->(job) { Thread.new(&job).join } }
+      stub_llm(high, high)
+
+      shadowed.call(record_id: "rec-1")
+      Squishling.with_call_id("named") { shadowed.call(record_id: "rec-2") }
+
+      expect(events.map(&:request_id)).to eq(%w[decl-rec-1.1 named.1])
+    end
+
+    it "reports the declared id of a shadow run that fails before its first request, or whose id is refused" do
+      shadowed = Class.new do
+        include Squishling
+
+        squishling model: "test-model", apprentice_mode: true, call_id: :record_id
+        output_schema { string :priority }
+        purpose { raise KeyError, "no purpose" }
+        def call(record_id:) = result(priority: record_id.strip.empty? ? "low" : "high")
+      end
+      reported = []
+      shadowed.squishling(apprentice_mode: { report: ->(error:, metadata:, **) { reported << [error, metadata] } })
+      Squishling.configure { |config| config.apprentice_runner = ->(job) { Thread.new(&job).join } }
+
+      shadowed.call(record_id: "rec-1")
+      shadowed.call(record_id: " padded ")
+
+      expect(reported.map { |error, _| error.class }).to eq([KeyError, Squishling::ConfigurationError])
+      expect(reported.first.last).to include(call_id: "rec-1", request_id: nil)
+      expect(reported.last.last).to include(call_id: nil)
+    end
+
     it "raises ConfigurationError for an input that isn't an acceptable id, before any request" do
       stub_llm(high)
 
