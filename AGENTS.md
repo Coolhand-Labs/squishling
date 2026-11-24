@@ -173,7 +173,10 @@ Flag any change that breaks one of these; they are behavior contracts, not style
   an error already handed off (`frame.handed_off`) propagates. Only `StandardError` classes can be declared, and a
   `Squishling::Error` is never rescued (a `ConfigurationError` must not reach the LLM or a fallback), nor is a
   `Testing::Error`, even under a declared `StandardError`. Its options are checked at declaration through
-  `Definition#for_call`.
+  `Definition#for_call`, and `Squishling.verify` checks each declaration's resolved escalation, params, adapters, and
+  harness. The rescued error goes to the provider as class and message, like any exception in context (see
+  "Only named context leaves the process"), and a declared `StandardError` sends the error of any library the
+  method calls.
 - **Built-ins and custom harnesses share one interface.** `:escalation`, `:squishsum`, and `:judged_squishsum` are
   `Harness::Base` subclasses written against `Run`, and custom harnesses are registered in the same mutex-guarded
   `Harness::Registry`. A harness's return value must be a typed result its `Run` produced (`Invoker#accepted`), so

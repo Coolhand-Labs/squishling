@@ -8,13 +8,17 @@ module Squishling
     # Checks one squished method's Definition. Each check returns messages, or raises what the call would.
     class MethodCheck
       CHECKS = %i[schema declarations adapters harness callables].freeze
+      # The schema and callables belong to the method; a squish_rescue's options cannot change them.
+      RESCUE_CHECKS = %i[declarations adapters harness].freeze
 
-      def initialize(definition)
+      def initialize(definition, checks: CHECKS, label: definition.label)
         @definition = definition
+        @checks = checks
+        @label = label
       end
 
       def problems
-        CHECKS.flat_map { |check| run(check) }
+        @checks.flat_map { |check| run(check) }
       end
 
       private
@@ -26,7 +30,7 @@ module Squishling
       end
 
       def problem(message)
-        Verification::Problem.new(label: @definition.label, message:)
+        Verification::Problem.new(label: @label, message:)
       end
 
       # The output schema, its typed result (the Data class a call returns), and the JSON Schema itself.
@@ -185,7 +189,18 @@ module Squishling
         definition = klass.squishling_definition(name)
         next [] if unused_default?(definition)
 
-        MethodCheck.new(definition).problems
+        own = MethodCheck.new(definition).problems
+        own + rescue_problems(klass, definition).reject { |found| own.any? { |known| known.message == found.message } }
+      end
+    end
+
+    def rescue_problems(klass, definition)
+      klass.squishling_rescues.flat_map do |declared|
+        label = "#{definition.label} squish_rescue"
+        derived = definition.for_call(**declared.overrides)
+        MethodCheck.new(derived, checks: MethodCheck::RESCUE_CHECKS, label:).problems
+      rescue ConfigurationError, ArgumentError => e
+        [Verification::Problem.new(label:, message: e.message)]
       end
     end
 

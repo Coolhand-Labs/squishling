@@ -2,7 +2,7 @@
 
 module Squishling
   class Rescue
-    attr_reader :errors
+    attr_reader :errors, :overrides
 
     class << self
       def build(owner, errors, as:, overrides:)
@@ -12,7 +12,7 @@ module Squishling
         # for_call checks the overrides exactly as `squish!` would, so a bad value fails here, not on a call.
         Definition.new(klass: owner, name: :squish_rescue).for_call(**overrides)
         check_context!(where, as, overrides[:context])
-        new(errors:, as:, overrides:)
+        new(errors:, as:, overrides: overrides.merge(overrides.slice(:context).transform_values(&:dup)))
       end
 
       private

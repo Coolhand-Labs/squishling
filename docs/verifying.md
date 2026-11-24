@@ -33,6 +33,8 @@ For each squished method (inherited ones too, with the subclass's settings) it c
   method is skipped when you don't implement or configure it.
 - **What the layers resolve to:** the escalation, generation params and `squawk` that the method, its class and
   `Squishling.config` add up to.
+- **Each `squish_rescue`:** the escalation, params, adapters and harness a rescue's options resolve to, reported
+  under `Class#method squish_rescue`.
 - **The harness:** that it is still registered (not removed or replaced since the class declared it), and that a
   `type: :judgment` judge has an adapter that supports judgments.
 - **Keywords:** that each `include_when:` and the `squish_when` block can be called with the method's inputs as keywords

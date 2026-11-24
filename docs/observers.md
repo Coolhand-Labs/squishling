@@ -62,7 +62,7 @@ Anything else raises `ConfigurationError` when you assign it.
 |---|---|
 | `label` | `"Class#method"` |
 | `purpose` | The purpose text sent as the system prompt (after `purpose` procs and `append_to_purpose` sections are resolved). It is the whole prompt, including any source you pass to `append_to_purpose` and whatever your `purpose` procs return, so treat it as sensitive: don't log it to a place the prompt itself shouldn't go |
-| `handed_off` | `true` when a `squish!` call sent the call to the LLM (typically from a `rescue`), `false` when `squish_when` or a missing implementation did |
+| `handed_off` | `true` when a `squish!` call or a `squish_rescue` sent the call to the LLM, `false` when `squish_when` or a missing implementation did |
 | `harness` | The harness type (`:escalation`, `:squishsum`, `:judged_squishsum`, or a [custom one](harnesses.md#custom-harnesses)) |
 | `role` | `nil` for an escalation attempt, `:sample` or `:judge`, as in `squawk`'s `metadata` |
 | `sample` | `"a"`, `"b"`, ... for a sample, else `nil` |

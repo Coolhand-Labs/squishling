@@ -311,6 +311,19 @@ RSpec.describe Squishling, ".squish_rescue" do
     end
   end
 
+  describe "the context: hash the declaration was given" do
+    it "is copied, so changing it later changes nothing" do
+      context = { place: "Ledger" }
+      klass = parser(ArgumentError, context:)
+      context[:extra] = "added later"
+      chats = stub_llm({ "name" => "Ada" })
+
+      klass.call(record: "Ada born 1815")
+
+      expect(JSON.parse(chats.first.messages.first)["context"].keys).to contain_exactly("place", "error")
+    end
+  end
+
   describe "declaration errors" do
     it "rejects no errors" do
       expect { squishling_class { squish_rescue } }.to raise_error(Squishling::ConfigurationError, /error class/)
@@ -427,9 +440,120 @@ RSpec.describe Squishling, ".squish_rescue" do
     end
   end
 
+  describe "a rescue that names an adapter in its escalation" do
+    let(:local) { FakeAdapter.new }
+    let(:default) { FakeAdapter.new }
+
+    before do
+      Squishling.config.adapter = default
+      Squishling.config.adapters = { local: }
+    end
+
+    it "sends the rescued call to that adapter" do
+      local.responses = [{ "name" => "Ada" }]
+      klass = parser(ArgumentError, escalation: [{ model: "llama3.2", adapter: :local }])
+
+      expect(klass.call(record: "Ada born 1815").name).to eq("Ada")
+      expect(local.chats.map(&:model)).to eq(%w[llama3.2])
+      expect(default.chats).to be_empty
+    end
+
+    it "fails the rescued call with a ConfigurationError for an adapter that is not configured" do
+      klass = parser(ArgumentError, escalation: [{ model: "m", adapter: :cloud }])
+
+      expect { klass.call(record: "Ada born 1815") }
+        .to raise_error(Squishling::ConfigurationError, /unknown adapter :cloud/)
+    end
+  end
+
+  describe "an image or a Struct in the call" do
+    include Squishling::Testing::RSpec
+
+    let(:image) { Squishling::Image.new(data: "\x89PNG\r\n\x1A\n#{'x' * 20}".b) }
+    let(:reader) do
+      Class.new do
+        include Squishling
+
+        purpose "Read the stamp."
+        output_schema { string :name }
+        squish_rescue ArgumentError, context: { badge: Struct.new(:id, :tier).new(7, "gold") }
+
+        def call(stamp:)
+          raise ArgumentError, "unreadable #{stamp.class}"
+        end
+      end
+    end
+
+    it "sends the image of the call along with the error" do
+      fake = fake_squishling { |llm| llm.step(:any).reply({ "name" => "Ada" }) }
+
+      expect(reader.call(stamp: image).name).to eq("Ada")
+
+      request = fake.requests.first
+      expect(request.images).to eq([image])
+      expect(request.arguments).to eq("stamp" => { "attached_image" => 1 })
+      expect(request.payload["context"]["error"])
+        .to eq("class" => "ArgumentError", "message" => "unreadable Squishling::Image")
+    end
+
+    it "sends a Struct in the rescue context as a structure" do
+      fake = fake_squishling { |llm| llm.step(:any).reply({ "name" => "Ada" }) }
+
+      reader.call(stamp: "x")
+
+      expect(fake.requests.first.payload["context"]["badge"]).to eq("id" => 7, "tier" => "gold")
+    end
+  end
+
   describe "Squishling.verify" do
+    before { Squishling::ClassRegistry.reset! }
+
     it "is clean for a valid declaration" do
       expect(Squishling.verify(parser(ArgumentError)).problems).to be_empty
+    end
+
+    it "finds a rescue whose escalation names an adapter that is not configured" do
+      Squishling.config.adapter = FakeAdapter.new
+      Squishling.config.adapters = { local: FakeAdapter.new }
+      klass = parser(ArgumentError, escalation: [{ model: "m", adapter: :cloud }])
+
+      expect(Squishling.verify(klass).problems.map(&:to_s))
+        .to contain_exactly(a_string_including("squish_rescue", "unknown adapter :cloud"))
+    end
+
+    it "reports a rescue whose harness was unregistered after it was declared, instead of raising" do
+      Squishling.register_harness(:temporary) { def call(run) = run.escalate }
+      klass = parser(ArgumentError, harness: :temporary)
+      Squishling.reset_harnesses!
+
+      expect(Squishling.verify(klass).problems.map(&:to_s))
+        .to include(a_string_including("squish_rescue", "temporary"))
+    end
+
+    it "reports a problem of the method's own once, not again for each rescue" do
+      Squishling.register_harness(:temporary) { def call(run) = run.escalate }
+      klass = parser(ArgumentError) { squishling harness: :temporary }
+      Squishling.reset_harnesses!
+
+      expect(Squishling.verify(klass).problems.map(&:to_s).grep(/temporary/).size).to eq(1)
+    end
+
+    it "reports a parent's rescue for the methods of a subclass" do
+      Squishling.config.adapter = FakeAdapter.new
+      Squishling.config.adapters = { local: FakeAdapter.new }
+      parent = parser(ArgumentError, escalation: [{ model: "m", adapter: :cloud }])
+      child = Class.new(parent)
+
+      expect(Squishling.verify(child).problems.map(&:to_s))
+        .to include(a_string_including("squish_rescue", "unknown adapter :cloud"))
+    end
+
+    it "is clean for a rescue whose escalation names a configured adapter" do
+      Squishling.config.adapter = FakeAdapter.new
+      Squishling.config.adapters = { local: FakeAdapter.new }
+      klass = parser(ArgumentError, escalation: [{ model: "m", adapter: :local }])
+
+      expect(Squishling.verify(klass)).to be_ok
     end
   end
 end

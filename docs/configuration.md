@@ -151,7 +151,7 @@ squishling params: { temperature: 0 },
 
 The first level that declares a `model:` or an `escalation:` supplies the whole thing (levels aren't merged):
 
-1. per call: `squish!(model: ...)` or `squish!(escalation: ...)` (see [Per-call overrides](#per-call-overrides))
+1. per call: `squish!(model: ...)` or `squish!(escalation: ...)` (see [Per-call overrides](#per-call-overrides)), or the same options of a [`squish_rescue`](routing.md#rescuing-declared-errors-with-squish_rescue) for a rescued call
 2. per method: `squish :name, model: ...` or `escalation: ...`
 3. per class: `squishling model: ...` or `escalation: ...` (inherited by subclasses)
 4. universal: `Squishling.config.default_model` or `default_escalation`

@@ -300,7 +300,7 @@ end
 - To propagate the error instead, re-raise it with `raise error`.
 - Per method: `squish :triage, fallback: ->(error, **inputs) { ... }`.
 - Subclasses inherit the class-level fallback.
-- Calls handed to the LLM with `squish!` use the fallback too. A fallback can't call `squish!` itself; that
+- Calls handed to the LLM with `squish!` or [`squish_rescue`](routing.md#rescuing-declared-errors-with-squish_rescue) use the fallback too. A fallback can't call `squish!` itself; that
   raises `Squishling::Error` rather than looping. See [Handing off to the LLM](routing.md#handing-off-to-the-llm-with-squish).
 - Without a fallback, the error propagates.
 
