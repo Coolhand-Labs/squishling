@@ -41,6 +41,7 @@ end
 | `observer` | `nil` | An around-style hook for every provider request: `:coolhand`, any object responding to `around(call)`, or `false` for none. `nil` uses the [Coolhand observer](coolhand.md) when the `coolhand` gem is configured. See [Observers](observers.md). |
 | `apprentice_report` | `nil` | The report hook of every [apprentice](apprentice.md) that doesn't declare its own `report:`: a callable taking keywords (`ruby:`, `llm:`, `match:`, `error:`, `inputs:`, `metadata:`). |
 | `apprentice_runner` | `:inline` | Where an [apprentice's](apprentice.md#running-it-in-the-background) shadow run happens: `:inline` (on the caller's thread, after the Ruby result), `:thread` (the built-in background pool), a `Squishling::Apprentice::ThreadRunner`, or any callable that takes the job and calls it. |
+| `apprentice_enabled` | `true` | Set `false` to stop every [apprentice](apprentice.md#turning-it-off) shadow run, whatever the classes declare (a kill switch). |
 | `default_harness` | `nil` (`:escalation`) | How every squishling class that doesn't declare its own uses its escalation: `:escalation`, `:squishsum`, `:judged_squishsum`, a [registered custom harness](harnesses.md#custom-harnesses), or a Hash with `type:` and options. See [Harnesses](harnesses.md). |
 | `logger` | `nil` | Any `Logger`. Debug lines when a call routes to the LLM, warnings on each escalation and when a fallback is used. Never includes the raw model response; see [what ends up in errors and logs](failures.md#what-ends-up-in-errors-and-logs). |
 
@@ -311,7 +312,7 @@ squish!(cache: false, escalation: ["claude-opus-5-5"])            # one hand-off
 ## Inheritance
 
 Subclasses inherit the model or escalation and its provider (as a pair), harness, generation params (merged key by key), prompt caching, token budgets (limit by limit), purpose, output schema,
-`squish_when` predicate, `squish_context` names, `squish_validate`, `squish_fallback`, [`apprentice:`](apprentice.md), and every `squish` declaration. Overrides in a subclass, including
+`squish_when` predicate, `squish_context` names, `squish_validate`, `squish_fallback`, [`apprentice_mode:`](apprentice.md), and every `squish` declaration. Overrides in a subclass, including
 overridden methods, are routed the same way.
 
 `append_to_purpose` sections are added to, not replaced: a subclass's sections follow its parent's, and

@@ -92,7 +92,7 @@ module Squishling
           [step[:include_when], "escalation step #{step[:model].inspect} include_when:"] if step[:include_when]
         end
         gates << [@definition.predicate, "squish_when"] if @definition.predicate
-        gates << [@definition.apprentice[:when], "apprentice when:"] if @definition.apprentice&.dig(:when)
+        gates << [@definition.apprentice[:when], "apprentice_mode when:"] if @definition.apprentice&.dig(:when)
         gates.flat_map { |callable, what| KeywordCheck.messages(callable, names, open).map { "#{what} #{_1}" } }
       end
 
@@ -105,7 +105,7 @@ module Squishling
         messages = []
         # Declared on a class, it applies to the methods that have one; on a method, the method must.
         if @definition.apprentice_declared? && !@definition.implemented?
-          messages << "apprentice: has no Ruby implementation to run alongside the LLM"
+          messages << "apprentice_mode: has no Ruby implementation to run alongside the LLM"
         end
         compare = settings[:compare]
         messages + (compare ? KeywordCheck.compare_messages(compare, *@definition.input_names) : [])
@@ -168,7 +168,7 @@ module Squishling
         unless open
           messages += [missing_keywords(parameters, inputs), unaccepted_keywords(callable, parameters, inputs)].compact
         end
-        messages.map { |message| "apprentice compare: #{message}" }
+        messages.map { |message| "apprentice_mode compare: #{message}" }
       end
 
       # A compare: takes the two results positionally, then the inputs as keywords. A proc, or a lambda that names no

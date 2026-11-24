@@ -32,12 +32,12 @@ module Squishling
     # squawk_on: limits which attempts reach the hook: :all (the default), :rejections, :retries, :final, or a
     # list of them (any one holding runs the hook):
     #   squishling squawk: hook, squawk_on: %i[rejections final]
-    # apprentice: returns the Ruby result and runs the LLM alongside it, to compare the two (see Apprentice); true, or
-    # a Hash of when:, compare: and report:, and false turns off an inherited one:
-    #   squishling apprentice: { when: ->(**) { rand < 0.05 }, report: ->(match:, metadata:, **) { ... } }
+    # apprentice_mode: returns the Ruby result and runs the LLM alongside it, to compare the two (see Apprentice); true,
+    # or a Hash of when:, compare: and report:, and false turns off an inherited one:
+    #   squishling apprentice_mode: { when: ->(**) { rand < 0.05 }, report: ->(match:, metadata:, **) { ... } }
     def squishling(model: nil, escalation: nil, provider: nil, params: nil, cache: nil, harness: nil, purpose: nil,
       append_to_purpose: nil, output_schema: nil, squawk: nil, squawk_on: nil, max_total_output_tokens: nil,
-      max_total_input_tokens: nil, apprentice: nil)
+      max_total_input_tokens: nil, apprentice_mode: nil)
       path = ModelPath.declare(model, escalation, to_s)
       # A provider belongs to the model declared at the same level. Without a model here it would apply to
       # nothing (the model comes from the config or a parent class), so it is an error unless this class already
@@ -56,7 +56,7 @@ module Squishling
       self.output_schema(output_schema) if output_schema
       declare_squawk(squawk, squawk_on)
       declare_budget(max_total_output_tokens, max_total_input_tokens)
-      declare_apprentice(apprentice)
+      declare_apprentice(apprentice_mode)
       self
     end
 
@@ -183,12 +183,12 @@ module Squishling
     #                   validate: ->(result, **) { "team is required" if result.team.empty? },
     #                   harness: :squishsum, max_total_output_tokens: 25_000,
     #                   squawk: ->(output:, error:, **) { Tracer.record(output, error) },
-    #                   squawk_on: :retries, apprentice: { report: ->(match:, **) { ... } } do
+    #                   squawk_on: :retries, apprentice_mode: { report: ->(match:, **) { ... } } do
     #     string :priority
     #   end
     def squish(*names, purpose: nil, append_to_purpose: nil, output_schema: nil, model: nil, escalation: nil,
       provider: nil, params: nil, cache: nil, harness: nil, when: nil, fallback: nil, validate: nil,
-      squawk: nil, squawk_on: nil, max_total_output_tokens: nil, max_total_input_tokens: nil, apprentice: nil,
+      squawk: nil, squawk_on: nil, max_total_output_tokens: nil, max_total_input_tokens: nil, apprentice_mode: nil,
       &schema_block)
       schema = schema_block ? Schematist::Schema.create(&schema_block) : output_schema
       model = ModelPath.declare(model, escalation, "#{self} squish")
@@ -203,7 +203,7 @@ module Squishling
       squawk = Squawk.validate(squawk, "#{self} squish")
       squawk_on = Squawk.validate_on(squawk_on, "#{self} squish")
       budget = Budget.build("#{self} squish", output: max_total_output_tokens, input: max_total_input_tokens)
-      apprentice = Apprentice.normalize(apprentice, "#{self} squish")
+      apprentice = Apprentice.normalize(apprentice_mode, "#{self} squish")
       options = { purpose:, append_to_purpose:, output_schema: schema, model:, provider:, params:, cache:, harness:,
                   predicate: binding.local_variable_get(:when), fallback:, validator: validate, squawk:,
                   squawk_on:, budget:, apprentice: }.compact

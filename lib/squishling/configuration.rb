@@ -69,6 +69,14 @@ module Squishling
     # responds to call(job) and runs the job eventually, e.g. ->(job) { pool.post(&job) }.
     attr_reader :apprentice_runner
 
+    # Whether apprentice mode runs at all: true (the default), or false to stop every shadow run, whatever the classes
+    # declare (a kill switch, and what Squishling::Testing.disable_apprentice! sets for a test suite).
+    attr_reader :apprentice_enabled
+
+    # Squishling::Testing only: a callable told every apprentice report (with the report hook's keywords), after the
+    # report hook, whichever hook the class declares (see Testing.with_apprentice).
+    attr_accessor :apprentice_listener
+
     # How Squishling reaches a model (see Adapter): :ruby_llm, :openai_compatible, an adapter you registered, a Hash
     # with type: and that adapter's options, or an adapter instance. nil (the default) uses RubyLLM when the ruby_llm
     # gem is available. Built when assigned, so a mistake fails at setup rather than on the first request.
@@ -82,6 +90,13 @@ module Squishling
     # Squishling::Testing only: when set, every adapter name resolves to this adapter, so a scripted adapter answers
     # for steps that pick another one.
     attr_accessor :adapter_override
+
+    # The value when it is true or false; anything else (nil included) is a ConfigurationError naming what was set.
+    def self.boolean!(what, value)
+      return value if [true, false].include?(value)
+
+      raise ConfigurationError, "#{what} must be true or false, got #{value.inspect}"
+    end
 
     def initialize
       @adapter = nil
@@ -103,6 +118,8 @@ module Squishling
       @squawk_on = :all
       @apprentice_report = nil
       @apprentice_runner = :inline
+      @apprentice_enabled = true
+      @apprentice_listener = nil
     end
 
     def default_model=(model)
@@ -209,12 +226,12 @@ module Squishling
 
     # true or false; unlike default_cache=, nil is not accepted.
     def budget_counts_cache_reads=(counts)
-      unless [true, false].include?(counts)
-        raise ConfigurationError,
-          "Squishling.configure: budget_counts_cache_reads must be true or false, got #{counts.inspect}"
-      end
+      @budget_counts_cache_reads = boolean!(:budget_counts_cache_reads, counts)
+    end
 
-      @budget_counts_cache_reads = counts
+    # true or false.
+    def apprentice_enabled=(enabled)
+      @apprentice_enabled = boolean!(:apprentice_enabled, enabled)
     end
 
     def default_harness=(harness)
@@ -234,6 +251,10 @@ module Squishling
     end
 
     private
+
+    def boolean!(name, value)
+      self.class.boolean!("Squishling.configure: #{name}", value)
+    end
 
     # An adapters: name as a Symbol; a blank or non-name key, or one already in taken, is a ConfigurationError.
     def adapter_key(name, taken)

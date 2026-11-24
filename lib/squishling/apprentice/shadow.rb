@@ -104,8 +104,10 @@ module Squishling
         log(match, error)
         metadata = { label: @definition.label, call_id:, request_id: origin&.request_id, model: origin&.model,
                      ruby_seconds: @ruby_seconds, llm_seconds: }
+        report = { ruby: @ruby, llm:, match:, error:, inputs: @inputs, metadata: }
         hook = @settings.fetch(:report) { Squishling.config.apprentice_report }
-        KeywordHook.call(hook, ruby: @ruby, llm:, match:, error:, inputs: @inputs, metadata:) if hook
+        KeywordHook.call(hook, **report) if hook
+        Squishling.config.apprentice_listener&.call(**report)
         review(Review.new(label: @definition.label, call_id:, request_id: origin&.request_id, model: origin&.model,
           ruby: Schema.plain(@ruby), match:, error: error&.class))
       end

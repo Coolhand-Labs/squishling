@@ -7,7 +7,7 @@ module Squishling
   # and handed to the report hook, and to the observer when it takes reviews (the Coolhand observer sends the Ruby
   # result as feedback on the request that produced the LLM's). See docs/apprentice.md.
   #
-  #   squishling apprentice: { when: ->(**) { rand < 0.05 }, report: ->(match:, metadata:, **) { ... } }
+  #   squishling apprentice_mode: { when: ->(**) { rand < 0.05 }, report: ->(match:, metadata:, **) { ... } }
   #
   # A shadow run never changes what the caller gets: its failures (the LLM's, a setup mistake, or an exception from
   # when:, compare: or squish_validate) are reported as the hook's error:, never raised, and squish_fallback is not
@@ -33,7 +33,7 @@ module Squishling
 
     module_function
 
-    # An apprentice: setting, or nil to inherit: false (off), true (on, with the defaults), or a Hash of when:
+    # An apprentice_mode: setting, or nil to inherit: false (off), true (on, with the defaults), or a Hash of when:
     # (a Proc, evaluated against the instance with the inputs as keywords; truthy runs the LLM alongside),
     # compare: (a Proc, evaluated against the instance with the Ruby and LLM results and the inputs as keywords;
     # truthy for a match) and report: (a callable taking keywords, see REPORT_KEYWORDS; false silences an inherited
@@ -43,13 +43,13 @@ module Squishling
       return {}.freeze if value == true
 
       unless value.is_a?(Hash)
-        raise ConfigurationError, "#{where} apprentice must be true, false, or a Hash of " \
+        raise ConfigurationError, "#{where} apprentice_mode must be true, false, or a Hash of " \
                                   "#{KEYS.map { |key| "#{key}:" }.join(', ')}, got #{Appendices.describe(value)}"
       end
 
       settings = known_keys(value, where).compact # nil inherits, as at every other level; false turns a hook off
-      %i[when compare].each { |key| check_proc(settings[key], "#{where} apprentice #{key}:") }
-      validate_report(settings[:report], "#{where} apprentice")
+      %i[when compare].each { |key| check_proc(settings[key], "#{where} apprentice_mode #{key}:") }
+      validate_report(settings[:report], "#{where} apprentice_mode")
       settings.freeze
     end
 
@@ -59,7 +59,7 @@ module Squishling
       unknown = settings.keys - KEYS
       return settings if unknown.empty?
 
-      raise ConfigurationError, "#{where} apprentice: unknown key(s) #{unknown.map(&:inspect).join(', ')}"
+      raise ConfigurationError, "#{where} apprentice_mode: unknown key(s) #{unknown.map(&:inspect).join(', ')}"
     end
 
     def check_proc(value, what)
@@ -147,7 +147,7 @@ module Squishling
     # frame for the call: starts a shadow run when apprentice mode is on for the method and when: picks this call.
     def shadow(frame, definition, ruby, ruby_seconds)
       settings = definition.apprentice
-      return unless settings
+      return unless settings && Squishling.config.apprentice_enabled
 
       Shadow.new(frame, definition.for_apprentice, settings, ruby, ruby_seconds).start
     end
