@@ -203,6 +203,21 @@ module Squishling
       end
     end
 
+    # Hand a call to the LLM when a squished method's Ruby raises one of the errors, as if its body ended in
+    #   rescue ParseError => e
+    #     squish!(append_to_purpose: "...", context: { error: e })
+    # The error is sent as context under the as: name. The other options are those of `squish!`. A class can declare
+    # it more than once; the first match is used, and a subclass's declarations are tried before its parent's:
+    #   squish_rescue VendorFormats::ParseError, append_to_purpose: "The parser failed; the error is in the context."
+    def squish_rescue(*errors, as: :error, **overrides)
+      (@squishling_rescues ||= []) << Rescue.build(self, errors, as:, overrides:)
+      self
+    end
+
+    def squishling_rescues
+      (@squishling_rescues || []) + squishling_inherited(:squishling_rescues, [])
+    end
+
     def squished_methods
       squishling_inherited(:squished_methods, { DEFAULT_METHOD => {} }).merge(@squishling_methods || {})
     end

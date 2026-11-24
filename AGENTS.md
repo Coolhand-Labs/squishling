@@ -166,6 +166,14 @@ Flag any change that breaks one of these; they are behavior contracts, not style
   configured (no gem dependency, and it must never break a call it can't declare).
 - **Harnesses don't add a second rescue path.** Every harness failure surfaces as `InvalidOutputError`
   (disagreements as its `DisagreementError` subclass, a spent budget as `BudgetExhaustedError`) or `LLMError`, so `squish_fallback` stays the only fallback.
+- **`squish_rescue` is `squish!` from a rescue, not a fallback.** It rescues only the errors it declares, only while
+  the Ruby implementation runs (`Router.run_ruby`, where `NotImplementedError` is rescued too), and hands off through
+  `Router.hand_off`, so the cause chain, `squish_fallback`, and the "only from the Ruby phase" rule are those of
+  `squish!`. An error from `squish_when`, the LLM path, or the same call's `squish_fallback` is never rescued, and
+  an error already handed off (`frame.handed_off`) propagates. Only `StandardError` classes can be declared, and a
+  `Squishling::Error` is never rescued (a `ConfigurationError` must not reach the LLM or a fallback), nor is a
+  `Testing::Error`, even under a declared `StandardError`. Its options are checked at declaration through
+  `Definition#for_call`.
 - **Built-ins and custom harnesses share one interface.** `:escalation`, `:squishsum`, and `:judged_squishsum` are
   `Harness::Base` subclasses written against `Run`, and custom harnesses are registered in the same mutex-guarded
   `Harness::Registry`. A harness's return value must be a typed result its `Run` produced (`Invoker#accepted`), so
@@ -197,7 +205,8 @@ a message, and the built-in `Adapters::RubyLLM` and `Adapters::OpenAICompatible`
 `judge_instructions:`)/`append_to_purpose:`/`squawk:`/`squawk_on:` options — `purpose`, `append_to_purpose`,
 `output_schema`, `squish_when`, `squish_context`, `squish` (including `validate:`/`cache:`/`harness:`/`squawk:`/
 `squawk_on:`),
-`squish_validate`, `squish_fallback`, `result`/`squishling_result`, `squish!` (including
+`squish_validate`, `squish_fallback`, `squish_rescue` (`as:` and the options of `squish!`),
+`result`/`squishling_result`, `squish!` (including
 `model:`/`escalation:`/`cache:`/`harness:`), and the `max_total_output_tokens:`/`max_total_input_tokens:` options of
 `squishling`, `squish`, and `squish!`), `Squishling::Configuration` options (including `adapters`, `default_harness`,
 `default_cache`, `budget_counts_cache_reads`,

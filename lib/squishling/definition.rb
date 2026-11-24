@@ -189,6 +189,14 @@ module Squishling
       !Wrapper.implementation(klass.instance_method(name)).nil?
     end
 
+    def rescued_errors
+      klass.squishling_rescues.flat_map(&:errors)
+    end
+
+    def rescue_overrides(error)
+      klass.squishling_rescues.find { |declared| declared.match?(error) }.overrides_for(error)
+    end
+
     def squish?(receiver, inputs)
       return false unless predicate
 

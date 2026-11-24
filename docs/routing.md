@@ -19,6 +19,7 @@ A squished call runs its Ruby implementation unless one of these sends it to the
 | `squish_when` (or `when:`) predicate is truthy | class, or per method | before Ruby runs |
 | The method has no implementation: it isn't defined, or its own body raises `NotImplementedError` | the method body | when Ruby gives up |
 | `squish!` | inside the method, e.g. in a `rescue` | after Ruby has partly run, see [Handing off to the LLM](#handing-off-to-the-llm-with-squish) |
+| `squish_rescue` | class | when Ruby raises a declared error, see [Rescuing declared errors](#rescuing-declared-errors-with-squish_rescue) |
 
 With no predicate and a working implementation, every call runs Ruby.
 
@@ -164,6 +165,64 @@ end
 - It works anywhere beneath a squished method on the same object: in the method itself, in a helper it calls,
   or in a parent implementation reached through `super`. Calling it anywhere else, or from a `squish_fallback`
   (which would loop), raises `Squishling::Error`.
+
+## Rescuing declared errors with `squish_rescue`
+
+To hand a call to the LLM whenever the Ruby raises a known error, declare the error once on the class. You do not
+write a `rescue` in each method:
+
+```ruby
+class InvoiceParser
+  include Squishling
+
+  purpose "Extract the invoice fields from the vendor's document."
+  append_to_purpose "The Ruby parser that handles well-formed invoices:", self
+  output_schema do
+    string :invoice_number
+    number :total
+  end
+  squish_rescue VendorFormats::ParseError,
+                append_to_purpose: "The parser failed on this document; the error is in the context."
+
+  def call(vendor:, document:)
+    invoice = VendorFormats.fetch(vendor).parse(document)
+    result(invoice_number: invoice.number, total: invoice.total)
+  end
+end
+```
+
+A declared error acts as `rescue ParseError => e; squish!(..., context: { error: e })` in every squished method of
+the class, `call` and the methods you declare with `squish`. The error reaches the LLM as context, as its class and
+message, whatever raised it, so a broad declaration such as `StandardError` can send the text of a library's error
+(a database key value, a URL with a token). Declare the narrow error classes of your own code. A call that raises
+no declared error stays in Ruby, and any other error propagates.
+
+`squish_rescue` accepts:
+
+- One or more exception classes, as positional arguments. A subclass of a declared class matches.
+- `as:`, the name of the context key for the error (`:error` by default). It replaces a `squish_context` name
+  spelled the same.
+- The other options of [`squish!`](#handing-off-to-the-llm-with-squish) (`append_to_purpose:`, `context:`, `model:`,
+  `escalation:`, `params:`, and so on), checked when you declare it.
+
+Rules:
+
+- **Only the Ruby path is rescued.** An error from `squish_when`, from the LLM path, or from `squish_fallback` of the
+  same call is never rescued, so a fallback cannot loop. (A call to another squished object is its own call: if its
+  `squish_fallback` raises a declared error, the enclosing call's Ruby raised it, and the enclosing call rescues
+  it.) If the LLM also fails, the error it raises has the declared error as its
+  `cause`, and `squish_fallback` decides what to return, as for `squish!`. Once the body has called `squish!`, the
+  declared rescues are off for the rest of that call: a declared error the body raises afterward propagates.
+- **The first declaration that matches is used, as in a `rescue` list.** Declare a narrow error before a broad one.
+  A subclass's declarations are tried before its parent's.
+- **Declare `StandardError` classes.** Anything else raises a `ConfigurationError` at declaration: `Exception`,
+  `SystemExit`, `Interrupt`, a module, or no class at all. `NotImplementedError` is rejected too, because it
+  already sends a call to the LLM.
+- **Squishling's own errors are never rescued.** A declared `StandardError` does not catch a `ConfigurationError`,
+  or an `InvalidOutputError` or `LLMError` from a squished call to another object. Declaring one of these classes
+  raises a `ConfigurationError`. The errors that `squishling/testing` raises are never rescued either, so an
+  unscripted request cannot pass a test.
+- **A `rescue` in the method body runs first.** A `squish!` call there works as before.
 
 ## Appending to the purpose
 
