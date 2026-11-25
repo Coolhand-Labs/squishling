@@ -7,9 +7,8 @@ module Squishling
   # is configured. A call that a token budget or a disagreement stops gets one more report, with the error and no
   # output (metadata's stopped:), since neither has an attempt of its own.
   module Squawk
-    KEYWORD_TYPES = %i[key keyreq].freeze
-    POSITIONAL_TYPES = %i[req opt].freeze
-    KEYWORD_CAPTURE_TYPES = %i[key keyreq keyrest].freeze
+    KEYWORD_TYPES = KeywordHook::KEYWORD_TYPES
+    POSITIONAL_TYPES = KeywordHook::POSITIONAL_TYPES
     KEYWORDS = %i[output metadata error].freeze
     # The squawk_on: conditions, each answering "does the hook run for this attempt?" from the attempt's 1-based
     # number (the one its metadata carries), its error (nil when accepted), and whether it is the last one. A stopped
@@ -48,38 +47,13 @@ module Squishling
     # The hook itself, or nil/false to inherit/silence. Anything else must respond to call and take keywords
     # only, which is checked here so a mismatch fails at setup, not inside the first attempt.
     def validate(hook, where)
-      return hook if hook.nil? || hook == false
-
-      unless hook.respond_to?(:call)
-        raise ConfigurationError, "#{where} squawk must respond to call (or be false), got #{Appendices.describe(hook)}"
-      end
-      if positional_only?(parameters(hook))
-        raise ConfigurationError,
-          "#{where} squawk is called with keywords (output:, metadata:, error:), not positional arguments"
-      end
-      unknown = parameters(hook).filter_map { |type, name| name if type == :keyreq && !KEYWORDS.include?(name) }
-      raise ConfigurationError, "#{where} squawk requires unknown keyword(s) #{unknown.join(', ')}" if unknown.any?
-
-      hook
+      KeywordHook.validate(hook, where, name: "squawk", keywords: KEYWORDS)
     end
 
     # Calls the hook with the keywords it declares, or all of them when it takes **, so new metadata fields
     # never break an existing lambda. Exceptions it raises are the user's own and propagate as-is.
-    def call(hook, **payload)
-      parameters = parameters(hook)
-      payload = payload.slice(*parameters.filter_map { |type, name| name if KEYWORD_TYPES.include?(type) }) \
-        unless parameters.any? { |type, _| type == :keyrest }
-      hook.call(**payload)
-    end
-
-    # Positional parameters, or a bare splat, would receive the keywords as a Hash (or not at all).
-    def positional_only?(parameters)
-      types = parameters.map(&:first)
-      types.intersect?(POSITIONAL_TYPES) || (types.include?(:rest) && !types.intersect?(KEYWORD_CAPTURE_TYPES))
-    end
-
-    def parameters(hook)
-      (hook.is_a?(Proc) || hook.is_a?(Method) ? hook : hook.method(:call)).parameters
+    def call(hook, **)
+      KeywordHook.call(hook, **)
     end
   end
 end

@@ -20,7 +20,8 @@ A squished call runs its Ruby implementation unless one of these sends it to the
 | The method has no implementation: it isn't defined, or its own body raises `NotImplementedError` | the method body | when Ruby gives up |
 | `squish!` | inside the method, e.g. in a `rescue` | after Ruby has partly run, see [Handing off to the LLM](#handing-off-to-the-llm-with-squish) |
 
-With no predicate and a working implementation, every call runs Ruby.
+With no predicate and a working implementation, every call runs Ruby. To run the LLM *alongside* the Ruby path and
+compare the two without changing what the caller gets, see [Apprentice mode](apprentice.md).
 
 The predicate receives the method's inputs as keywords and is evaluated against the instance, so it can read
 instance state too. Accept `**` to ignore inputs you don't need.

@@ -10,11 +10,12 @@ module Squishling
     # One attempt on RubyLLM's default model, when no level declares a model.
     DEFAULT_STEP = { model: nil, attempts: 1, forward_rejected: true }.freeze
 
-    attr_reader :klass, :name, :call_context, :handed_off
+    # apprentice_run is true for the definition an apprentice's shadow run uses (see #for_apprentice).
+    attr_reader :klass, :name, :call_context, :handed_off, :apprentice_run
 
     def initialize(klass:, name:, purpose: nil, append_to_purpose: nil, output_schema: nil, model: nil,
       provider: nil, params: nil, cache: nil, harness: nil, predicate: nil, fallback: nil, validator: nil,
-      squawk: nil, squawk_on: nil, budget: nil, call_context: {}, handed_off: false)
+      squawk: nil, squawk_on: nil, budget: nil, apprentice: nil, call_id: nil, call_context: {}, handed_off: false)
       @klass = klass
       @name = name
       @purpose = purpose
@@ -31,8 +32,11 @@ module Squishling
       @squawk = squawk
       @squawk_on = squawk_on
       @budget = budget || {}
+      @apprentice = apprentice
+      @call_id = call_id
       @call_context = call_context
       @handed_off = handed_off
+      @apprentice_run = false
     end
 
     # This definition with one call's overrides on top. The output schema, predicate, fallback, and validator
@@ -52,7 +56,7 @@ module Squishling
       call_budget = Budget.build("#{label} squish!", output: max_total_output_tokens, input: max_total_input_tokens)
       self.class.new(
         klass:, name:, output_schema: @output_schema, predicate: @predicate, fallback: @fallback,
-        validator: @validator, squawk: @squawk, squawk_on: @squawk_on,
+        validator: @validator, squawk: @squawk, squawk_on: @squawk_on, call_id: @call_id,
         purpose: purpose || @purpose,
         append_to_purpose: [*@append_to_purpose, *appended],
         model: call_path || @model, provider: call_path ? provider : @provider,
@@ -65,9 +69,24 @@ module Squishling
       )
     end
 
+    # This definition for an apprentice's shadow run of a call: the same settings, its requests marked as the
+    # apprentice's (see Observer::Call#apprentice).
+    def for_apprentice
+      dup.tap { |copy| copy.instance_variable_set(:@apprentice_run, true) }
+    end
+
     def label
       "#{klass}##{name}"
     end
+
+    # The id of one call (see CallId): the one the caller gave (supplied, from Squishling.with_call_id), else what the
+    # method's (or its class's) call_id: declaration gives, else nil, for a generated UUID.
+    def call_id_for(receiver, inputs, supplied = nil)
+      supplied || CallId.declared(call_id_source, receiver, inputs, label)
+    end
+
+    # The call_id: declaration the method resolves to (its own over its class's).
+    def call_id_source = @call_id.nil? ? klass.squishling_call_id : @call_id
 
     # The system prompt: the purpose, then each append_to_purpose section.
     def purpose(receiver)
@@ -179,6 +198,17 @@ module Squishling
       klass.squishling_context_names
     end
 
+    # The apprentice settings (see Apprentice) the method runs with, or nil when apprentice mode is off for it: the
+    # method's, merged over the class's.
+    def apprentice
+      Apprentice.resolve(klass.squishling_apprentice, @apprentice)
+    end
+
+    # Whether the method itself (not its class) turns apprentice mode on.
+    def apprentice_declared?
+      !(@apprentice.nil? || @apprentice == false)
+    end
+
     # The squish_when predicate: the method's, else the class's.
     def predicate
       @predicate || klass.squishling_predicate
@@ -197,8 +227,8 @@ module Squishling
 
     # Runs the elastic path. When the LLM fails (InvalidOutputError or LLMError) and a fallback is
     # declared, the fallback's return value is used instead, coerced like a deterministic return.
-    def invoke_llm(receiver, inputs)
-      Invoker.new(self, receiver, inputs).call
+    def invoke_llm(receiver, inputs, call_id: nil)
+      Invoker.new(self, receiver, inputs, call_id: call_id_for(receiver, inputs, call_id)).call
     rescue InvalidOutputError, LLMError => e
       handler = fallback
       raise unless handler

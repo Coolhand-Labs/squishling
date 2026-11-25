@@ -31,6 +31,17 @@ module Squishling
       def jsonify(value)
         JSON.parse(JSON.generate(value))
       end
+
+      # Whether two results of a schema hold exactly the same data, whichever path built them (a typed result is
+      # compared by its to_h; a schema that isn't an object returns bare JSON values).
+      def same?(first, second)
+        plain(first) == plain(second)
+      end
+
+      # A result as plain JSON data: a typed result by its to_h, a bare JSON value as itself.
+      def plain(value)
+        jsonify(value.is_a?(Result::Instance) ? value.to_h : value)
+      end
     end
 
     # The payload handed to the adapter (Adapter::Request#schema): always strict, without LOCAL_ONLY_KEYWORDS.

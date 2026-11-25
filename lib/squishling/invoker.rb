@@ -23,7 +23,8 @@ module Squishling
       end
     end
 
-    def initialize(definition, receiver, inputs)
+    def initialize(definition, receiver, inputs, call_id: nil)
+      @supplied_call_id = call_id
       @definition = definition
       @receiver = receiver
       @inputs = inputs
@@ -35,29 +36,23 @@ module Squishling
     # Runs the harness (Definition#harness) over a Run of the call: the harness decides how the escalation is
     # used, and what it returns is checked against the output schema's type. A call that ends on the token budget
     # or a disagreement is reported to squawk once here, as the stop no attempt of its own reported.
-    def call
-      built = build
+    # built is what #prepare returned, when the call's request was built ahead (an apprentice builds it on the
+    # caller's thread and runs the call on another).
+    def call(built = prepare)
       harness = @definition.harness
-      run = Run.new(definition: @definition, receiver: @receiver, inputs: @inputs, prompt: built.prompt,
-        payload: built.payload, purpose: built.purpose, harness:)
-      accepted(call_harness(harness, run), run, harness)
+      @run = Run.new(definition: @definition, receiver: @receiver, inputs: @inputs, prompt: built.prompt,
+        payload: built.payload, purpose: built.purpose, harness:, call_id: @supplied_call_id)
+      accepted(call_harness(harness, @run), @run, harness)
     end
 
     # The first request the call would make (system prompt, output schema, user message), without making it.
     def prompt
-      build.prompt
+      prepare.prompt
     end
 
-    private
-
-    def call_harness(harness, run)
-      harness.klass.new.call(run, **harness.options)
-    rescue BudgetExhaustedError, DisagreementError => e
-      run.report_stop(e)
-      raise
-    end
-
-    def build
+    # What the call sends, built from the purpose (its procs run here) and the payload (the arguments and the
+    # squish_context values, read here).
+    def prepare
       purpose = @definition.purpose(@receiver)
       schema = @definition.schema
       raise ConfigurationError, "#{@definition.label} has no purpose" if purpose.nil? || purpose.empty?
@@ -68,6 +63,25 @@ module Squishling
       instructions = "#{purpose}\n\n#{INPUT_NOTE}#{IMAGE_NOTE if @images.any?}"
       prompt = Prompt.new(instructions:, schema:, input: JSON.generate(body), role: nil, images: @images.dup.freeze)
       Built.new(prompt:, payload: body, purpose:)
+    end
+
+    # The id of the call #call made (see Observer::Call#call_id), or nil before it started.
+    def call_id
+      @run&.call_id
+    end
+
+    # Where a result #call returned came from (LLMClient::Origin), or nil.
+    def origin(result)
+      @run&.origin(result)
+    end
+
+    private
+
+    def call_harness(harness, run)
+      harness.klass.new.call(run, **harness.options)
+    rescue BudgetExhaustedError, DisagreementError => e
+      run.report_stop(e)
+      raise
     end
 
     # What a harness returns must be a result its run produced: validated output, typed like the deterministic
