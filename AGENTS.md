@@ -126,12 +126,12 @@ Flag any change that breaks one of these; they are behavior contracts, not style
   and `config.apprentice_runner`), a call that the Ruby implementation answered returns that result, and `Apprentice.shadow`
   also runs the LLM path (`Invoker` directly, never `invoke_llm`, so `squish_fallback` is not used). It doesn't run after
   `squish_when` routed the call, after `squish!`, when the Ruby path raised, or on an inner call (`super`, or recursion: `Router.nested?`). Every failure of the
-  shadow run, the developer's own `when:`/`compare:`/`squish_validate` exceptions included, goes to the report hook's
+  shadow run, the developer's own `when:`/`compare:`/`squish_validate`/`call_id:` exceptions included, goes to the report hook's
   `error:` and a log warning, never to the caller. This is the one deliberate exception to "never swallow the user's
   exceptions". Only the report hook's (and an observer's `apprentice`) own exceptions propagate (inline runner; a
   background runner logs them), and so do `Squishling::Testing`'s errors (a background run holds them for the next
   `Apprentice.drain`, which `Testing.reset!` calls). The request is built (`Invoker#prepare`:
-  purpose procs, payload) on the caller's thread before the job is handed to the runner. The job pushes its own `:llm`
+  purpose procs, payload) and a declared `call_id:` resolved on the caller's thread before the job is handed to the runner. The job pushes its own `:llm`
   Router frame (`Router.within`) on whatever thread runs it. Unlike sample workers, `Apprentice::ThreadRunner` threads
   enter the Rails executor, since the caller isn't waiting on them and holds no share for them. An observer that
   responds to `apprentice(review)` gets an `Apprentice::Review`: the Ruby result as JSON data, the verdict, and only the
@@ -187,7 +187,8 @@ Flag any change that breaks one of these; they are behavior contracts, not style
   prompt itself), harness, `handed_off` (whether `squish!` sent the
   call), role/sample, attempt/attempts, model/provider, and request type; the block's `yield` returns an
   `Observer::Usage` (token counts and model). Never
-  inputs, context, or output: the observer's return value is ignored and the real response goes to Squishling's own
+  inputs, context, or output (except an id the caller chose, in `call_id`/`request_id`, which a `call_id:` declaration
+  may derive from an input): the observer's return value is ignored and the real response goes to Squishling's own
   caller, so output still leaves only through `InvalidOutputError#raw`, `squawk`, and an apprentice's `report:`. The
   `Call` also holds `call_id`/`request_id`/`apprentice`, and an observer's optional `apprentice(review)` gets the Ruby
   result (see the apprentice bullet), never the model's output. An observer's own exceptions

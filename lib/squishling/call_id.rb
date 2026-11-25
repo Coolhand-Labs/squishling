@@ -92,7 +92,8 @@ module Squishling
 
     # Logs, once per method, that a declared id came up again: its request ids then repeat, which makes feedback sent
     # by client_unique_id ambiguous. Remembers the last REPEAT_MEMORY ids per method until it has warned. The log line
-    # names the method, never the id.
+    # names the method, never the id. The memory is per label for the life of the process, so classes created on the
+    # fly (each has its own label) leave a bounded set of ids behind.
     def warn_if_repeated(label, id)
       return unless LOCK.synchronize { repeat?(label, id) }
 

@@ -117,6 +117,18 @@ RSpec.describe Squishling::CallId do
     end
   end
 
+  describe "a squishsum call, whose samples are requested on worker threads" do
+    it "numbers every request under the id, without repeats" do
+      klass.squishling(harness: :squishsum)
+      stub_llm(high, high)
+
+      Squishling.with_call_id("ticket-1") { klass.call }
+
+      expect(events.map(&:call_id).uniq).to eq(["ticket-1"])
+      expect(events.map(&:request_id)).to contain_exactly("ticket-1.1", "ticket-1.2")
+    end
+  end
+
   describe "the scope" do
     it "ends with the block, including when it raises" do
       stub_llm(high)
@@ -494,6 +506,17 @@ RSpec.describe Squishling::CallId do
 
       expect(logged.string.scan("RecordTriage#call call_id:").size).to eq(1)
       expect(logged.string).not_to include("rec-1")
+    end
+
+    it "forgets ids beyond its memory, and stays silent once it has warned" do
+      stub_const("Squishling::CallId::REPEAT_MEMORY", 2)
+      stub_llm(*Array.new(8) { high })
+
+      %w[a b c a].each { |id| declared.call(record_id: id) }
+      expect(logged.string).to be_empty
+
+      %w[a a a].each { |id| declared.call(record_id: id) }
+      expect(logged.string.scan("call_id: gave an id").size).to eq(1)
     end
 
     it "doesn't warn for ids that differ" do
