@@ -141,7 +141,8 @@ Flag any change that breaks one of these; they are behavior contracts, not style
   maps a produced result to the request that answered it, so a later report (an apprentice's) can name it. The id is
   Squishling's UUID unless the caller supplied one with `Squishling.with_call_id` (`CallId`: fiber-local, validated up front,
   claimed once by the first squished call started in the block, so request ids stay unique within it; across blocks
-  that is the caller's job), or a method's `call_id:` declaration (an input's name, or a Proc given the inputs; it
+  that is the caller's job; the block is yielded a `CallId::Handle` with `call_id` and `accepted_request_id`, the request
+  whose output the claiming call accepted, since numbering is by start order and that isn't always `.1`), or a method's `call_id:` declaration (an input's name, or a Proc given the inputs; it
   applies to every call, a `with_call_id` id wins for the call it names, `Squishling.verify` checks it, and a repeated
   declared id is logged once per method, never naming the id); it goes to observers, `squawk` and reports, never the
   provider.
@@ -246,7 +247,7 @@ a message, and the built-in `Adapters::RubyLLM` and `Adapters::OpenAICompatible`
 `VerificationError#report`/`problems`). The apprentice surface is public too: `Squishling::Apprentice.drain`, `Apprentice::ThreadRunner` (`size:`,
 `max_queue:`, `call`, `drain`, `pending`), `Apprentice::Review`, an observer's optional `apprentice(review)`, the
 report hook's keywords (`ruby:`, `llm:`, `match:`, `error:`, `inputs:`, `metadata:`), and the squawk `metadata` keys
-`call_id:`/`apprentice:`. Call ids are public too: `Squishling.with_call_id` and the `call_id:` option of `squishling`
+`call_id:`/`apprentice:`. Call ids are public too: `Squishling.with_call_id` (with the `CallId::Handle` it yields: `call_id`, `accepted_request_id`) and the `call_id:` option of `squishling`
 and `squish`. The verification surface is public too: `Squishling.verify`/`verify!`/
 `squished_classes`, `Squishling::Verification::Report`/`Problem`, the `squishling:verify` rake task, and the
 `be_squishling_valid` matcher (`require "squishling/rspec"`). The custom-harness plugin point is public too:

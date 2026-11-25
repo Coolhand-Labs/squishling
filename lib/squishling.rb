@@ -78,7 +78,10 @@ module Squishling
     # sends as client_unique_id), squawk metadata and apprentice reports, never the provider. Any other squished call in
     # the block gets a generated id; the first keeps the id even when it only runs Ruby. Keeping ids unique across
     # blocks is up to the caller. Raises ConfigurationError for an id that isn't a String of 1-250 characters without
-    # surrounding whitespace or control or invisible characters. Returns the block's value.
+    # surrounding whitespace or control or invisible characters. Returns the block's value. The block is given a
+    # CallId::Handle: #call_id, and #accepted_request_id, the request whose output the call accepted (requests are
+    # numbered as they start, so after a retry it is not always "<call_id>.1"; nil until the call ends, and when it
+    # only ran Ruby or a squish_fallback answered). See docs/observers.md.
     def with_call_id(call_id, &)
       raise ConfigurationError, "with_call_id needs a block" unless block_given?
 

@@ -16,8 +16,33 @@ module Squishling
 
     EDGE_SPACE = /\A[[:space:]]|[[:space:]]\z/
 
-    Scope = Struct.new(:id, :claimed)
-    private_constant :Scope
+    # What Squishling.with_call_id yields: the id the block supplied, and, once the call that claimed it has ended,
+    # the id of the request whose output it accepted. Requests are numbered as they start, so after a retry or an
+    # escalation that is not always "<call_id>.1".
+    class Handle
+      attr_reader :call_id, :accepted_request_id
+
+      def initialize(call_id)
+        @call_id = call_id
+        @claimed = false
+        @accepted_request_id = nil
+      end
+
+      # Marks the id taken, and returns whether it was free. Not public API.
+      def claim! # :nodoc:
+        return false if @claimed
+
+        @claimed = true
+      end
+
+      # Records the request the claiming call accepted. Not public API.
+      def accept!(request_id) # :nodoc:
+        @accepted_request_id = request_id
+      end
+
+      def inspect = "#<#{self.class} call_id=#{call_id.inspect} accepted_request_id=#{accepted_request_id.inspect}>"
+      alias_method :to_s, :inspect
+    end
 
     # Declared ids remembered per method, to warn once when one repeats.
     REPEAT_MEMORY = 1_000
@@ -27,25 +52,24 @@ module Squishling
 
     module_function
 
-    # Runs the block with id waiting to be claimed by the first squished call it starts. Returns the block's value.
-    def with(id)
-      scope = Scope.new(validate(id), false)
+    # Runs the block, yielding a Handle, with id waiting to be claimed by the first squished call it starts. Returns
+    # the block's value.
+    def with(id, &block)
+      handle = Handle.new(validate(id))
       previous = Thread.current[KEY]
       begin
-        Thread.current[KEY] = scope
-        yield
+        Thread.current[KEY] = handle
+        # A lambda or method that takes no argument (how the block was written before it was yielded a handle) works.
+        block.lambda? && block.arity.zero? ? yield : yield(handle)
       ensure
         Thread.current[KEY] = previous
       end
     end
 
-    # The supplied id the first time it is asked for inside a with block, nil after that and outside one.
+    # The block's Handle the first time it is asked for inside a with block, nil after that and outside one.
     def claim
-      scope = Thread.current[KEY]
-      return if scope.nil? || scope.claimed
-
-      scope.claimed = true
-      scope.id
+      handle = Thread.current[KEY]
+      handle if handle&.claim!
     end
 
     # A call_id: declaration (squishling call_id:, squish call_id:): the name of an input (a Symbol), a Proc that gets

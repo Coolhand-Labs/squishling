@@ -5,8 +5,10 @@ module Squishling
   module Router
     # One squished call in progress. `phase` is :routing (deciding, e.g. running squish_when), :ruby (running
     # the implementation), or :llm (on the LLM path, including any fallback); `handed_off` records that squish!
-    # already sent it to the LLM. call_id is the id the caller gave this call (see CallId), or nil.
-    Frame = Struct.new(:receiver, :definition, :wrapper, :inputs, :phase, :handed_off, :call_id)
+    # already sent it to the LLM. supplied is the CallId::Handle that gave this call its id (see CallId), or nil.
+    Frame = Struct.new(:receiver, :definition, :wrapper, :inputs, :phase, :handed_off, :supplied) do
+      def call_id = supplied&.call_id
+    end
 
     FRAMES_KEY = :__squishling_frames__
 
@@ -84,7 +86,7 @@ module Squishling
         log(definition, reason)
         previous = frame.phase
         frame.phase = :llm
-        definition.invoke_llm(frame.receiver, frame.inputs, call_id: frame.call_id)
+        definition.invoke_llm(frame.receiver, frame.inputs, call_id: frame.call_id, supplied: frame.supplied)
       ensure
         frame.phase = previous
       end
