@@ -132,7 +132,9 @@ a `usage.ruby_llm` event per request, with tokens and cost, if you would rather 
 ## Privacy
 
 Squishling only sends the model what you name: the method arguments, any `squish_context` values, and any source you
-append. Tools that sit on the request path are a separate route out of your process, and they see both sides:
+append. An argument that isn't plain data (a model object, a `Range`) is refused rather than serialized with all its
+attributes; see [what is sent](routing.md#what-the-llm-sees). Tools that sit on the request path are a separate
+route out of your process, and they see both sides:
 
 - **Request interceptors, such as `coolhand`,** record the prompts (your purpose text and those inputs) and the
   model's responses. Coolhand sends them to coolhandlabs.com unless you point `config.base_url` at an endpoint of your

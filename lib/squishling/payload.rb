@@ -5,6 +5,8 @@ module Squishling
   module Payload
     module_function
 
+    PLAIN_TYPES = [NilClass, TrueClass, FalseClass, String, Symbol, Numeric, Time].freeze
+
     # label names the call in a ConfigurationError. images collects the Images found, in order: each goes into the
     # JSON as {attached_image: N} (its 1-based number), and the same Image passed twice is attached once.
     def jsonify(value, label, images = [])
@@ -15,14 +17,34 @@ module Squishling
     # json/add/exception loaded it would also send the backtrace, which exposes file paths. A Struct, Data, or
     # OpenStruct is sent as its members (to_h) and a Set as its elements, not as Ruby's inspect text. path is the
     # containers being walked: one that contains itself is a ConfigurationError rather than a SystemStackError.
+    # Any other object is refused unless it is a JSON primitive, a Time or Date, or defines to_squishling (whose
+    # return value is sent in its place): as_json/to_json would send every attribute of, say, an ActiveRecord model.
     def describe(value, label, images, path = [])
       case value
       when Image then { attached_image: attach(value, images) }
       when Exception then { class: exception_class_name(value.class), message: value.message }
       when Array, Set then elements(value, label, images, path)
       when Hash, Struct, Data then members(value, label, images, path)
-      else open_struct?(value) ? members(value, label, images, path) : value
+      else other(value, label, images, path)
       end
+    end
+
+    # What isn't a container: an OpenStruct's members, a plain value as it is, or what to_squishling says to send.
+    def other(value, label, images, path)
+      return members(value, label, images, path) if open_struct?(value)
+      return value if plain?(value)
+
+      unless value.respond_to?(:to_squishling)
+        raise ConfigurationError,
+          "#{label}: #{value.class} can't be sent as JSON, because that could send all of its attributes. " \
+          "Pass a plain Hash, or define #{value.class}#to_squishling to return what the model should see"
+      end
+
+      within(value, label, path) { |inner| describe(value.to_squishling, label, images, inner) }
+    end
+
+    def plain?(value)
+      PLAIN_TYPES.any? { |type| value.is_a?(type) } || (defined?(::Date) && value.is_a?(::Date))
     end
 
     def elements(value, label, images, path)
