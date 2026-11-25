@@ -52,7 +52,8 @@ budget is cut off before any JSON is written.
 
 ### What ends up in errors and logs
 
-Model output can echo sensitive input, so the raw response is kept in one place: `InvalidOutputError#raw` (plus the opt-in `squawk` hook below).
+Model output can echo sensitive input, so the raw response is kept in one place: `InvalidOutputError#raw` (plus the
+opt-in `squawk` hook below, and an [apprentice's](apprentice.md) `report:` hook, which gets the LLM's typed result).
 `InvalidOutputError#message`, `#errors`, and `config.logger` warnings are built from these:
 
 - For unparseable JSON, only the position (`response was not valid JSON (at line 1 column 7)`), never the parser's
@@ -182,7 +183,7 @@ end
 |---|---|
 | `output` | The raw response: a Hash or String, or `nil` when the provider call itself failed |
 | `error` | `nil` for an accepted attempt. Otherwise the `InvalidOutputError` (with `errors` and `raw`) or `LLMError` that ended the attempt, or the `BudgetExhaustedError` or `DisagreementError` that stopped the call |
-| `metadata` | `label` (`"Class#method"`), `attempt`, `attempts` (the escalation's length, or for a [stopped call](#a-call-that-is-stopped) the attempts made; `attempt` jumps past the attempts a repeated reply skips; under a harness, the sample's or judge's own attempts), `final` (the last attempt, or a rejection after which none follows), `repeated` (`true` when the attempt returned the same reply as the one before it, in the same chat, which skips the step's remaining attempts), `model`, `provider`, `params`, `input` (the JSON sent: arguments and named context only), `usage` (token counts, when the adapter reports them), `finish_reason` (why the provider stopped, e.g. `:stop` or `:max_tokens`; `nil` when unknown or the call failed), `role` (`nil` for an escalation attempt, `:sample`, or `:judge`), `sample` (`"a"`, `"b"`, ... for a sample's attempt, else `nil`), `stopped` (`nil` for an attempt; `:budget` or `:disagreement` for the [stopped call's report](#a-call-that-is-stopped)) |
+| `metadata` | `label` (`"Class#method"`), `attempt`, `attempts` (the escalation's length, or for a [stopped call](#a-call-that-is-stopped) the attempts made; `attempt` jumps past the attempts a repeated reply skips; under a harness, the sample's or judge's own attempts), `final` (the last attempt, or a rejection after which none follows), `repeated` (`true` when the attempt returned the same reply as the one before it, in the same chat, which skips the step's remaining attempts), `model`, `provider`, `params`, `input` (the JSON sent: arguments and named context only), `usage` (token counts, when the adapter reports them), `finish_reason` (why the provider stopped, e.g. `:stop` or `:max_tokens`; `nil` when unknown or the call failed), `role` (`nil` for an escalation attempt, `:sample`, or `:judge`), `sample` (`"a"`, `"b"`, ... for a sample's attempt, else `nil`), `stopped` (`nil` for an attempt; `:budget` or `:disagreement` for the [stopped call's report](#a-call-that-is-stopped)), `call_id` (the call's id, shared by its attempts; see [Identifying the request](apprentice.md#identifying-the-request)), `apprentice` (`true` for an [apprentice's](apprentice.md) shadow run) |
 
 - Set it globally with `config.squawk`, per class with `squishling squawk: ...`, or per method with
   `squish :triage, squawk: ...`. The method's hook wins over the class's, which wins over the configured one;

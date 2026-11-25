@@ -28,6 +28,15 @@ module Squishling
         end
       end
 
+      # Runs the block as the LLM path of a call on this thread (an apprentice's shadow run, which may run on another
+      # thread than the call): calls back into the method run its Ruby, and squish! is refused, as on the LLM path.
+      def within(receiver, definition, inputs)
+        frames.push(Frame.new(receiver, definition, nil, inputs, :llm, false))
+        yield
+      ensure
+        frames.pop
+      end
+
       def current_frame(receiver)
         frames.reverse_each.find { |frame| frame.receiver.equal?(receiver) }
       end
@@ -50,6 +59,7 @@ module Squishling
       # The coerce is in `else`, so the rescues never see its errors.
       def run_ruby(frame, definition, receiver, impl)
         frame.phase = :ruby
+        started = Apprentice.clock
         value = impl.call
       rescue NotImplementedError => e
         # After squish!, the error came from the LLM path (a fallback, a proc), not a missing implementation.
@@ -62,7 +72,12 @@ module Squishling
 
         hand_off(receiver, definition.rescue_overrides(e), "squish_rescue #{e.class}")
       else
-        definition.coerce(value)
+        ruby_seconds = Apprentice.clock - started
+        definition.coerce(value).tap do |result|
+          # The Ruby path answered (not squish!, not a rescue), so an apprentice may run the LLM alongside it: once, for
+          # the outermost call, not again for each call the method makes to itself.
+          shadow(frame, definition, result, ruby_seconds)
+        end
       end
 
       # A declared StandardError also matches Squishling's own errors and the test helpers' (Testing::Error is not a
@@ -84,6 +99,21 @@ module Squishling
         definition.invoke_llm(frame.receiver, frame.inputs)
       ensure
         frame.phase = previous
+      end
+
+      # Hands a call the Ruby path answered to its apprentice (see Apprentice), unless squish! answered it, or it is
+      # nested in another call of the same method.
+      def shadow(frame, definition, result, ruby_seconds)
+        return if frame.handed_off || nested?(frame)
+
+        Apprentice.shadow(frame, definition, result, ruby_seconds)
+      end
+
+      # Whether the call runs inside another call of the same method (recursion, on this instance or another).
+      def nested?(frame)
+        frames.any? do |outer|
+          !outer.equal?(frame) && outer.definition.label == frame.definition.label
+        end
       end
 
       # Thread#[] is fiber-local, so concurrent fibers don't share frames.

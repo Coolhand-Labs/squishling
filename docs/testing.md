@@ -62,9 +62,8 @@ A reply is one of:
 **Selecting what a rule answers.** `step(model)`, `step(provider: :vertexai)`, `step(adapter: :local)`, and `step(:any)`
 answer escalation attempts; `attempt: 2` narrows a step rule to one attempt of the escalation. The scripted adapter
 answers for every name in `config.adapters`, so `adapter:` selects on the name a step asked for. Rules are matched most
-specific first (a sample or the judge, then the rule naming the most of model, provider, adapter and attempt, then
-`step(:any)`), and by
-declaration order within that.
+specific first (a sample or the judge, then [`apprentice`](#apprentice-mode) rules, then the rule naming the most of
+model, provider, adapter and attempt, then `step(:any)`), and by declaration order within that.
 Scripts are keyed by model, so a rotated tier (`priority:`) gets the same answers whichever model goes first. Which
 model goes first still depends on how many calls the class has had, so don't assert the order of `fake.models` for a
 rotated tier unless the class is new to the test (or pin the tier with `rotate: false`).
@@ -105,7 +104,8 @@ and `#verdict` are the real ones; rescue them as you would in production.
 | `messages`, `reply`, `failed?` | the conversation as sent, and the `Adapter::Response` (or error) that came back |
 
 `fake.conversations` groups the requests by chat: a retry on the same step shares one, and an escalation to a new
-step starts a new one. `fake.requests_for(sample: "a")`, `fake.models`, and `fake.arguments` are shortcuts.
+step starts a new one. `fake.requests_for(sample: "a")` (or `apprentice: true`), `fake.models`, and `fake.arguments` are
+shortcuts.
 
 ## Asserting the LLM was not called
 
@@ -182,6 +182,45 @@ The capture also records the [report of a stopped call](failures.md#a-call-that-
 An observer you configured *before* `fake_squishling` keeps working while the fake is installed (it is chained behind
 the fake's own). Configure it first: one assigned afterwards replaces the fake's, and then sample and judge scripts
 can't tell which request is which.
+
+## Apprentice mode
+
+An [apprentice's](apprentice.md) shadow run makes real requests, so once a class declares `apprentice_mode:`, its
+tests meet a forbidden or unscripted request on every call the Ruby path answers. There are three helpers for this.
+
+**Turn shadow runs off** for the tests that only check the Ruby result. `disable_apprentice!` sets
+`config.apprentice_enabled = false` until `reset!`, so call it in a suite-wide `before`/`setup`.
+`without_apprentice { ... }` does the same for one block.
+
+```ruby
+RSpec.configure { |config| config.before { disable_apprentice! } }
+```
+
+**Script the shadow run separately.** `script.apprentice` answers the shadow run's escalation attempts, ahead of any
+`step` rule, so one test can give the LLM-routed calls one reply and the shadow run another. It takes the same
+`model`, `provider:`, `adapter:`, and `attempt:` as `step`, and leaves a shadow run's samples and judge to `sample` and
+`judge`. Without it, `step` answers shadow requests like any other.
+
+**Record the reports.** `with_apprentice { ... }` turns apprentice mode on for the block (even after
+`disable_apprentice!`) and returns a capture of every shadow run's report. The report hook the class declares still
+runs; the capture is told after it. On `:thread` (or any runner with `drain(timeout:)`), it waits up to 5 seconds for
+the runs still pending before it returns, and raises `SetupError` if some still are. A custom runner without `drain`
+isn't waited on, so its late reports are missed: keep tests on the default `:inline` runner.
+
+```ruby
+llm = fake_squishling do |script|
+  script.step.reply(priority: "medium", team: "api")        # calls squish_when sends to the LLM
+  script.apprentice.reply(priority: "low", team: "api")     # the shadow run
+end
+
+capture = with_apprentice { TicketTriage.call(ticket_text: "Checkout is down") }
+report = capture.reports.first
+report.match           # => false
+report.ruby.priority   # => "high" (what the caller got)
+report.llm.priority    # => "low"
+report.error           # => nil, or what ended the shadow run
+llm.requests_for(apprentice: true).size # => 1 (each Testing::Request also has apprentice?)
+```
 
 ## How it works
 

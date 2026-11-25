@@ -13,9 +13,12 @@ module Squishling
     # nil for an escalation attempt, :sample (with sample "a", "b", ...) or :judge, like squawk's metadata. attempt and
     # attempts count the (expanded) escalation path the request belongs to. request is :chat, or :judgment for a
     # System One judge. adapter is the name of the configured adapter the step picked (nil for the default one).
+    # call_id identifies the squished call the request belongs to (shared by all its requests), and request_id this
+    # one request ("<call_id>.<n>"), so a later report on the call's result (an apprentice's review) can name the
+    # request that produced it. apprentice is true for the requests of an apprentice's shadow run (see Apprentice).
     Call = Data.define(:label, :purpose, :harness, :handed_off, :role, :sample, :attempt, :attempts, :model, :provider,
-      :request, :adapter) do
-      def initialize(adapter: nil, **attributes)
+      :request, :adapter, :call_id, :request_id, :apprentice) do
+      def initialize(adapter: nil, call_id: nil, request_id: nil, apprentice: false, **attributes)
         super
       end
     end
@@ -96,6 +99,13 @@ module Squishling
       raise failure if failure # an observer can't swallow the request's error: Squishling's taxonomy holds
 
       response
+    end
+
+    # Tells the resolved observer about an apprentice's shadow run (see Apprentice::Review), when it takes reviews
+    # (responds to apprentice). Its exceptions are its own and propagate.
+    def review(review)
+      observer = resolve(Squishling.config.observer)
+      observer.apprentice(review) if observer.respond_to?(:apprentice)
     end
 
     # An Adapter::Response carries its token counts in a Hash; a judgment (see Adapter::Base#judge) may carry them in

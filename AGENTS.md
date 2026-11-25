@@ -109,7 +109,9 @@ Flag any change that breaks one of these; they are behavior contracts, not style
   `BudgetExhaustedError` is its subclass for a spent token budget), `LLMError` (provider/transport failure after the
   adapter's HTTP retries, `cause` per the adapter, see the invariant on provider text below). Never wrap or swallow
   exceptions raised by the user's own Ruby code.
-- **Model output leaves the process only through `InvalidOutputError#raw` and the opt-in `squawk` hook.** Error
+- **Model output leaves the process only through `InvalidOutputError#raw`, the opt-in `squawk` hook, and an
+  apprentice's opt-in `report:` hook** (its `llm:` result; `config.apprentice_listener`, set only by
+  `Testing.with_apprentice`, gets the same report). Error
   messages and `config.logger` lines carry parse positions and schema paths, never the response itself (the
   documented exceptions are model-chosen extra key names, which `InvalidOutputError#error_details` tags
   `model_derived?`, and the developer's own `squish_validate` messages).
@@ -120,6 +122,23 @@ Flag any change that breaks one of these; they are behavior contracts, not style
   `Adapter::ProviderFailure` with the class, HTTP status, and backtrace, built fresh, never a copy of the original).
   The RubyLLM adapter's `keep_cause: true` is the developer's opt-in to the original; core never touches `cause`.
   Transport errors that carry no body may stay as the cause.
+- **Apprentice mode never changes what the caller gets.** With `apprentice_mode:` (class, method; `config.apprentice_report`
+  and `config.apprentice_runner`), a call that the Ruby implementation answered returns that result, and `Apprentice.shadow`
+  also runs the LLM path (`Invoker` directly, never `invoke_llm`, so `squish_fallback` is not used). It doesn't run after
+  `squish_when` routed the call, after `squish!`, when the Ruby path raised, or on an inner call (`super`, or recursion: `Router.nested?`). Every failure of the
+  shadow run, the developer's own `when:`/`compare:`/`squish_validate` exceptions included, goes to the report hook's
+  `error:` and a log warning, never to the caller. This is the one deliberate exception to "never swallow the user's
+  exceptions". Only the report hook's (and an observer's `apprentice`) own exceptions propagate (inline runner; a
+  background runner logs them), and so do `Squishling::Testing`'s errors (a background run holds them for the next
+  `Apprentice.drain`, which `Testing.reset!` calls). The request is built (`Invoker#prepare`:
+  purpose procs, payload) on the caller's thread before the job is handed to the runner. The job pushes its own `:llm`
+  Router frame (`Router.within`) on whatever thread runs it. Unlike sample workers, `Apprentice::ThreadRunner` threads
+  enter the Rails executor, since the caller isn't waiting on them and holds no share for them. An observer that
+  responds to `apprentice(review)` gets an `Apprentice::Review`: the Ruby result as JSON data, the verdict, and only the
+  class of any error (an `InvalidOutputError` carries the output), never the model's output. The Coolhand observer sends it as feedback by `client_unique_id` when the gem supports one.
+- **Every request has an id.** `Run` gives each call a `call_id` (UUID) and `LLMClient` each request
+  `"<call_id>.<n>"` (`Observer::Call#call_id`/`request_id`, mutex-counted since samples run concurrently). `Run#origin`
+  maps a produced result to the request that answered it, so a later report (an apprentice's) can name it.
 - **A stopped call is reported to `squawk` once.** A `BudgetExhaustedError` or `DisagreementError` ends a call with no
   attempt of its own to report, so `Invoker` sends one final report for it (`stopped:`, `final: true`, no output), for
   built-in and custom harnesses alike, before `squish_fallback` runs. Each error is reported once, even when it passes
@@ -153,7 +172,9 @@ Flag any change that breaks one of these; they are behavior contracts, not style
   thread, and a `Run`'s primitives raise `ConfigurationError` when called from any other. (The adapter carries its request
   context to the workers: `capture_context`/`with_context`. RubyLLM instrumentation subscribers fire on the worker
   threads.) Workers must not enter the Rails executor: the caller already holds it,
-  and a second interlock share can deadlock against a pending code reload.
+  and a second interlock share can deadlock against a pending code reload. The exception is an apprentice's shadow run
+  on a background runner (`:thread` or a callable): its whole `Run` (`include_when:`, `squish_validate`, `compare:`, the
+  report hook) runs on the runner's thread, as the owner of that `Run`, after the request was built on the caller's.
 - **Observers see metadata and usage, around the request.** `config.observer` (`Squishling::Observer`) wraps each
   provider request (`LLMClient#ask`/`#judge`) on the thread that makes it, so a sample's observer runs on its worker
   thread. The `Observer::Call` it receives holds label, purpose (the fully rendered system prompt, so as sensitive as the
@@ -161,7 +182,9 @@ Flag any change that breaks one of these; they are behavior contracts, not style
   call), role/sample, attempt/attempts, model/provider, and request type; the block's `yield` returns an
   `Observer::Usage` (token counts and model). Never
   inputs, context, or output: the observer's return value is ignored and the real response goes to Squishling's own
-  caller, so output still leaves only through `InvalidOutputError#raw` and `squawk`. An observer's own exceptions
+  caller, so output still leaves only through `InvalidOutputError#raw`, `squawk`, and an apprentice's `report:`. The
+  `Call` also holds `call_id`/`request_id`/`apprentice`, and an observer's optional `apprentice(review)` gets the Ruby
+  result (see the apprentice bullet), never the model's output. An observer's own exceptions
   propagate unwrapped. With `observer` nil, the Coolhand observer is used when the `coolhand` gem is loaded and
   configured (no gem dependency, and it must never break a call it can't declare).
 - **Harnesses don't add a second rescue path.** Every harness failure surfaces as `InvalidOutputError`
@@ -189,7 +212,10 @@ Flag any change that breaks one of these; they are behavior contracts, not style
   any provider SDK. Its stand-ins must stay honest: `stub_result` builds results through the method's schema, and the
   re-ask/escalation parsing reads `Run::Messages`, the one source of those texts. Its errors (`UnscriptedRequestError`,
   `ProviderCallError`, `SetupError`) are not `Squishling::Error`s, so a `squish_fallback` can't absorb them.
-  `Testing.reset!` restores only what the helpers changed.
+  `Testing.reset!` restores only what the helpers changed. An apprentice's shadow runs go through the same scripted
+  adapter (`script.apprentice` only narrows which rule answers); `disable_apprentice!` sets the real
+  `config.apprentice_enabled`, and `with_apprentice` listens through `config.apprentice_listener` (Testing only),
+  told after the class's own report hook, never instead of it.
 
 ## Public API
 
@@ -211,16 +237,21 @@ a message, and the built-in `Adapters::RubyLLM` and `Adapters::OpenAICompatible`
 `squish_validate`, `squish_fallback`, `squish_rescue` (`as:` and the options of `squish!`),
 `result`/`squishling_result`, `squish!` (including
 `model:`/`escalation:`/`cache:`/`harness:`), and the `max_total_output_tokens:`/`max_total_input_tokens:` options of
-`squishling`, `squish`, and `squish!`), `Squishling::Configuration` options (including `adapters`, `default_harness`,
+`squishling`, `squish`, and `squish!`, and the `apprentice_mode:` option (`when:`, `compare:`, `report:`) of `squishling` and
+`squish`), `Squishling::Configuration` options (including `adapters`, `default_harness`, `apprentice_report`,
+`apprentice_runner`, `apprentice_enabled`,
 `default_cache`, `budget_counts_cache_reads`,
 `default_max_total_output_tokens`/`default_max_total_input_tokens`, `observer`, `squawk_on`, and `squawk`, whose
-`output:`/`metadata:`/`error:` keywords are public), `Squishling::Observer::Call` (with `adapter`)/`Usage`
+`output:`/`metadata:`/`error:` keywords are public), `Squishling::Observer::Call` (with `adapter`, `call_id`, `request_id`, `apprentice`)/`Usage`
 (with `cache_read_tokens`/`cache_write_tokens`),
 `Squishling::Harness::DEFAULT_JUDGE_INSTRUCTIONS`, result objects (`squished?`, `to_h`, `[]`), and the error classes
 (including `InvalidOutputError#error_details` (`InvalidOutputError::Detail`: `message`, `source`,
 `model_derived?`), `InvalidOutputError#models`, `DisagreementError#candidates`/`verdict`/`reason`,
 `RequestRejectedError#provider_status`/`provider_code`, `BudgetExhaustedError#limit`/`max`/`used`, and
-`VerificationError#report`/`problems`). The verification surface is public too: `Squishling.verify`/`verify!`/
+`VerificationError#report`/`problems`). The apprentice surface is public too: `Squishling::Apprentice.drain`, `Apprentice::ThreadRunner` (`size:`,
+`max_queue:`, `call`, `drain`, `pending`), `Apprentice::Review`, an observer's optional `apprentice(review)`, the
+report hook's keywords (`ruby:`, `llm:`, `match:`, `error:`, `inputs:`, `metadata:`), and the squawk `metadata` keys
+`call_id:`/`apprentice:`. The verification surface is public too: `Squishling.verify`/`verify!`/
 `squished_classes`, `Squishling::Verification::Report`/`Problem`, the `squishling:verify` rake task, and the
 `be_squishling_valid` matcher (`require "squishling/rspec"`). The custom-harness plugin point is public too:
 `Squishling.register_harness`/`harnesses`/`reset_harnesses!`, `Squishling::Harness::Base` (`option` and its types,
@@ -229,10 +260,11 @@ a message, and the built-in `Adapters::RubyLLM` and `Adapters::OpenAICompatible`
 `Squishling::Judge::Verdict`, and the squawk `metadata` keys `role:`/`sample:`/`repeated:`/`stopped:`. The opt-in test
 support is public too: `Squishling::Testing` (`install`, `forbid_provider_calls!`, `no_llm_call`, `reset!`,
 `stub_result`/`stub_error`, `validate`/`fallback_for`/`preview`, `valid_reply_for`/`invalid_reply_for`,
-`capture_squawk`/`with_squawk`), its script DSL (`step`/`sample`/`judge`, `reply`/`fail`/`once`, `Reply`),
-`Testing::Adapter#requests`/`conversations` with `Testing::Request` (with `adapter`, selectable with
-`step(adapter:)`, and `images`), and the `Testing::Minitest` / `Testing::RSpec` mixins. Don't break it without a clear
-migration path in the changelog.
+`capture_squawk`/`with_squawk`, `disable_apprentice!`/`without_apprentice`/`capture_apprentice`/`with_apprentice` with
+`ApprenticeCapture`), its script DSL (`step`/`sample`/`judge`/`apprentice`, `reply`/`fail`/`once`, `Reply`),
+`Testing::Adapter#requests`/`conversations`/`requests_for` (with `apprentice:`) with `Testing::Request` (with `adapter`, selectable with
+`step(adapter:)`, `images`, and `apprentice?`), and the `Testing::Minitest` / `Testing::RSpec` mixins. Don't break it
+without a clear migration path in the changelog.
 
 ## Changelog and versioning
 

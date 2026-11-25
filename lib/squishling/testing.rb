@@ -9,6 +9,7 @@ require_relative "testing/request"
 require_relative "testing/observer"
 require_relative "testing/adapter"
 require_relative "testing/state"
+require_relative "testing/apprentice_capture"
 require_relative "testing/checks"
 require_relative "testing/stubs"
 require_relative "testing/direct"
@@ -23,6 +24,11 @@ module Squishling
   # for the callers of squished methods, schema-driven fixtures, and assertions. See docs/testing.md and the
   # Squishling::Testing::Minitest and ::RSpec mixins.
   module Testing
+    # Shadow runs a background runner hadn't finished within 5 seconds (see Apprentice.drain).
+    PENDING = "apprentice shadow runs were still pending after 5 seconds; drain them (Squishling::Apprentice.drain) " \
+              "before the test ends"
+    private_constant :PENDING
+
     class << self
       # Makes the scripted Adapter the one every squished call goes through (also for steps that name another
       # adapter: the requests record which), and returns it. The block scripts it (see Script); #script adds to it
@@ -105,14 +111,70 @@ module Squishling
         config.squawk = previous
       end
 
-      # Puts back what the helpers changed (the adapter and observer) and clears the stubs. The mixins do this
-      # after every test; call it yourself with a custom setup.
+      # Turns apprentice mode off (config.apprentice_enabled = false) until Testing.reset! puts it back, so the tests
+      # of a class that runs the LLM alongside its Ruby need no script for the shadow runs. Call it in a suite-wide
+      # before hook; with_apprentice turns it back on for the tests about apprentice mode.
+      def disable_apprentice!
+        State.set(:apprentice_enabled, false)
+      end
+
+      # Runs the block with apprentice mode off, and puts the previous setting back.
+      def without_apprentice
+        config = Squishling.config
+        previous = config.apprentice_enabled
+        config.apprentice_enabled = false
+        yield
+      ensure
+        config.apprentice_enabled = previous
+      end
+
+      # A recorder of apprentice reports, to give to with_apprentice.
+      def capture_apprentice
+        ApprenticeCapture.new
+      end
+
+      # Runs the block with apprentice mode on (even after disable_apprentice!), recording every shadow run's report in
+      # the capture, after the report hook the class declares (if any). Waits for runs still pending on a background
+      # runner (see Apprentice.drain; a runner without drain isn't waited on) before it returns the capture, then puts
+      # the previous settings back.
+      def with_apprentice(capture = capture_apprentice)
+        config = Squishling.config
+        previous = [config.apprentice_listener, config.apprentice_enabled]
+        config.apprentice_listener = capture
+        config.apprentice_enabled = true
+        yield capture
+        raise SetupError, PENDING unless Squishling::Apprentice.drain(timeout: 5)
+
+        capture
+      ensure
+        config.apprentice_listener, config.apprentice_enabled = previous
+      end
+
+      # Puts back what the helpers changed (the adapter, observer, and apprentice_enabled) and clears the stubs, after
+      # waiting for any apprentice shadow runs still pending on a background runner (see Apprentice.drain). The mixins
+      # do this after every test; call it yourself with a custom setup.
       def reset!
+        # Raises a background run's UnscriptedRequestError, failing the test.
+        drained = Squishling::Apprentice.drain(timeout: 5)
+      rescue StandardError
+        restore
+        raise
+      else
+        return restore if drained
+
+        # Runs still pending would reach a real adapter put back under them: they get one that refuses instead, until a
+        # later reset! finds them done.
         Stubs.clear!
-        State.restore!
+        forbid_provider_calls!
+        raise SetupError, PENDING
       end
 
       private
+
+      def restore
+        Stubs.clear!
+        State.restore!
+      end
 
       # The adapter for every request: the default, and the one a step names with adapter:.
       def route_all_to(adapter)
