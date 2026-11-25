@@ -130,8 +130,11 @@ Flag any change that breaks one of these; they are behavior contracts, not style
   carry them. An adapter that doesn't declare `images?` is never sent content parts.
 - **Only named context leaves the process.** The LLM sees method arguments, `squish_context` values, a
   `squish!` call's `context:`, and source the developer explicitly passes to `append_to_purpose` — never
-  instance variables wholesale. Exceptions in context are sent as class and message only. Model-generated output goes
-  to a provider in two places. Escalating to a new step forwards the previous step's rejected output (capped at
+  instance variables wholesale. Exceptions in context are sent as class and message only. An object that isn't plain
+  data (not a JSON primitive, `Time`/`Date`, container, `Struct`/`Data`/`OpenStruct`, `Image`, or exception) raises
+  `ConfigurationError` unless it defines `to_squishling`, so `as_json`/`to_json` can't send a model's every attribute.
+  Model-generated output goes to a provider in two places. Escalating to a new step forwards the previous step's
+  rejected output (capped at
   `Invoker::MAX_FORWARDED_CHARS`) to that step's provider (and adapter), which may differ; a step can opt out with
   `forward_rejected: false`. A judged harness sends the judge's provider the purpose, the call's full input, and both
   candidate outputs, uncapped and with no opt-out, so a judge on another provider sees the input too (see
@@ -197,7 +200,8 @@ a message, and the built-in `Adapters::RubyLLM` and `Adapters::OpenAICompatible`
 `judge_instructions:`)/`append_to_purpose:`/`squawk:`/`squawk_on:` options — `purpose`, `append_to_purpose`,
 `output_schema`, `squish_when`, `squish_context`, `squish` (including `validate:`/`cache:`/`harness:`/`squawk:`/
 `squawk_on:`),
-`squish_validate`, `squish_fallback`, `result`/`squishling_result`, `squish!` (including
+`squish_validate`, `squish_fallback`, `result`/`squishling_result`, the `to_squishling` hook an argument's class may
+define, `squish!` (including
 `model:`/`escalation:`/`cache:`/`harness:`), and the `max_total_output_tokens:`/`max_total_input_tokens:` options of
 `squishling`, `squish`, and `squish!`), `Squishling::Configuration` options (including `adapters`, `default_harness`,
 `default_cache`, `budget_counts_cache_reads`,

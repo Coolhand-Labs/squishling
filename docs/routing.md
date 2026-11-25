@@ -236,9 +236,20 @@ Arguments and context are converted to JSON before they are sent. A `Struct`, `D
 object of its members (its `to_h`, which must return a Hash, is the hook: a `to_json` on these types is not consulted,
 and the class name is not sent), a `Set` as an array, and Hashes and Arrays are walked
 recursively. An exception goes as its class and message. A value that contains itself raises a `ConfigurationError`.
-All members are sent, so pass a Hash or define `to_h` to leave a field out. Any other object goes as the loaded JSON
-library writes it (plain `JSON.generate` sends a `Range`, a `Time`, or a plain object as its `to_s`), so pass a Hash,
-or an object whose `to_json` sends what you mean, when that text isn't what the model should see.
+All members are sent, so pass a Hash or define `to_h` to leave a field out.
+
+`nil`, booleans, Strings, Symbols, numbers, `Time`, and `Date` go as they are. Any other object (a `Range`, a
+`Pathname`, a plain object, an ActiveRecord model) raises a `ConfigurationError` that names its class, before any
+request: serializing it with `as_json` or `to_json` would send every attribute, and an easy mistake would leak them.
+Pass a Hash instead, or define `to_squishling` on the class to return what the model should see; its return value (a
+Hash, a Struct, or anything else listed here) is converted the same way. `to_squishling` is for these other objects: a
+`Struct`, `Data`, `OpenStruct`, or Hash subclass is sent as its members, so use `to_h` to shape one.
+
+```ruby
+class Receipt
+  def to_squishling = { total: total, currency: currency } # leaves out customer_email
+end
+```
 
 `squish_context` names are read from a method of that name if there is one, otherwise from the instance
 variable. Only context you name is sent. Instance variables are never dumped wholesale, so API clients,
