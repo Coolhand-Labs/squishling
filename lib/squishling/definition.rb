@@ -10,11 +10,12 @@ module Squishling
     # One attempt on RubyLLM's default model, when no level declares a model.
     DEFAULT_STEP = { model: nil, attempts: 1, forward_rejected: true }.freeze
 
-    attr_reader :klass, :name, :call_context, :handed_off
+    # apprentice_run is true for the definition an apprentice's shadow run uses (see #for_apprentice).
+    attr_reader :klass, :name, :call_context, :handed_off, :apprentice_run
 
     def initialize(klass:, name:, purpose: nil, append_to_purpose: nil, output_schema: nil, model: nil,
       provider: nil, params: nil, cache: nil, harness: nil, predicate: nil, fallback: nil, validator: nil,
-      squawk: nil, squawk_on: nil, budget: nil, call_context: {}, handed_off: false)
+      squawk: nil, squawk_on: nil, budget: nil, apprentice: nil, call_context: {}, handed_off: false)
       @klass = klass
       @name = name
       @purpose = purpose
@@ -31,8 +32,10 @@ module Squishling
       @squawk = squawk
       @squawk_on = squawk_on
       @budget = budget || {}
+      @apprentice = apprentice
       @call_context = call_context
       @handed_off = handed_off
+      @apprentice_run = false
     end
 
     # This definition with one call's overrides on top. The output schema, predicate, fallback, and validator
@@ -63,6 +66,12 @@ module Squishling
         call_context: @call_context.merge((context || {}).transform_keys(&:to_sym)),
         handed_off: true # only squish! builds a definition this way; it is not part of a declared one
       )
+    end
+
+    # This definition for an apprentice's shadow run of a call: the same settings, its requests marked as the
+    # apprentice's (see Observer::Call#apprentice).
+    def for_apprentice
+      dup.tap { |copy| copy.instance_variable_set(:@apprentice_run, true) }
     end
 
     def label
@@ -177,6 +186,17 @@ module Squishling
 
     def context_names
       klass.squishling_context_names
+    end
+
+    # The apprentice settings (see Apprentice) the method runs with, or nil when apprentice mode is off for it: the
+    # method's, merged over the class's.
+    def apprentice
+      Apprentice.resolve(klass.squishling_apprentice, @apprentice)
+    end
+
+    # Whether the method itself (not its class) turns apprentice mode on.
+    def apprentice_declared?
+      !(@apprentice.nil? || @apprentice == false)
     end
 
     # The squish_when predicate: the method's, else the class's.

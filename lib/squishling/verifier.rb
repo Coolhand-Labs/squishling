@@ -7,7 +7,7 @@ module Squishling
   class Verifier
     # Checks one squished method's Definition. Each check returns messages, or raises what the call would.
     class MethodCheck
-      CHECKS = %i[schema declarations adapters harness callables].freeze
+      CHECKS = %i[schema declarations adapters harness callables apprentice].freeze
 
       def initialize(definition)
         @definition = definition
@@ -92,12 +92,36 @@ module Squishling
           [step[:include_when], "escalation step #{step[:model].inspect} include_when:"] if step[:include_when]
         end
         gates << [@definition.predicate, "squish_when"] if @definition.predicate
+        gates << [shadowed_apprentice[:when], "apprentice_mode when:"] if shadowed_apprentice&.dig(:when)
         gates.flat_map { |callable, what| KeywordCheck.messages(callable, names, open).map { "#{what} #{_1}" } }
+      end
+
+      # Apprentice mode shadows the Ruby implementation, so a method that declares it needs one. compare: gets the two
+      # results, then the inputs as keywords.
+      def apprentice
+        settings = shadowed_apprentice
+        return [] unless settings
+
+        compare = settings[:compare]
+        messages = compare ? KeywordCheck.compare_messages(compare, *@definition.input_names) : []
+        return messages if @definition.implemented?
+
+        ["apprentice_mode: has no Ruby implementation to run alongside the LLM", *messages]
+      end
+
+      # The apprentice settings of a method that can be shadowed, or nil. Declared on a class, they apply only to the
+      # methods with a Ruby implementation, so an LLM-only method isn't checked against them; declared on a method,
+      # they always apply (and the method must have one).
+      def shadowed_apprentice
+        settings = @definition.apprentice
+        settings if settings && (@definition.apprentice_declared? || @definition.implemented?)
       end
     end
 
     # Whether a Proc called as instance_exec(**inputs, &proc) accepts the inputs.
     module KeywordCheck
+      POSITIONAL_SLOTS = %i[req opt].freeze
+
       module_function
 
       # Messages for how the proc can't be called with the inputs. open: any keyword may be an input (the method
@@ -141,6 +165,39 @@ module Squishling
         return unless required > given
 
         "takes #{required} positional argument(s), but is called with keywords only"
+      end
+
+      # For an apprentice's compare:, a Proc called as instance_exec(ruby, llm, **inputs, &proc).
+      def compare_messages(callable, inputs, open)
+        parameters = callable.parameters
+        messages = compare_positionals(callable, parameters.map(&:first), inputs, open)
+        unless open
+          messages += [missing_keywords(parameters, inputs), unaccepted_keywords(callable, parameters, inputs)].compact
+        end
+        messages.map { |message| "apprentice_mode compare: #{message}" }
+      end
+
+      # A compare: takes the two results positionally, then the inputs as keywords. A proc, or a lambda that names no
+      # keywords, gets the inputs (when the method has some) as one more positional Hash.
+      def compare_positionals(callable, types, inputs, open)
+        named = types.intersect?(%i[key keyreq keyrest])
+        hash = named || open || inputs.empty? ? 0 : 1
+        required = types.count(:req)
+        if required > 2 + hash
+          called = hash == 1 ? "two results and the inputs" : "two results"
+          return ["takes #{required} positional arguments, but is called with #{called}"]
+        end
+
+        callable.lambda? ? compare_slots(types, named, open || inputs.any?) : []
+      end
+
+      # A lambda must take both results, and the inputs either as keywords or (naming none) as a Hash.
+      def compare_slots(types, named, keywords)
+        slots = types.include?(:rest) ? 3 : types.count { |type| POSITIONAL_SLOTS.include?(type) }
+        return ["doesn't take the two results (the Ruby result and the LLM's) as positional arguments"] if slots < 2
+        return ["doesn't take the method's inputs as keywords (add **)"] if keywords && !named && slots < 3
+
+        []
       end
 
       def strict?(callable, types)

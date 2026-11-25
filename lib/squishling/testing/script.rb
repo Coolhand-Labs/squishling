@@ -6,8 +6,9 @@ module Squishling
     # rule is #once. Build them through Script (the block Testing.install yields).
     class Rule
       # What a rule answers. nil means any. kind is :chat (Adapter#complete) or :judgment (Adapter#judge); role is
-      # nil (an escalation attempt, or any role when the rule names none), :sample, or :judge.
-      Selector = Data.define(:kind, :role, :sample, :model, :provider, :adapter, :attempt)
+      # nil (an escalation attempt, or any role when the rule names none), :sample, or :judge. apprentice is true for a
+      # rule that answers only an apprentice's shadow run (its escalation attempts), nil for any request.
+      Selector = Data.define(:kind, :role, :sample, :model, :provider, :adapter, :attempt, :apprentice)
 
       # Rule#take when nothing is left to answer with.
       EXHAUSTED = Object.new.freeze
@@ -41,17 +42,20 @@ module Squishling
       end
 
       def matches?(kind, call)
+        return false if selector.apprentice && !(call[:apprentice] && call[:role].nil?)
+
         selector.kind == kind && fits?(selector.role, call[:role]) && fits?(selector.sample, call[:sample]) &&
           fits?(selector.model, call[:model]) && fits?(selector.provider, call[:provider]) &&
           fits?(selector.adapter, call[:adapter]) && fits?(selector.attempt, call[:attempt])
       end
 
-      # How narrowly the rule aims, lowest first: rules for a sample or the judge, then those naming the most of a
-      # model, a provider, an adapter, and an attempt, then the rest.
+      # How narrowly the rule aims, lowest first: rules for a sample or the judge, then apprentice rules, then those
+      # naming the most of a model, a provider, an adapter, and an attempt, then the rest.
       def specificity
         return 0 if selector.sample || selector.role
 
-        5 - [selector.model, selector.provider, selector.adapter, selector.attempt].count { |named| !named.nil? }
+        named = [selector.model, selector.provider, selector.adapter, selector.attempt].count { |part| !part.nil? }
+        (selector.apprentice ? 0 : 5) + 5 - named
       end
 
       # The next answer, or EXHAUSTED. Called with the script's lock held.
@@ -140,8 +144,8 @@ module Squishling
       end
     end
 
-    # What a test says the model will do. Rules are matched most specific first (a sample or the judge, then a
-    # named model, then step(:any)), and by declaration order within that.
+    # What a test says the model will do. Rules are matched most specific first (a sample or the judge, then
+    # apprentice rules, then a named model, then step(:any)), and by declaration order within that.
     #
     #   llm.step("flash").reply({ score: 99 }, { score: 5 })   # garbage, then an answer
     #   llm.step("pro").fail(:rate_limit)
@@ -157,6 +161,13 @@ module Squishling
       # (counting from 1).
       def step(model = :any, provider: nil, adapter: nil, attempt: nil)
         add(:chat, model: model == :any ? nil : model, provider:, adapter:, attempt:)
+      end
+
+      # The escalation attempts of an apprentice's shadow run (see docs/apprentice.md), narrowed like #step, before
+      # any step rule. Without one, a step rule answers them like any other request. A shadow run's samples and judge
+      # are answered by #sample and #judge.
+      def apprentice(model = :any, provider: nil, adapter: nil, attempt: nil)
+        add(:chat, model: model == :any ? nil : model, provider:, adapter:, attempt:, apprentice: true)
       end
 
       # A harness sample's requests ("a", "b", ...). Each sample has its own queue, so the order the sample threads
@@ -182,8 +193,8 @@ module Squishling
 
       private
 
-      def add(kind, role: nil, sample: nil, model: nil, provider: nil, adapter: nil, attempt: nil)
-        selector = Rule::Selector.new(kind:, role:, sample:, model:, provider:, adapter:, attempt:)
+      def add(kind, role: nil, sample: nil, model: nil, provider: nil, adapter: nil, attempt: nil, apprentice: nil)
+        selector = Rule::Selector.new(kind:, role:, sample:, model:, provider:, adapter:, attempt:, apprentice:)
         Rule.new(selector).tap { |rule| @rules << rule }
       end
     end

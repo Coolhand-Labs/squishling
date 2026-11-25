@@ -55,7 +55,8 @@ module Squishling
         response: nil, role: nil, sample: nil, stopped: nil)
         {
           label:, attempt:, attempts:, final:, repeated:, model:, provider:, params:, input:,
-          usage: response&.usage, finish_reason: response&.finish_reason, role:, sample:, stopped:
+          usage: response&.usage, finish_reason: response&.finish_reason, role:, sample:, stopped:,
+          call_id:, apprentice: @definition.apprentice_run
         }
       end
     end

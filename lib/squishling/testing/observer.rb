@@ -26,6 +26,11 @@ module Squishling
       ensure
         Thread.current[KEY] = outer
       end
+
+      # An apprentice's review goes on to the app's observer, when it takes them (see Squishling::Observer.review).
+      def apprentice(review)
+        @previous.apprentice(review) if @previous.respond_to?(:apprentice)
+      end
     end
   end
 end

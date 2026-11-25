@@ -93,14 +93,27 @@ RSpec.describe Squishling::Observer do
       expect(klass.call(text: "x").priority).to eq("high")
 
       expect(events.map(&:first)).to eq(%i[before after before after])
+      call_id = calls.first.call_id
       expect(calls).to eq([
         Squishling::Observer::Call.new(label: "TicketTriage#call", purpose: "Triage the ticket.",
           harness: :escalation, handed_off: false, role: nil, sample: nil, attempt: 1, attempts: 2,
-          model: "claude-haiku-4-5", provider: nil, request: :chat),
+          model: "claude-haiku-4-5", provider: nil, request: :chat, call_id:, request_id: "#{call_id}.1"),
         Squishling::Observer::Call.new(label: "TicketTriage#call", purpose: "Triage the ticket.",
           harness: :escalation, handed_off: false, role: nil, sample: nil, attempt: 2, attempts: 2,
-          model: "claude-sonnet-5-5", provider: nil, request: :chat)
+          model: "claude-sonnet-5-5", provider: nil, request: :chat, call_id:, request_id: "#{call_id}.2")
       ])
+    end
+
+    it "names each call, and each of its requests, so a later report can find the request" do
+      stub_llm(high, high)
+      klass.call(text: "x")
+      klass.call(text: "y")
+
+      first, second = calls.map(&:call_id)
+      expect(first).to match(/\A\h{8}-\h{4}-\h{4}-\h{4}-\h{12}\z/)
+      expect(second).not_to eq(first)
+      expect(calls.map(&:request_id)).to eq(["#{first}.1", "#{second}.1"])
+      expect(calls.map(&:apprentice)).to eq([false, false])
     end
 
     it "reports a declared provider, and counts repeated attempts on one model" do

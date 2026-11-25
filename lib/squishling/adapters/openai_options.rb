@@ -69,9 +69,7 @@ module Squishling
       end
 
       def flag(name, value)
-        return value if [true, false].include?(value)
-
-        raise ConfigurationError, "adapter :openai_compatible #{name} must be true or false, got #{value.inspect}"
+        Configuration.boolean!("adapter :openai_compatible #{name}", value)
       end
 
       # Defaults to the time the three timeouts allow together: connecting, writing the request, one read.

@@ -9,13 +9,22 @@ module Squishling
     # chat's first message.
     Conversation = Struct.new(:step, :instructions, :schema, :messages, :images)
 
-    # purpose, harness (the harness type), and handed_off (squish! sent the call here) are only told to the observer.
-    # budget (see Budget) caps the tokens the requests of this client may use between them.
-    def initialize(label, purpose:, harness:, handed_off:, budget: {})
+    # Where a response came from: the request that got it (see Observer::Call#request_id) and the model that answered.
+    Origin = Data.define(:request_id, :model)
+
+    # purpose, harness (the harness type), handed_off (squish! sent the call here), and apprentice (an apprentice's
+    # shadow run) are only told to the observer. call_id names the call; each request gets its own id under it (see
+    # Observer::Call). budget (see Budget) caps the tokens the requests of this client may use between them.
+    def initialize(label, purpose:, harness:, handed_off:, budget: {}, call_id: nil, apprentice: false)
       @label = label
       @purpose = purpose
       @harness = harness
       @handed_off = handed_off
+      @call_id = call_id
+      @apprentice = apprentice
+      @requests = 0
+      @request_ids = {}.compare_by_identity
+      @requests_lock = Mutex.new
       @config = Squishling.config
       @adapters = {}
       @adapters_lock = Mutex.new
@@ -74,7 +83,15 @@ module Squishling
     # reask is whether this message is a retry in the same chat (see ModelPath::Step#request_params).
     def ask(chat, message, step, attempt:, attempts:, role: nil, sample: nil, reask: false)
       call = call_info(step, :chat, role:, sample:, attempt:, attempts:)
-      Observer.around(call) { complete(chat, message, step, reask) }
+      response = Observer.around(call) { complete(chat, message, step, reask) }
+      @requests_lock.synchronize { @request_ids[response] = call.request_id }
+      response
+    end
+
+    # The Origin of a response #ask returned.
+    def origin_of(response)
+      request_id = @requests_lock.synchronize { @request_ids[response] }
+      Origin.new(request_id:, model: Observer.usage(response).model)
     end
 
     # Whether the step's adapter can make System One judgments (judges with type: :judgment).
@@ -162,7 +179,15 @@ module Squishling
 
     def call_info(step, request, attempt:, attempts:, role: nil, sample: nil)
       Observer::Call.new(label: @label, purpose: @purpose, harness: @harness, handed_off: @handed_off, role:, sample:,
-        attempt:, attempts:, model: step.model, provider: step.provider, adapter: step.adapter, request:)
+        attempt:, attempts:, model: step.model, provider: step.provider, adapter: step.adapter, request:,
+        call_id: @call_id, request_id: next_request_id, apprentice: @apprentice)
+    end
+
+    # "<call_id>.<n>", numbered in the order requests start (samples start theirs on worker threads).
+    def next_request_id
+      return unless @call_id
+
+      "#{@call_id}.#{@requests_lock.synchronize { @requests += 1 }}"
     end
   end
 end
