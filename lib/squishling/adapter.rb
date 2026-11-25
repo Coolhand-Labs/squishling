@@ -8,10 +8,11 @@ module Squishling
   # and registering it (Squishling.register_adapter) or assigning an instance to config.adapter. See docs/adapters.md.
   module Adapter
     # One completion to make. messages holds the conversation so far as { role: :user | :assistant, content: String }
-    # Hashes, ending with the user message to answer; instructions is the system prompt. When the call has images
-    # (see Image), a chat's first user message has an Array of content parts instead of a String: { type: :text,
-    # text: String } and then { type: :image, image: Squishling::Image } per image. Only adapters whose #images? is
-    # true are sent them. schema is the strict structured-output payload
+    # Hashes, ending with the user message to answer; instructions is the system prompt. When the call has files
+    # (see Image and Document), a chat's first user message has an Array of content parts instead of a String:
+    # { type: :text, text: String } and then { type: :image, image: Squishling::Image } per image and
+    # { type: :file, file: Squishling::Document } per document. An adapter is sent only the media types its
+    # #media_types lists (images, when it only has #images?). schema is the strict structured-output payload
     # ({ "name", "description", "schema", "strict" => true }). params is the resolved generation params: the
     # portable :temperature, :max_output_tokens, and :thinking, plus any provider-specific keys
     # (see Params). label ("Class#method") prefixes the adapter's error messages. model and provider are the step's
@@ -122,9 +123,20 @@ module Squishling
       end
 
       # Whether #complete takes images: a message whose content is an Array of parts (see Request). A call with images
-      # through an adapter that doesn't is a ConfigurationError, made before any request.
+      # through an adapter that doesn't is a ConfigurationError, made before any request. Whether it takes them for a
+      # given model, and which types, is #media_types.
       def images?
         false
+      end
+
+      # The media types #complete takes in content parts for this step (its model): any of Image::MEDIA_TYPES (image
+      # parts) and Document::MEDIA_TYPES (file parts, application/pdf). A file of another type is a
+      # ConfigurationError, made before any request. The default is the four image types when #images? is true and none
+      # otherwise, so an adapter takes documents only by saying so. An adapter that knows what a model can read
+      # overrides it (RubyLLM's does); one that can't leaves the provider to refuse, which the adapter reports as the
+      # error its status maps to (see #http_failure).
+      def media_types(_step = nil)
+        images? ? Image::MEDIA_TYPES.keys : []
       end
 
       # A System One judgment: input (a Hash) and questions (a Hash of name => question), with the step's model and

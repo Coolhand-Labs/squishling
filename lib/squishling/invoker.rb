@@ -12,15 +12,28 @@ module Squishling
       Images are attached to this message. Each {"attached_image": N} value in the input stands for the Nth image.
     NOTE
 
+    DOCUMENT_NOTE = <<~NOTE
+      Documents are attached to this message. Each {"attached_document": N} value in the input stands for the Nth document.
+    NOTE
+
     # The most of a rejected output that is forwarded to the next escalation step.
     MAX_FORWARDED_CHARS = 4_000
 
-    # One escalation's request: the system prompt, the output Schema, the first user message, and the Images that go
-    # with it. The judge's role (:judge) skips squish_validate and names the judge in errors and logs.
-    Prompt = Data.define(:instructions, :schema, :input, :role, :images) do
-      def initialize(instructions:, schema:, input:, role:, images: [])
+    # One escalation's request: the system prompt, the output Schema, the first user message, and the files (Images
+    # and Documents) that go with it. The judge's role (:judge) skips squish_validate and names the judge in errors
+    # and logs.
+    Prompt = Data.define(:instructions, :schema, :input, :role, :files) do
+      def initialize(instructions:, schema:, input:, role:, files: [])
         super
       end
+
+      def images = files.grep(Image)
+      def documents = files.grep(Document)
+    end
+
+    # What the system prompt says about the placeholders of the files a call sends.
+    def self.file_notes(files)
+      "#{IMAGE_NOTE if files.any?(Image)}#{DOCUMENT_NOTE if files.any?(Document)}"
     end
 
     def initialize(definition, receiver, inputs, call_id: nil)
@@ -58,10 +71,9 @@ module Squishling
       raise ConfigurationError, "#{@definition.label} has no purpose" if purpose.nil? || purpose.empty?
       raise ConfigurationError, "#{@definition.label} has no output_schema" unless schema
 
-      @images = []
-      body = payload
-      instructions = "#{purpose}\n\n#{INPUT_NOTE}#{IMAGE_NOTE if @images.any?}"
-      prompt = Prompt.new(instructions:, schema:, input: JSON.generate(body), role: nil, images: @images.dup.freeze)
+      body, files = payload
+      instructions = "#{purpose}\n\n#{INPUT_NOTE}#{self.class.file_notes(files)}"
+      prompt = Prompt.new(instructions:, schema:, input: JSON.generate(body), role: nil, files: files.freeze)
       Built.new(prompt:, payload: body, purpose:)
     end
 
@@ -93,12 +105,13 @@ module Squishling
                                 "its run (escalate, samples, or a judge's pick), got #{value.class}"
     end
 
-    # Only the arguments, the declared squish_context names, and a squish! call's context leave the process.
+    # Only the arguments, the declared squish_context names, and a squish! call's context leave the process, once
+    # the sanitizers have had them. Returns the JSON body and the files it sends.
     def payload
-      body = { arguments: Payload.jsonify(@inputs, @definition.label, @images) }
       context = @definition.context_names.to_h { |name| [name, context_value(name)] }.merge(@definition.call_context)
-      body[:context] = Payload.jsonify(context, @definition.label, @images) if context.any?
-      body
+      tree = { arguments: @inputs }
+      tree[:context] = context if context.any?
+      Payload.build(tree, @definition.label, sanitizers: @definition.sanitizers, receiver: @receiver)
     end
 
     def context_value(name)

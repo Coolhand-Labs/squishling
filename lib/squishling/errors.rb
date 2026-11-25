@@ -36,6 +36,29 @@ module Squishling
     end
   end
 
+  # An input the call would send was refused before any request was made: the sanitizer (squish_sanitize) rejected it
+  # (reject.call), a file is over max_files or max_file_bytes, empty or unreadable, or its type isn't one an adapter
+  # can send (a fax's TIFF nobody converted). Never retried or escalated, and not passed to squish_fallback: the
+  # input is what's wrong, so the caller decides what to do about it. rejections holds every problem found, each with
+  # the path of the input in the call ("arguments.pages[1]", nil when it isn't one input's), never the value, the
+  # bytes, a file name, or a URL (a rejection message you wrote with reject.call is your own: don't put values in it).
+  class InputRejectedError < Error
+    Rejection = Data.define(:path, :message) do
+      def to_s = path ? "#{path}: #{message}" : message
+    end
+
+    attr_reader :rejections
+
+    def initialize(rejections, label: nil)
+      @rejections = rejections.freeze
+      super("#{"#{label}: " if label}#{@rejections.join('; ')}")
+    end
+
+    def self.single(message, label: nil, path: nil)
+      new([Rejection.new(path, message)], label:)
+    end
+  end
+
   # Output that didn't match the schema (or a squish_validate check): from the LLM after every attempt in the
   # escalation, or from the deterministic path.
   class InvalidOutputError < Error

@@ -15,7 +15,8 @@ module Squishling
 
     def initialize(klass:, name:, purpose: nil, append_to_purpose: nil, output_schema: nil, model: nil,
       provider: nil, params: nil, cache: nil, harness: nil, predicate: nil, fallback: nil, validator: nil,
-      squawk: nil, squawk_on: nil, budget: nil, apprentice: nil, call_id: nil, call_context: {}, handed_off: false)
+      sanitizer: nil, squawk: nil, squawk_on: nil, budget: nil, apprentice: nil, call_id: nil, call_context: {},
+      handed_off: false)
       @klass = klass
       @name = name
       @purpose = purpose
@@ -29,6 +30,7 @@ module Squishling
       @predicate = predicate
       @fallback = fallback
       @validator = validator
+      @sanitizer = sanitizer
       @squawk = squawk
       @squawk_on = squawk_on
       @budget = budget || {}
@@ -56,7 +58,7 @@ module Squishling
       call_budget = Budget.build("#{label} squish!", output: max_total_output_tokens, input: max_total_input_tokens)
       self.class.new(
         klass:, name:, output_schema: @output_schema, predicate: @predicate, fallback: @fallback,
-        validator: @validator, squawk: @squawk, squawk_on: @squawk_on, call_id: @call_id,
+        validator: @validator, sanitizer: @sanitizer, squawk: @squawk, squawk_on: @squawk_on, call_id: @call_id,
         purpose: purpose || @purpose,
         append_to_purpose: [*@append_to_purpose, *appended],
         model: call_path || @model, provider: call_path ? provider : @provider,
@@ -75,9 +77,7 @@ module Squishling
       dup.tap { |copy| copy.instance_variable_set(:@apprentice_run, true) }
     end
 
-    def label
-      "#{klass}##{name}"
-    end
+    def label = "#{klass}##{name}"
 
     # The id of one call (see CallId): the one the caller gave (supplied, from Squishling.with_call_id), else what the
     # method's (or its class's) call_id: declaration gives, else nil, for a generated UUID.
@@ -177,6 +177,10 @@ module Squishling
     def validator
       @validator || klass.squishling_validator
     end
+
+    # The sanitizers a call runs, in order: the configuration's, each class in the chain (see
+    # ClassMethods#squish_sanitize), then the method's. All of them run.
+    def sanitizers = [*Squishling.config.sanitizers, *klass.squishling_sanitizers, @sanitizer].compact
 
     # The squish_fallback handler: the method's, else the class's (nil when there is none).
     def fallback

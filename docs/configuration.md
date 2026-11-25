@@ -43,6 +43,8 @@ end
 | `apprentice_runner` | `:inline` | Where an [apprentice's](apprentice.md#running-it-in-the-background) shadow run happens: `:inline` (on the caller's thread, after the Ruby result), `:thread` (the built-in background pool), a `Squishling::Apprentice::ThreadRunner`, or any callable that takes the job and calls it. |
 | `apprentice_enabled` | `true` | Set `false` to stop every [apprentice](apprentice.md#turning-it-off) shadow run, whatever the classes declare (a kill switch). |
 | `default_harness` | `nil` (`:escalation`) | How every squishling class that doesn't declare its own uses its escalation: `:escalation`, `:squishsum`, `:judged_squishsum`, a [registered custom harness](harnesses.md#custom-harnesses), or a Hash with `type:` and options. See [Harnesses](harnesses.md). |
+| `sanitizer` | `[]` | A callable, or a list of them, run over everything every squished call sends, before any class's or method's own: filter, redact, or convert inputs. Keywords `value:`, `path:`, `reject:`. None can be switched off. See [Sanitizing inputs](inputs.md#sanitizing-inputs). |
+| `max_files`, `max_file_bytes` | `20`, `20_000_000` | The most files one call may send, and the most bytes in one; `nil` lifts a limit. A call over one raises `InputRejectedError` before any request. See [Limits](inputs.md#limits). |
 | `logger` | `nil` | Any `Logger`. Debug lines when a call routes to the LLM, warnings on each escalation and when a fallback is used. Never includes the raw model response; see [what ends up in errors and logs](failures.md#what-ends-up-in-errors-and-logs). |
 
 Transport-level retries (rate limits, 5xx, timeouts) belong to the adapter: RubyLLM's own

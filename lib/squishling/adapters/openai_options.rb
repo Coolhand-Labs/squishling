@@ -32,6 +32,23 @@ module Squishling
         raise ConfigurationError, INVALID_BASE_URL
       end
 
+      # The media types the server takes (some of Image::MEDIA_TYPES and Document::MEDIA_TYPES): the given list, or
+      # every image type, and PDF too for OpenAI's own endpoint (other servers rarely read them, and would answer a
+      # PDF with an error).
+      def media_types(types, endpoint)
+        all = Image::MEDIA_TYPES.keys + Document::MEDIA_TYPES.keys
+        if types.nil?
+          return [*Image::MEDIA_TYPES.keys,
+                  *(Document::MEDIA_TYPES.keys if endpoint.host == "api.openai.com")].freeze
+        end
+
+        types = Array(types).map(&:to_s)
+        return types.freeze if types.any? && (types - all).empty?
+
+        raise ConfigurationError, "adapter :openai_compatible media_types: must be some of #{all.join(', ')}, " \
+                                  "got #{types.inspect}"
+      end
+
       def headers(headers)
         unless headers.is_a?(Hash) && headers.all? { |name, value| name.is_a?(String) && value.is_a?(String) }
           raise ConfigurationError, "adapter :openai_compatible headers must be a Hash of String names to String values"

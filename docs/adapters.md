@@ -138,6 +138,7 @@ end
 | `max_response_bytes` | `8388608` (8 MiB) | The most a response body may hold, an error body included, checked against `Content-Length` and the bytes actually read. Over it, a successful response fails with an `LLMError` that isn't retried by the adapter; a failure status drops the body and is classified by its status. Raise it only if you expect very large completions. |
 | `max_retries` | `2` | Timeouts, connection and protocol failures, HTTP 408, 429, and 5xx are retried this many times with exponential backoff (honoring `Retry-After`, up to 30 seconds) before they surface as an `LLMError`. A timed-out request may still have been processed by the server, so a retry can be billed twice; set `max_retries: 0` if that matters more than resilience. |
 | `max_tokens_param` | `:max_completion_tokens` | The body key for `max_output_tokens`. Use `:max_tokens` for servers that don't know the newer name. |
+| `media_types` | the four image types, plus `application/pdf` for `api.openai.com` | The [file types](inputs.md) the server takes, some of `image/png`, `image/jpeg`, `image/gif`, `image/webp`, `application/pdf`. A call with a file of another type is refused before any request; an empty list or an unknown type raises `ConfigurationError`. |
 | `structured_output` | `:json_schema` | `:json_schema` asks for strict structured output. For servers without it use `:json_object`, or `:none`: the schema then goes into the system prompt in words. Squishling validates every answer itself either way. |
 
 **Credentials stay out of serializers.** The adapter holds the `api_key` and the `headers` (which may carry an
@@ -234,7 +235,7 @@ Squishling.register_adapter(:acme, AcmeAdapter)
 | `model`, `provider` | The escalation step's, or `nil` when it names none (use your own default). What `provider:` means is up to you. |
 | `adapter` | The name your adapter was configured under in `config.adapters`, or `nil` when it is the default adapter. |
 | `instructions` | The system prompt. |
-| `messages` | The conversation so far, ending with the user message to answer. After invalid output, Squishling appends your previous answer and a retry message; you never keep history. Each `content` is a String, except a chat's first user message in a call with [images](#images). |
+| `messages` | The conversation so far, ending with the user message to answer. After invalid output, Squishling appends your previous answer and a retry message; you never keep history. Each `content` is a String, except a chat's first user message in a call with [images](#images-and-documents). |
 | `schema` | `{ "name", "description", "schema", "strict" => true }`: the strict structured-output payload, without the conditional keywords providers can't take. |
 | `params` | The resolved [generation params](configuration.md#generation-params): the portable `:temperature`, `:max_output_tokens`, `:thinking`, plus provider-specific keys. Squishling has already rejected the keys it owns. Translate the portable ones for your provider; pass the rest through if it takes them. |
 | `cache` | The [prompt caching](configuration.md#prompt-caching) to ask for: `false` (none), or a Hash of options (`{}` for the provider's default, `{ ttl: "1h" }`). Ignore it if your provider has no prompt caching or caches on its own. |
@@ -297,14 +298,24 @@ exception propagates unwrapped and is never retried, so map your transport's err
   worker threads. `capture_context` runs on the caller's thread and returns whatever your tracing needs; `with_context`
   re-establishes it around each worker's request. The RubyLLM adapter uses this for its instrumentation workflow.
 
-### Images
+### Images and documents
 
-A call can carry [images](images.md). To take them, return `true` from `images?`; then a chat's first user message has
-an Array of content parts instead of a String: `{ type: :text, text: String }`, then `{ type: :image, image:
-Squishling::Image }` per image. An `Image` gives you `data` (the bytes) with `media_type`, `data_uri`, and
-`filename`, or, for `url?` images, the `url` for the provider to fetch, plus the `detail` asked for (`:low`, `:high`,
-or `nil`). Without `images?`, a call with images raises `ConfigurationError` before any request, so adapters that
-predate images keep getting Strings.
+A call can carry [images](images.md) and PDFs ([inputs](inputs.md)). A chat's first user message then has an Array of
+content parts instead of a String: `{ type: :text, text: String }`, then `{ type: :image, image: Squishling::Image }`
+per image and `{ type: :file, file: Squishling::Document }` per document. An `Image` gives you `data` (the bytes) with
+`media_type`, `data_uri`, and `filename`, or, for `url?` images, the `url` for the provider to fetch, plus the `detail`
+asked for (`:low`, `:high`, or `nil`). A `Document` gives you `data`, `media_type` (`application/pdf`), `data_uri`, and
+a generic `filename` ("document.pdf").
+
+`media_types(step)` says which types the adapter takes for a step's model: any of `Squishling::Image::MEDIA_TYPES` and
+`Squishling::Document::MEDIA_TYPES`. The default is the four image types when `images?` returns `true` and none
+otherwise, so an adapter that predates documents keeps getting images and Strings, and takes documents only by saying
+so. Override it when you know what a model can read: a call with a file of a type that isn't listed raises
+`ConfigurationError` before any request. The RubyLLM adapter refuses everything for a model RubyLLM's registry lists without image or PDF
+input, and otherwise takes images (when the registry lists image input) and PDFs (the registry is often behind on
+PDF input, so the provider decides), and the OpenAI-compatible adapter takes a `media_types:` option (PDFs are on by default only for
+OpenAI's own endpoint, since other servers rarely read them). Where an adapter can't tell, the provider's refusal comes
+back as the error its status maps to (`RequestRejectedError` for a 400), never retried.
 
 ### Thread safety
 

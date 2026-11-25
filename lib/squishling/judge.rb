@@ -43,15 +43,16 @@ module Squishling
 
     # judge: is a normalized judge step (see Harness::JudgedSquishsum) or nil for the escalation's next stage,
     # instructions: a String, a Proc evaluated against the receiver, or nil for the default prompt.
-    # images: the call's Images, which a chat judge is sent with the input; a :judgment judge can't take them.
+    # files: the call's Images and Documents, which a chat judge is sent with the input; a :judgment judge can't take
+    # them.
     def initialize(definition:, receiver:, client:, judge:, instructions:, path:, purpose:, payload:, escalate:,
-      log_failure:, guard:, budget_check:, harness_type:, images: [])
+      log_failure:, guard:, budget_check:, harness_type:, files: [])
       @definition = definition
       @receiver = receiver
       @client = client
       @judge = judge
       @instructions = instructions
-      @images = images
+      @files = files
       check!
       check_judgments!
       @guard = guard
@@ -62,7 +63,7 @@ module Squishling
       @escalate = escalate
       @log_failure = log_failure
       @steps = resolve_steps(path)
-      @client.check_adapters!(@steps, @images)
+      @client.check_adapters!(@steps, @files)
     end
 
     # The judge's first attempt, for logs and DisagreementError#models.
@@ -106,8 +107,9 @@ module Squishling
     def check_judgments!
       return unless judgment?
 
-      if @images.any?
-        raise ConfigurationError, "#{@definition.label}: judge type: :judgment can't see the call's images; use " \
+      if @files.any?
+        kind = @files.all?(Image) ? "images" : "files"
+        raise ConfigurationError, "#{@definition.label}: judge type: :judgment can't see the call's #{kind}; use " \
                                   "type: :chat"
       end
       return if @client.judgments?(judgment_steps(@judge).first)
@@ -150,8 +152,8 @@ module Squishling
     def chat(candidates)
       prompt = Invoker::Prompt.new(
         instructions: "#{judge_instructions}\n\nThe operation's purpose:\n<purpose>\n#{@purpose}\n" \
-                      "</purpose>\n\n#{INPUT_NOTE}#{Invoker::IMAGE_NOTE if @images.any?}",
-        schema: Schema.for(VERDICT_SCHEMA), input: JSON.generate(state(candidates)), role: :judge, images: @images
+                      "</purpose>\n\n#{INPUT_NOTE}#{Invoker.file_notes(@files)}",
+        schema: Schema.for(VERDICT_SCHEMA), input: JSON.generate(state(candidates)), role: :judge, files: @files
       )
       result = @escalate.call(@steps, prompt)
       Verdict.new(choice: result[:verdict].to_sym, reason: result[:reason], detail: nil)
