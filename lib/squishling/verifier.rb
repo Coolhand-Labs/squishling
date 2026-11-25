@@ -7,7 +7,7 @@ module Squishling
   class Verifier
     # Checks one squished method's Definition. Each check returns messages, or raises what the call would.
     class MethodCheck
-      CHECKS = %i[schema declarations adapters harness callables apprentice].freeze
+      CHECKS = %i[schema declarations adapters harness callables apprentice call_id].freeze
 
       def initialize(definition)
         @definition = definition
@@ -115,6 +115,21 @@ module Squishling
       def shadowed_apprentice
         settings = @definition.apprentice
         settings if settings && (@definition.apprentice_declared? || @definition.implemented?)
+      end
+
+      # A call_id: that names an input the method has, or a Proc that accepts the inputs as keywords.
+      def call_id
+        source = @definition.call_id_source
+        return [] unless source
+
+        names, open = @definition.input_names
+        if source.is_a?(Symbol)
+          return [] if open || names.include?(source)
+
+          return ["call_id: names #{source.inspect}, which is not an input of the method (inputs: #{names.join(', ')})"]
+        end
+
+        KeywordCheck.messages(source, names, open).map { |message| "call_id: #{message}" }
       end
     end
 

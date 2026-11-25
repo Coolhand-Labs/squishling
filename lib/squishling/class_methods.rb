@@ -35,9 +35,12 @@ module Squishling
     # apprentice_mode: returns the Ruby result and runs the LLM alongside it, to compare the two (see Apprentice); true,
     # or a Hash of when:, compare: and report:, and false turns off an inherited one:
     #   squishling apprentice_mode: { when: ->(**) { rand < 0.05 }, report: ->(match:, metadata:, **) { ... } }
+    # call_id: names an input whose value is each call's id (see Squishling.with_call_id, which wins for the call it
+    # names), or is a Proc that gets the inputs as keywords and returns it; false turns off an inherited one:
+    #   squishling call_id: :record_id
     def squishling(model: nil, escalation: nil, provider: nil, params: nil, cache: nil, harness: nil, purpose: nil,
       append_to_purpose: nil, output_schema: nil, squawk: nil, squawk_on: nil, max_total_output_tokens: nil,
-      max_total_input_tokens: nil, apprentice_mode: nil)
+      max_total_input_tokens: nil, apprentice_mode: nil, call_id: nil)
       path = ModelPath.declare(model, escalation, to_s)
       # A provider belongs to the model declared at the same level. Without a model here it would apply to
       # nothing (the model comes from the config or a parent class), so it is an error unless this class already
@@ -57,7 +60,13 @@ module Squishling
       declare_squawk(squawk, squawk_on)
       declare_budget(max_total_output_tokens, max_total_input_tokens)
       declare_apprentice(apprentice_mode)
+      declare_call_id(call_id)
       self
+    end
+
+    # The class's (or nearest ancestor's) call_id: declaration (see CallId), nil when none declared it.
+    def squishling_call_id
+      squishling_lookup(:@squishling_call_id)
     end
 
     # The class's (or nearest ancestor's) apprentice setting (see Apprentice), nil when none declared it.
@@ -183,13 +192,13 @@ module Squishling
     #                   validate: ->(result, **) { "team is required" if result.team.empty? },
     #                   harness: :squishsum, max_total_output_tokens: 25_000,
     #                   squawk: ->(output:, error:, **) { Tracer.record(output, error) },
-    #                   squawk_on: :retries, apprentice_mode: { report: ->(match:, **) { ... } } do
+    #                   squawk_on: :retries, apprentice_mode: { report: ->(match:, **) { ... } }, call_id: :ticket_id do
     #     string :priority
     #   end
     def squish(*names, purpose: nil, append_to_purpose: nil, output_schema: nil, model: nil, escalation: nil,
       provider: nil, params: nil, cache: nil, harness: nil, when: nil, fallback: nil, validate: nil,
       squawk: nil, squawk_on: nil, max_total_output_tokens: nil, max_total_input_tokens: nil, apprentice_mode: nil,
-      &schema_block)
+      call_id: nil, &schema_block)
       schema = schema_block ? Schematist::Schema.create(&schema_block) : output_schema
       model = ModelPath.declare(model, escalation, "#{self} squish")
       raise ConfigurationError, "#{self} squish: provider: needs a model: or escalation:" if provider && !model
@@ -204,9 +213,10 @@ module Squishling
       squawk_on = Squawk.validate_on(squawk_on, "#{self} squish")
       budget = Budget.build("#{self} squish", output: max_total_output_tokens, input: max_total_input_tokens)
       apprentice = Apprentice.normalize(apprentice_mode, "#{self} squish")
+      call_id = CallId.normalize_source(call_id, "#{self} squish")
       options = { purpose:, append_to_purpose:, output_schema: schema, model:, provider:, params:, cache:, harness:,
                   predicate: binding.local_variable_get(:when), fallback:, validator: validate, squawk:,
-                  squawk_on:, budget:, apprentice: }.compact
+                  squawk_on:, budget:, apprentice:, call_id: }.compact
 
       names.map(&:to_sym).each do |name|
         (@squishling_methods ||= {})[name] = options
@@ -251,6 +261,11 @@ module Squishling
     # nil leaves the level unset (so the parent's applies); false is stored, to turn an inherited one off.
     def declare_apprentice(apprentice)
       @squishling_apprentice = Apprentice.normalize(apprentice, to_s) unless apprentice.nil?
+    end
+
+    # nil leaves the level unset (so the parent's applies); false is stored, to turn an inherited one off.
+    def declare_call_id(call_id)
+      @squishling_call_id = CallId.normalize_source(call_id, to_s) unless call_id.nil?
     end
 
     # Adds the class's own token limits to those it declared before.

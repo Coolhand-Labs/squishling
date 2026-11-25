@@ -312,7 +312,8 @@ squish!(cache: false, escalation: ["claude-opus-5-5"])            # one hand-off
 ## Inheritance
 
 Subclasses inherit the model or escalation and its provider (as a pair), harness, generation params (merged key by key), prompt caching, token budgets (limit by limit), purpose, output schema,
-`squish_when` predicate, `squish_context` names, `squish_validate`, `squish_fallback`, [`apprentice_mode:`](apprentice.md), and every `squish` declaration. Overrides in a subclass, including
+`squish_when` predicate, `squish_context` names, `squish_validate`, `squish_fallback`, [`apprentice_mode:`](apprentice.md),
+[`call_id:`](observers.md#declaring-the-call-id), and every `squish` declaration. Overrides in a subclass, including
 overridden methods, are routed the same way.
 
 `append_to_purpose` sections are added to, not replaced: a subclass's sections follow its parent's, and
