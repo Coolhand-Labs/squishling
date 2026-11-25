@@ -97,6 +97,14 @@ whitespace and without control or invisible (zero-width, bidi, line-separator) c
 made on the block's own fiber, not to those on threads or fibers the block starts (give those their own
 `with_call_id`); an [apprentice](apprentice.md) shadow run uses it wherever the run happens.
 
+`with_call_id` yields a handle to the block: `call.call_id` is the id, and `call.accepted_request_id` is the id of the
+request whose output the call accepted, once the call has ended. Requests are numbered in the order they start, so after
+a retry or an escalation that is `"ticket-123.2"` or higher, not always `.1`; store it if you send feedback later. It is
+`nil` when the call only ran Ruby, ended on a `squish_fallback` or an error, or hasn't finished. It covers the call that
+took the id (under a sample harness, the request of the sample whose output it returned, the judge's pick for a judged
+one), not an apprentice's shadow run (its report's and review's `request_id` name the request that shadow
+accepted). A block (or proc) that takes no argument works as before.
+
 ### Declaring the call id
 
 If every call has an id of its own, say where it is, instead of wrapping each call site:
