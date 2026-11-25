@@ -23,7 +23,8 @@ module Squishling
       end
     end
 
-    def initialize(definition, receiver, inputs)
+    def initialize(definition, receiver, inputs, call_id: nil)
+      @supplied_call_id = call_id
       @definition = definition
       @receiver = receiver
       @inputs = inputs
@@ -40,7 +41,7 @@ module Squishling
     def call(built = prepare)
       harness = @definition.harness
       @run = Run.new(definition: @definition, receiver: @receiver, inputs: @inputs, prompt: built.prompt,
-        payload: built.payload, purpose: built.purpose, harness:)
+        payload: built.payload, purpose: built.purpose, harness:, call_id: @supplied_call_id)
       accepted(call_harness(harness, @run), @run, harness)
     end
 
