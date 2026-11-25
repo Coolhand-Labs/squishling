@@ -50,6 +50,7 @@ require_relative "squishling/invoker"
 require_relative "squishling/apprentice"
 require_relative "squishling/apprentice/shadow"
 require_relative "squishling/apprentice/thread_runner"
+require_relative "squishling/call_id"
 require_relative "squishling/judge"
 require_relative "squishling/router"
 require_relative "squishling/wrapper"
@@ -70,6 +71,18 @@ module Squishling
 
     def configure
       yield config
+    end
+
+    # Runs the block with call_id as the id of the first squished call it starts, instead of a generated UUID. The id
+    # reaches observers (Observer::Call#call_id, and "<call_id>.<n>" as each request_id, which the Coolhand observer
+    # sends as client_unique_id), squawk metadata and apprentice reports, never the provider. Any other squished call in
+    # the block gets a generated id; the first keeps the id even when it only runs Ruby. Keeping ids unique across
+    # blocks is up to the caller. Raises ConfigurationError for an id that isn't a String of 1-250 characters without
+    # surrounding whitespace or control or invisible characters. Returns the block's value.
+    def with_call_id(call_id, &)
+      raise ConfigurationError, "with_call_id needs a block" unless block_given?
+
+      CallId.with(call_id, &)
     end
 
     def reset_config!

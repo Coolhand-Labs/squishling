@@ -26,7 +26,7 @@ module Squishling
 
     attr_reader :receiver, :inputs, :steps, :call_id
 
-    def initialize(definition:, receiver:, inputs:, prompt:, payload:, purpose:, harness:)
+    def initialize(definition:, receiver:, inputs:, prompt:, payload:, purpose:, harness:, call_id: nil)
       @definition = definition
       @receiver = receiver
       @inputs = inputs
@@ -35,7 +35,7 @@ module Squishling
       @purpose = purpose
       @harness = harness
       @steps = definition.escalation_path(receiver, inputs).freeze
-      @call_id = SecureRandom.uuid
+      @call_id = call_id || SecureRandom.uuid
       @client = LLMClient.new(definition.label, purpose:, harness: harness.type, handed_off: definition.handed_off,
         budget: definition.budget, call_id: @call_id, apprentice: definition.apprentice_run)
       @client.check_adapters!(@steps, prompt.images)
