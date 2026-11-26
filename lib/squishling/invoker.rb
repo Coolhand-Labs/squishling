@@ -36,8 +36,9 @@ module Squishling
       "#{IMAGE_NOTE if files.any?(Image)}#{DOCUMENT_NOTE if files.any?(Document)}"
     end
 
-    def initialize(definition, receiver, inputs, call_id: nil)
+    def initialize(definition, receiver, inputs, call_id: nil, supplied: nil)
       @supplied_call_id = call_id
+      @supplied = supplied
       @definition = definition
       @receiver = receiver
       @inputs = inputs
@@ -55,7 +56,9 @@ module Squishling
       harness = @definition.harness
       @run = Run.new(definition: @definition, receiver: @receiver, inputs: @inputs, prompt: built.prompt,
         payload: built.payload, purpose: built.purpose, harness:, call_id: @supplied_call_id)
-      accepted(call_harness(harness, @run), @run, harness)
+      result = accepted(call_harness(harness, @run), @run, harness)
+      @supplied&.accept!(origin(result)&.request_id)
+      result
     end
 
     # The first request the call would make (system prompt, output schema, user message), without making it.

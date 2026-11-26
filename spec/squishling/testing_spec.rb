@@ -278,6 +278,15 @@ RSpec.describe Squishling::Testing do
       Class.new(base) { include Squishling::Testing::Minitest }.new
     end
 
+    it "refuses an expected value that couldn't be sent, as a call would" do
+      fake = host.fake_squishling { |llm| llm.step(:any).reply({ "regex" => "x" }) }
+      klass.call(text: "long text")
+
+      expect { host.assert_sent_arguments(fake, { text: Object.new }) }
+        .to raise_error(Squishling::ConfigurationError, /Object can't be sent as JSON/)
+      host.after_teardown
+    end
+
     it "fails through the host's flunk and resets after teardown" do
       fake = host.fake_squishling { |llm| llm.step(:any).reply({ "regex" => "x" }) }
       klass.call(text: "long text")

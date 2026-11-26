@@ -142,7 +142,8 @@ Flag any change that breaks one of these; they are behavior contracts, not style
   maps a produced result to the request that answered it, so a later report (an apprentice's) can name it. The id is
   Squishling's UUID unless the caller supplied one with `Squishling.with_call_id` (`CallId`: fiber-local, validated up front,
   claimed once by the first squished call started in the block, so request ids stay unique within it; across blocks
-  that is the caller's job), or a method's `call_id:` declaration (an input's name, or a Proc given the inputs; it
+  that is the caller's job; the block is yielded a `CallId::Handle` with `call_id` and `accepted_request_id`, the request
+  whose output the claiming call accepted, since numbering is by start order and that isn't always `.1`), or a method's `call_id:` declaration (an input's name, or a Proc given the inputs; it
   applies to every call, a `with_call_id` id wins for the call it names, `Squishling.verify` checks it, and a repeated
   declared id is logged once per method, never naming the id); it goes to observers, `squawk` and reports, never the
   provider.
@@ -174,8 +175,11 @@ Flag any change that breaks one of these; they are behavior contracts, not style
   carry them. An adapter that doesn't declare `images?` is never sent content parts.
 - **Only named context leaves the process.** The LLM sees method arguments, `squish_context` values, a
   `squish!` call's `context:`, and source the developer explicitly passes to `append_to_purpose` — never
-  instance variables wholesale. Exceptions in context are sent as class and message only. Model-generated output goes
-  to a provider in two places. Escalating to a new step forwards the previous step's rejected output (capped at
+  instance variables wholesale. Exceptions in context are sent as class and message only. An object that isn't plain
+  data (not a JSON primitive, `Time`/`Date`, container, `Struct`/`Data`/`OpenStruct`, `Image`, or exception) raises
+  `ConfigurationError` unless it defines `to_squishling`, so `as_json`/`to_json` can't send a model's every attribute.
+  Model-generated output goes to a provider in two places. Escalating to a new step forwards the previous step's
+  rejected output (capped at
   `Invoker::MAX_FORWARDED_CHARS`) to that step's provider (and adapter), which may differ; a step can opt out with
   `forward_rejected: false`. A judged harness sends the judge's provider the purpose, the call's full input, and both
   candidate outputs, uncapped and with no opt-out, so a judge on another provider sees the input too (see
@@ -249,7 +253,8 @@ adapter reads: `data`, `media_type`, `url`/`url?`, `detail`, `data_uri`, `filena
 `judge_instructions:`)/`append_to_purpose:`/`squawk:`/`squawk_on:` options — `purpose`, `append_to_purpose`,
 `output_schema`, `squish_when`, `squish_context`, `squish` (including `validate:`/`cache:`/`harness:`/`squawk:`/
 `squawk_on:`),
-`squish_validate`, `squish_sanitize` (and `squish`'s `sanitize:`), `squish_fallback`, `result`/`squishling_result`, `squish!` (including
+`squish_validate`, `squish_sanitize` (and `squish`'s `sanitize:`), `squish_fallback`, `result`/`squishling_result`, the
+`to_squishling` hook an argument's class may define, `squish!` (including
 `model:`/`escalation:`/`cache:`/`harness:`), and the `max_total_output_tokens:`/`max_total_input_tokens:` options of
 `squishling`, `squish`, and `squish!`, and the `apprentice_mode:` option (`when:`, `compare:`, `report:`) of `squishling` and
 `squish`), `Squishling::Configuration` options (including `adapters`, `default_harness`, `apprentice_report`,
@@ -265,7 +270,7 @@ adapter reads: `data`, `media_type`, `url`/`url?`, `detail`, `data_uri`, `filena
 `VerificationError#report`/`problems`). The apprentice surface is public too: `Squishling::Apprentice.drain`, `Apprentice::ThreadRunner` (`size:`,
 `max_queue:`, `call`, `drain`, `pending`), `Apprentice::Review`, an observer's optional `apprentice(review)`, the
 report hook's keywords (`ruby:`, `llm:`, `match:`, `error:`, `inputs:`, `metadata:`), and the squawk `metadata` keys
-`call_id:`/`apprentice:`. Call ids are public too: `Squishling.with_call_id` and the `call_id:` option of `squishling`
+`call_id:`/`apprentice:`. Call ids are public too: `Squishling.with_call_id` (with the `CallId::Handle` it yields: `call_id`, `accepted_request_id`) and the `call_id:` option of `squishling`
 and `squish`. The verification surface is public too: `Squishling.verify`/`verify!`/
 `squished_classes`, `Squishling::Verification::Report`/`Problem`, the `squishling:verify` rake task, and the
 `be_squishling_valid` matcher (`require "squishling/rspec"`). The custom-harness plugin point is public too:

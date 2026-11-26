@@ -90,7 +90,7 @@ end
 
 | Keyword | |
 |---|---|
-| `value` | The node: a Hash, Array, String, number, `true`/`false`/`nil`, or a `Squishling::Image` or `Squishling::Document` (`media_type`, `bytesize`, `data`). Any other object is offered as the plain data it serializes to (a Struct, a Set, a model's `to_json`, a Date as a String), so you see what would be sent. |
+| `value` | The node: a Hash, Array, String, number, `true`/`false`/`nil`, or a `Squishling::Image` or `Squishling::Document` (`media_type`, `bytesize`, `data`). Any other object is offered as the plain data that is sent for it (a Struct's members, a Set's elements, what an object's `to_squishling` returns, a Date as a String), so you see what would be sent. |
 | `path` | Where it is: `"arguments.bundle.entry[0].resource"`, or `"context.mrn"` for a `squish_context` value or a `squish!` `context:` |
 | `reject` | Call it with a message (or an Array of them) to refuse the call. It records the problem and carries on, so one error lists every one |
 

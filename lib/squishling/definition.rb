@@ -231,8 +231,9 @@ module Squishling
 
     # Runs the elastic path. When the LLM fails (InvalidOutputError or LLMError) and a fallback is
     # declared, the fallback's return value is used instead, coerced like a deterministic return.
-    def invoke_llm(receiver, inputs, call_id: nil)
-      Invoker.new(self, receiver, inputs, call_id: call_id_for(receiver, inputs, call_id)).call
+    # supplied is the CallId::Handle that gave the call its id (Squishling.with_call_id), told the accepted request.
+    def invoke_llm(receiver, inputs, call_id: nil, supplied: nil)
+      Invoker.new(self, receiver, inputs, call_id: call_id_for(receiver, inputs, call_id), supplied:).call
     rescue InvalidOutputError, LLMError => e
       handler = fallback
       raise unless handler

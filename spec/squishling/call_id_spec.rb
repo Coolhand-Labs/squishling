@@ -178,6 +178,149 @@ RSpec.describe Squishling::CallId do
     end
   end
 
+  describe "the handle the block yields" do
+    it "names the call, and the request whose output was accepted after a retry" do
+      stub_llm(bad, high)
+
+      handle = nil
+      Squishling.with_call_id("ticket-123") do |call|
+        handle = call
+        expect(call.accepted_request_id).to be_nil
+        klass.call
+      end
+
+      expect(handle.call_id).to eq("ticket-123")
+      expect(handle.accepted_request_id).to eq("ticket-123.2")
+    end
+
+    it "names the first request when nothing was retried" do
+      stub_llm(high)
+
+      Squishling.with_call_id("ticket-123") do |call|
+        klass.call
+        expect(call.accepted_request_id).to eq("ticket-123.1")
+      end
+    end
+
+    it "names the request of the step that answered after an escalation" do
+      escalating = Class.new do
+        include Squishling
+
+        squishling escalation: [{ model: "a", attempts: 2 }, { model: "b" }]
+        purpose "Triage."
+        output_schema { string :priority }
+      end
+      stub_llm(bad, bad, high)
+
+      Squishling.with_call_id("ticket-123") do |call|
+        escalating.call
+        expect(call.accepted_request_id).to eq("ticket-123.3")
+      end
+    end
+
+    it "stays nil when the call only ran Ruby" do
+      ruby_only = Class.new do
+        include Squishling
+
+        squishling model: "test-model"
+        purpose "Ruby only."
+        output_schema { string :priority }
+        def call = result(priority: "low")
+      end
+
+      Squishling.with_call_id("ticket-123") do |call|
+        ruby_only.new.call
+        expect(call.accepted_request_id).to be_nil
+      end
+    end
+
+    it "stays nil when a fallback answered" do
+      klass.squish_fallback { |_error, **| { priority: "fallback" } }
+      stub_llm(bad, bad)
+
+      Squishling.with_call_id("ticket-123") do |call|
+        expect(klass.call.priority).to eq("fallback")
+        expect(call.accepted_request_id).to be_nil
+      end
+    end
+
+    it "is told only about the call that took the id, not a later one" do
+      stub_llm(high, bad, high)
+
+      Squishling.with_call_id("ticket-123") do |call|
+        klass.call
+        klass.call
+        expect(call.accepted_request_id).to eq("ticket-123.1")
+      end
+    end
+
+    it "names the request of the sample whose output a squishsum returned" do
+      klass.squishling(harness: :squishsum)
+      stub_llm_chats([high], [high])
+
+      Squishling.with_call_id("ticket-123") do |call|
+        klass.call
+        expect(events.map(&:request_id)).to include(call.accepted_request_id)
+        expect(call.accepted_request_id).to match(/\Aticket-123\.[12]\z/)
+      end
+    end
+
+    it "names the request of the sample the judge picked" do
+      klass.squishling(harness: :judged_squishsum)
+      stub_llm_chats([high], [{ "priority" => "low" }], [{ "verdict" => "b", "reason" => "calmer" }])
+
+      Squishling.with_call_id("ticket-123") do |call|
+        klass.call
+        picked = events.find { |event| event.sample == "b" }
+        expect(call.accepted_request_id).to eq(picked.request_id)
+      end
+    end
+
+    it "names the accepted request after a squish! hand-off that retried" do
+      klass.send(:define_method, :call) { squish! }
+      stub_llm(bad, high)
+
+      Squishling.with_call_id("ticket-123") do |call|
+        klass.new.call
+        expect(call.accepted_request_id).to eq("ticket-123.2")
+      end
+    end
+
+    it "names the accepted request when an apprentice's call went to the LLM, with no shadow run" do
+      klass.squishling(apprentice_mode: true)
+      klass.squish_when { true }
+      stub_llm(bad, high)
+
+      Squishling.with_call_id("ticket-123") do |call|
+        klass.call
+        expect(call.accepted_request_id).to eq("ticket-123.2")
+      end
+    end
+
+    it "is optional: a block that takes no argument works" do
+      stub_llm(high)
+
+      expect(Squishling.with_call_id("ticket-123") { klass.call }.priority).to eq("high")
+    end
+
+    it "is optional for a lambda or method that takes no argument too" do
+      stub_llm(high, high)
+      ticket = -> { klass.call.priority }
+
+      expect(Squishling.with_call_id("ticket-123", &ticket)).to eq("high")
+      klass.define_singleton_method(:triage) { call }
+      noarg = klass.method(:triage)
+      handled = Squishling.with_call_id("ticket-124", &noarg)
+      expect(handled.priority).to eq("high")
+    end
+
+    it "describes itself without more than the ids" do
+      Squishling.with_call_id("ticket-123") do |call|
+        expect(call.inspect).to eq('#<Squishling::CallId::Handle call_id="ticket-123" accepted_request_id=nil>')
+      end
+    end
+  end
+
   describe "a bad id" do
     it "raises ConfigurationError before anything runs" do
       bad = ["", "  ", " padded", "line\nbreak", "a\u2028b", "zero\u200Bwidth", "\xff", "caf\u00e9".b,

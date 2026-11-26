@@ -10,6 +10,8 @@ module Squishling
     # SystemStackError. Files are read as they are found, so max_files is checked as the count grows: the call is
     # refused once the count passes the limit, though the file (or collection) that crosses it has been read by then.
     class Normalizer
+      PLAIN_TYPES = [Symbol, Numeric, Time].freeze
+
       def initialize(label)
         @label = label
         @reads = 0
@@ -72,14 +74,33 @@ module Squishling
         node
       end
 
+      # Anything that isn't a JSON primitive, a Time, Date or URI, or a container is refused unless its class defines
+      # to_squishling (whose return value is sent in its place, cycle-guarded like any container): as_json/to_json
+      # would send every attribute of, say, an ActiveRecord model.
       def plain(value, containers, path)
         return members(value, containers, path) if open_struct?(value)
         return value if scalar?(value)
+        return squishling(value, containers, path) unless plain_type?(value)
 
         data = Schema.jsonify(value)
         data.is_a?(Hash) || data.is_a?(Array) ? call(data, containers, path) : data
       rescue JSON::JSONError => e
         raise InputRejectedError.single(Payload.unrepresentable(e), label: @label, path:), cause: nil
+      end
+
+      def squishling(value, containers, path)
+        unless value.respond_to?(:to_squishling)
+          raise ConfigurationError,
+            "#{@label}: #{value.class} can't be sent as JSON, because that could send all of its attributes. " \
+            "Pass a plain Hash, or define #{value.class}#to_squishling to return what the model should see"
+        end
+
+        within(value, containers) { |inner| call(value.to_squishling, inner, path) }
+      end
+
+      def plain_type?(value)
+        PLAIN_TYPES.any? { |type| value.is_a?(type) } ||
+          (defined?(::Date) && value.is_a?(::Date)) || value.is_a?(URI::Generic)
       end
 
       def scalar?(value)

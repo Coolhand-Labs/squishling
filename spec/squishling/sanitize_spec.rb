@@ -205,9 +205,9 @@ RSpec.describe "squish_sanitize" do # rubocop:disable RSpec/DescribeClass
   end
 
   describe "what it is handed" do
-    it "is the plain data an object serializes to, so a model's attributes are offered, not the model" do
+    it "is the plain data an object's to_squishling returns, so what would be sent is offered, not the model" do
       patient = Class.new do
-        def to_json(*) = JSON.generate(name: "Jane Doe", ssn: "123-45-6789")
+        def to_squishling = { name: "Jane Doe", ssn: "123-45-6789" }
       end.new
       klass.squish_sanitize { |value:, **| value.is_a?(String) ? value.gsub(/\d{3}-\d{2}-\d{4}/, "[SSN]") : value }
 

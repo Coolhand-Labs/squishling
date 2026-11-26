@@ -47,6 +47,7 @@ RSpec.describe "Files passed to a squished call" do # rubocop:disable RSpec/Desc
 
       def initialize(attachment) = @attachment = attachment
       def attached? = !attachment.nil?
+      def to_squishling = { attached: attached? }
     end
   end
   let(:many_class) do
@@ -55,6 +56,7 @@ RSpec.describe "Files passed to a squished call" do # rubocop:disable RSpec/Desc
 
       def initialize(attachments) = @attachments = attachments
       def attached? = attachments.any?
+      def to_squishling = { attached: attached? }
     end
   end
   let(:upload_class) do
@@ -66,6 +68,8 @@ RSpec.describe "Files passed to a squished call" do # rubocop:disable RSpec/Desc
         @content_type = content_type
         @original_filename = original_filename
       end
+
+      def to_squishling = { filename: original_filename }
     end
   end
 
@@ -179,7 +183,8 @@ RSpec.describe "Files passed to a squished call" do # rubocop:disable RSpec/Desc
         def content_type = "text/plain"
       end.new
 
-      expect(sent_request(document:).images).to be_empty
+      expect { sent_request(document:) }
+        .to raise_error(Squishling::ConfigurationError, /can't be sent as JSON/)
     end
 
     it "sends a collection or slot of things that aren't files as they were" do
@@ -224,6 +229,7 @@ RSpec.describe "Files passed to a squished call" do # rubocop:disable RSpec/Desc
       odd = Class.new do
         def read = "x"
         def rewind = nil
+        def to_squishling = "odd"
       end.new
 
       expect(sent_request(upload:, odd:).images).to be_empty
@@ -256,9 +262,9 @@ RSpec.describe "Files passed to a squished call" do # rubocop:disable RSpec/Desc
     end
 
     it "never reads a class, a Dir or a terminal as a file" do
-      request = sent_request(klass: StringIO, dir: Dir.new(@dir).tap(&:close).class)
-
-      expect(request.images).to be_empty
+      [StringIO, Dir].each do |value|
+        expect { sent_request(value:) }.to raise_error(Squishling::ConfigurationError, /can't be sent as JSON/)
+      end
     end
 
     it "ignores a declared type that isn't shaped like one" do
