@@ -53,12 +53,14 @@ an argument that isn't plain data is now refused rather than serialized, and a `
 - The block of `with_call_id` is yielded a `CallId::Handle` with `call_id` and `accepted_request_id`, the request that
   answered the call (`nil` for a Ruby-only call or a fallback). After a retry or an escalation that is `.2` or higher, so
   send feedback to it, not to `.1`. A block, lambda, or method that takes no argument keeps working. (#129)
-- A class may define `to_squishling` to say what the model sees of it; see **Changed**. It is checked before an object
-  is guessed to be a file, so a presenter that also answers `download` is sent as what it returns, and an `OpenStruct`
-  whose members are named `download` or `content_type` is sent as its members. See [Inputs](docs/inputs.md). (#128,
-  #131)
+- A class may define `to_squishling` to say what the model sees of it; see **Changed**. It is checked first, for any
+  class: it shapes a `Struct`, `Data`, exception, or `Hash`/`Array` subclass too (so a field can be left out), and a
+  presenter that also answers `download` is sent as what it returns instead of being guessed to be a file. An
+  `OpenStruct` whose members are named `download` or `content_type` is sent as its members. See
+  [Inputs](docs/inputs.md). (#128, #131)
 - `Squishling::Image.from_url(url, media_type:)`: the media type of an image given by URL, which is otherwise read from
-  the path's extension (`.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`). (#131)
+  the path's extension (`.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`). A URL image with a known type is now checked against
+  the adapter's `media_types` like any other file, so an adapter limited to `image/png` refuses a `.gif` URL. (#131)
 
 ### Changed
 
@@ -77,6 +79,12 @@ an argument that isn't plain data is now refused rather than serialized, and a `
   download a URL image for a provider that can't fetch URLs itself (see
   [Adapters](docs/adapters.md#known-risk-the-rubyllm-adapter-downloads-some-image-urls-itself)); the OpenAI-compatible
   adapter never downloads. (#131)
+- An input nested more than 100 levels deep (JSON's own limit) raises `InputRejectedError` naming where it got too deep,
+  instead of overflowing the stack (a `SystemStackError`, which isn't a `StandardError`). (#131)
+- The RubyLLM adapter builds each chat in a RubyLLM context with `auto_upload_large_files` off. RubyLLM's default sends an
+  attachment over a provider's size threshold to that provider's Files API, which isn't what a squished call's files
+  are for; they go with the request, bounded by `max_file_bytes`. The global RubyLLM configuration is not changed.
+  (#131)
 - **Behavior change:** a `Pathname` argument used to go out as text and now reads the file. The default `max_files` and
   `max_file_bytes` limits also apply to an explicit `Squishling::Image`, and a Hash's keys reach a sanitizer as Strings.
   (#130)

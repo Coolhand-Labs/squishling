@@ -99,9 +99,9 @@ module Squishling
 
       private
 
-      # The conversation so far added to the chat, then its last message asked. Building an attachment can still make
-      # RubyLLM fetch an image's URL (for a provider that can't fetch URLs itself), so the history is guarded like the
-      # request itself.
+      # The conversation so far added to the chat, then its last message asked, all inside #guarded: RubyLLM may still
+      # fetch an image's URL when it renders the request (for a provider that can't fetch URLs itself), and a failure
+      # there is a failed request like any other.
       def replay_and_ask(chat, request)
         *history, last = request.messages
         history.each do |message|
@@ -174,7 +174,7 @@ module Squishling
       end
 
       def build_chat(request)
-        chat = ::RubyLLM.chat(**model_options(request.model, request.provider))
+        chat = ::RubyLLM.chat(**model_options(request.model, request.provider), context: chat_context)
         chat.with_instructions(request.instructions)
         chat.with_schema(request.schema)
         apply_params(chat, request)
@@ -182,6 +182,13 @@ module Squishling
         chat
       rescue ::RubyLLM::ModelNotFoundError, ::RubyLLM::ConfigurationError => e
         raise configuration_error(request, e.message)
+      end
+
+      # A copy of RubyLLM's configuration for one chat. By default RubyLLM sends an attachment over a provider's size
+      # threshold to that provider's Files API; Squishling sends a call's files with the request, bounded by
+      # max_file_bytes, so a file never goes anywhere the call didn't name.
+      def chat_context
+        ::RubyLLM.context { |config| config.auto_upload_large_files = false }
       end
 
       # RubyLLM validates some settings locally (e.g. an impossible thinking budget for the model)

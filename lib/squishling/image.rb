@@ -33,7 +33,7 @@ module Squishling
       # An image read from a file. The media type comes from the bytes, or the extension when given none.
       def from_path(path, media_type: nil, detail: nil)
         data = File.binread(path)
-        new(data:, media_type: media_type || sniff(data) || EXTENSIONS[File.extname(path.to_s).downcase], detail:)
+        new(data:, media_type: media_type || sniff(data) || extension_type(path), detail:)
       end
 
       # An image the provider fetches itself (http or https). Nothing is downloaded here. The media type is the one
@@ -41,6 +41,12 @@ module Squishling
       # RubyLLM adapter needs it, so that RubyLLM doesn't download the URL to find it out (see Adapters::RubyLLM).
       def from_url(url, media_type: nil, detail: nil)
         new(url:, media_type:, detail:)
+      end
+
+      # Internal (not public API): the media type a path or URL path's extension says (.png, .jpg, .jpeg, .gif, .webp),
+      # or nil.
+      def extension_type(path)
+        EXTENSIONS[File.extname(path.to_s).downcase]
       end
 
       # The media type the bytes start with, or nil.
@@ -63,7 +69,7 @@ module Squishling
       @detail = checked_detail(detail)
       if url
         @url = checked_url(url)
-        @media_type = media_type ? checked_media_type(media_type.to_s) : extension_type(@url)
+        @media_type = media_type ? checked_media_type(media_type.to_s) : self.class.extension_type(URI.parse(@url).path)
       else
         @data = checked_data(data)
         @media_type = checked_media_type(media_type&.to_s || self.class.sniff(@data))
@@ -134,11 +140,6 @@ module Squishling
       return detail if DETAILS.include?(detail)
 
       raise ConfigurationError, "Squishling::Image detail: must be #{DETAILS.map(&:inspect).join(' or ')}, or nil"
-    end
-
-    # The media type the URL's path ends in, or nil.
-    def extension_type(url)
-      EXTENSIONS[File.extname(URI.parse(url).path.to_s).downcase]
     end
 
     # The URL without credentials, query, or fragment: a signed URL's query holds its token.

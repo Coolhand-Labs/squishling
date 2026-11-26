@@ -129,7 +129,8 @@ module Squishling
                                 "#{adapter.class} adapter takes #{accepted.join(', ')} (see Adapter::Base#media_types)"
     end
 
-    # An image given by URL has no type of its own, so an adapter that takes any image takes it.
+    # An image given by URL whose type isn't known (no image extension, no media_type:) is taken by an adapter that
+    # takes any image; one with a type is checked like any other file.
     def accepted?(file, accepted)
       file.media_type ? accepted.include?(file.media_type) : accepted.any? { |type| type.start_with?("image/") }
     end

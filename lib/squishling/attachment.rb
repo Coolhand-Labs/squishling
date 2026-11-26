@@ -142,7 +142,7 @@ module Squishling
 
     # A URI is a link far more often than an image, so only one whose path ends in an image extension is sent as one.
     def image_url?(value)
-      value.is_a?(URI::HTTP) && Image::EXTENSIONS.key?(File.extname(value.path.to_s).downcase)
+      value.is_a?(URI::HTTP) && !Image.extension_type(value.path).nil?
     end
 
     def read_many(value, label)

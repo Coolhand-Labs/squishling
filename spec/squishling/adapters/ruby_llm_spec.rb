@@ -8,10 +8,11 @@ RSpec.describe Squishling::Adapters::RubyLLM do
   let(:fake_chat_class) do
     reply = reply_class
     Class.new do
-      attr_reader :options, :instructions, :schema, :added, :asked, :attached, :generation
+      attr_reader :options, :context, :instructions, :schema, :added, :asked, :attached, :generation
 
       def initialize(options, responses)
-        @options = options
+        @context = options[:context]
+        @options = options.except(:context)
         @responses = responses
         @added = []
         @asked = []
@@ -150,6 +151,16 @@ RSpec.describe Squishling::Adapters::RubyLLM do
       expect(sources).to eq(["https://example.com/r.png"])
     end
 
+    it "builds each chat in a RubyLLM context that doesn't upload large files to a provider's Files API" do
+      stub_chat("{}")
+
+      adapter.complete(adapter_request)
+
+      expect(chats.first.context).to be_a(RubyLLM::Context)
+      expect(chats.first.context.config.auto_upload_large_files).to be(false)
+      expect(RubyLLM.config.auto_upload_large_files).to be(true)
+    end
+
     it "gives an image URL its media type, so RubyLLM never downloads it to find the type out" do
       stub_chat("{}")
       byext = Squishling::Image.from_url("https://example.com/r.png")
@@ -178,11 +189,13 @@ RSpec.describe Squishling::Adapters::RubyLLM do
       expect(chats.first.asked).to be_empty
     end
 
-    it "reports a failure building a history attachment as an LLMError, like one from the request" do
-      stub_chat("{}")
-      linked = Squishling::Image.from_url("https://example.com/r.png")
-      allow(RubyLLM::Attachment).to receive(:new).and_raise(Faraday::ConnectionFailed, "down")
-      messages = [{ role: :user, content: [{ type: :image, image: linked }] }, { role: :assistant, content: "bad" },
+    it "reports a failure replaying the history as an LLMError, like one from the request" do
+      allow(RubyLLM).to receive(:chat) do |**options|
+        fake_chat_class.new(options, ["{}"]).tap do |chat|
+          chat.define_singleton_method(:add_message) { |_attributes| raise Faraday::ConnectionFailed, "down" }
+        end
+      end
+      messages = [{ role: :user, content: "first" }, { role: :assistant, content: "bad" },
                   { role: :user, content: "again" }]
 
       expect { adapter.complete(adapter_request(messages:)) }.to raise_error(Squishling::LLMError)

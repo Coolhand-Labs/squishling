@@ -43,15 +43,16 @@ Squishling recognizes these by what they respond to, so no ActiveStorage or Rack
 
 What a file is comes from its bytes, then its declared type, then its name's extension.
 
+A text String is never read as a file: a string that names a path would let input choose which file leaves the process,
+and a text String that happens to start with `%PDF-` is still text. Only the LLM path reads files: the Ruby path gets
+exactly what was passed.
+
 An object is recognized by the methods it answers (`download`, `read`, `attachment`, and so on), which is a guess, so
 anything you said explicitly comes first. In order: a class that defines `to_squishling` is sent as what that returns
 (and if it returns a file, the file is read); an `OpenStruct` is sent as its members, even when they are named
-`download` or `content_type`; then the shapes in the table above are read as files. A `Struct`, `Data`, `Hash`, `Set`,
-and `Array` are walked as containers before any of this, and `to_squishling` is not consulted on them.
-
- A text String is never read
-as a file: a string that names a path would let input choose which file leaves the process, and a text String that
-happens to start with `%PDF-` is still text. Only the LLM path reads files: the Ruby path gets exactly what was passed.
+`download` or `content_type`; then the shapes in the table above are read as files. `to_squishling` is checked first on
+every object, so it also shapes a `Struct`, `Data`, exception, or `Hash`/`Array` subclass; without it those are walked
+as containers (their members, elements, or message), before any file shape is considered.
 
 A file that is empty, can't be read, or is over a limit raises `InputRejectedError` before any request, naming where it
 was (`arguments.scan`) but never the file. A Hash key that isn't a plain identifier (a name, an MRN) appears as `[key]` in

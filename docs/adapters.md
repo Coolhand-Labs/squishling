@@ -305,8 +305,9 @@ exception propagates unwrapped and is never retried, so map your transport's err
 A call can carry [images](images.md) and PDFs ([inputs](inputs.md)). A chat's first user message then has an Array of
 content parts instead of a String: `{ type: :text, text: String }`, then `{ type: :image, image: Squishling::Image }`
 per image and `{ type: :file, file: Squishling::Document }` per document. An `Image` gives you `data` (the bytes) with
-`media_type`, `data_uri`, and `filename`, or, for `url?` images, the `url` for the provider to fetch, plus the `detail`
-asked for (`:low`, `:high`, or `nil`). A `Document` gives you `data`, `media_type` (`application/pdf`), `data_uri`, and
+`media_type`, `data_uri`, and `filename`, or, for `url?` images, the `url` for the provider to fetch and its
+`media_type` (`nil` when neither a `media_type:` nor an image extension in the URL says what it is, so check `url?`
+before trusting it), plus the `detail` asked for (`:low`, `:high`, or `nil`). A `Document` gives you `data`, `media_type` (`application/pdf`), `data_uri`, and
 a generic `filename` ("document.pdf").
 
 `media_types(step)` says which types the adapter takes for a step's model: any of `Squishling::Image::MEDIA_TYPES` and
