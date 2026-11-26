@@ -68,12 +68,12 @@ RSpec.describe Squishling::Adapters::RubyLLM do
     expect { instance.send(:initialize) }.to raise_error(Squishling::ConfigurationError, /needs the ruby_llm gem/)
   end
 
-  it "refuses a ruby_llm older than 2.1, which lacks the APIs it uses" do
-    old = instance_double(Gem::Specification, version: Gem::Version.new("2.0.3"))
+  it "refuses a ruby_llm older than 2.2, which lacks the APIs it uses (Attachment's mime_type:)" do
+    old = instance_double(Gem::Specification, version: Gem::Version.new("2.1.1"))
     allow(Gem).to receive(:loaded_specs).and_return("ruby_llm" => old)
 
     expect { described_class.new }
-      .to raise_error(Squishling::ConfigurationError, /needs ruby_llm 2\.1 or newer, got 2\.0\.3/)
+      .to raise_error(Squishling::ConfigurationError, /needs ruby_llm 2\.2 or newer, got 2\.1\.1/)
   end
 
   it "supports judgments" do

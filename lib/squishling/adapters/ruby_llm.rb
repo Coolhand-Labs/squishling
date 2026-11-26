@@ -9,7 +9,7 @@ module Squishling
     # (RubyLLM.configure); transient HTTP failures are retried by RubyLLM itself (RubyLLM.config.max_retries).
     # The ruby_llm gem is loaded when the adapter is built, so Squishling doesn't depend on it. See docs/adapters.md.
     class RubyLLM < Adapter::Base
-      MINIMUM_VERSION = Gem::Version.new("2.1")
+      MINIMUM_VERSION = Gem::Version.new("2.2")
 
       # The ruby_llm gem isn't installed (Adapter.detect tells that apart from a gem that is, but too old).
       class MissingGemError < ConfigurationError; end
@@ -303,7 +303,8 @@ module Squishling
         error.backtrace&.first&.start_with?("#{@lib}/") || false
       end
 
-      # The adapter uses RubyLLM 2.1 APIs (judgments, with_max_output_tokens, Tokens#to_h), and no gemspec pins it.
+      # The adapter uses RubyLLM 2.2 APIs (judgments, with_max_output_tokens, Tokens#to_h, and Attachment's mime_type:,
+      # which is how an image URL's type reaches RubyLLM without it downloading the URL), and no gemspec pins it.
       def check_version!
         version = Gem.loaded_specs["ruby_llm"]&.version
         return if version.nil? || version >= MINIMUM_VERSION

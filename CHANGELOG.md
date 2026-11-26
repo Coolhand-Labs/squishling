@@ -54,7 +54,7 @@ an argument that isn't plain data is now refused rather than serialized, and a `
   answered the call (`nil` for a Ruby-only call or a fallback). After a retry or an escalation that is `.2` or higher, so
   send feedback to it, not to `.1`. A block, lambda, or method that takes no argument keeps working. (#129)
 - A class may define `to_squishling` to say what the model sees of it; see **Changed**. It is checked first, for any
-  class: it shapes a `Struct`, `Data`, exception, or `Hash`/`Array` subclass too (so a field can be left out), and a
+  class but a `String` (a String subclass is sent as its text), `Image`, or `Document`: it shapes a `Struct`, `Data`, exception, or `Hash`/`Array` subclass too (so a field can be left out), and a
   presenter that also answers `download` is sent as what it returns instead of being guessed to be a file. An
   `OpenStruct` whose members are named `download` or `content_type` is sent as its members. See
   [Inputs](docs/inputs.md). (#128, #131)
@@ -71,6 +71,9 @@ an argument that isn't plain data is now refused rather than serialized, and a `
   controls what is sent (ActiveSupport defines both on every object): pass a Hash, or define `to_squishling` on the class
   to return what the model should see (cycle-guarded, and converted like any argument). `Squishling::Testing` helpers
   apply the same check. See [Routing](docs/routing.md). (#128, #130)
+- **Breaking:** the `:ruby_llm` adapter now needs `ruby_llm` 2.2 or newer (it was 2.1), because it passes an image URL's
+  media type to `RubyLLM::Attachment`, whose `mime_type:` keyword arrived in 2.2. On 2.1 the adapter raises
+  `ConfigurationError` when it is built; run `bundle update ruby_llm`. The OpenAI-compatible adapter needs no gem. (#131)
 - **Behavior change:** with the RubyLLM adapter, an image given by URL that has no known media type (a path with no image
   extension, and no `media_type:`) now raises `ConfigurationError` before any request. RubyLLM used to download such a
   URL from your process to read its type, from any host it could reach, redirects followed, which made a user-chosen URL
@@ -79,8 +82,9 @@ an argument that isn't plain data is now refused rather than serialized, and a `
   download a URL image for a provider that can't fetch URLs itself (see
   [Adapters](docs/adapters.md#known-risk-the-rubyllm-adapter-downloads-some-image-urls-itself)); the OpenAI-compatible
   adapter never downloads. (#131)
-- An input nested more than 100 levels deep (JSON's own limit) raises `InputRejectedError` naming where it got too deep,
-  instead of overflowing the stack (a `SystemStackError`, which isn't a `StandardError`). (#131)
+- An input nested more than 100 levels deep (JSON's own limit), or a sanitizer that keeps wrapping what it returns, raises
+  `InputRejectedError` naming where it got too deep, instead of overflowing the stack (a `SystemStackError`, which isn't
+  a `StandardError`). (#131)
 - The RubyLLM adapter builds each chat in a RubyLLM context with `auto_upload_large_files` off. RubyLLM's default sends an
   attachment over a provider's size threshold to that provider's Files API, which isn't what a squished call's files
   are for; they go with the request, bounded by `max_file_bytes`. The global RubyLLM configuration is not changed.

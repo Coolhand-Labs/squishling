@@ -51,7 +51,7 @@ An object is recognized by the methods it answers (`download`, `read`, `attachme
 anything you said explicitly comes first. In order: a class that defines `to_squishling` is sent as what that returns
 (and if it returns a file, the file is read); an `OpenStruct` is sent as its members, even when they are named
 `download` or `content_type`; then the shapes in the table above are read as files. `to_squishling` is checked first on
-every object, so it also shapes a `Struct`, `Data`, exception, or `Hash`/`Array` subclass; without it those are walked
+every object except a `String` (a String subclass is sent as its own text), `Image`, and `Document`, so it also shapes a `Struct`, `Data`, exception, or `Hash`/`Array` subclass; without it those are walked
 as containers (their members, elements, or message), before any file shape is considered.
 
 A file that is empty, can't be read, or is over a limit raises `InputRejectedError` before any request, naming where it

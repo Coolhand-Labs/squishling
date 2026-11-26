@@ -326,7 +326,7 @@ RSpec.describe Squishling::Adapter do
       allow(Gem).to receive(:loaded_specs).and_return("ruby_llm" => old)
 
       expect { Squishling.config.resolved_adapter }
-        .to raise_error(Squishling::ConfigurationError, /needs ruby_llm 2\.1 or newer, got 2\.0\.3/)
+        .to raise_error(Squishling::ConfigurationError, /needs ruby_llm 2\.2 or newer, got 2\.0\.3/)
     end
 
     it "fails the squished call, before any request, when there is no adapter to use" do

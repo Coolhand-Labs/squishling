@@ -163,6 +163,13 @@ RSpec.describe "squish_sanitize" do # rubocop:disable RSpec/DescribeClass
       Squishling.reset_config!
     end
 
+    it "refuses a sanitizer that keeps wrapping what it returns, rather than overflowing the stack" do
+      klass.squish_sanitize { |value:, **| value.is_a?(String) ? { wrapped: value } : value }
+
+      expect { sent_request(note: "x") }
+        .to raise_error(Squishling::InputRejectedError, /arguments\.note.*nested too deeply/)
+    end
+
     it "holds the files the call ends up sending to max_files, even when no one sanitizer's pass crosses it" do
       pair = ->(value, marker) { value == marker ? (1..2).map { |n| StringIO.new("%PDF-1.7 #{marker}#{n}") } : value }
       Squishling.configure do |config|

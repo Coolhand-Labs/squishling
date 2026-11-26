@@ -37,11 +37,22 @@ module Squishling
         case value
         when Image, Document then value
         when String then text(value, path)
-        else value.respond_to?(:to_squishling) ? squishling(value, containers, path) : by_type(value, containers, path)
+        else squishling?(value) ? squishling(value, containers, path) : by_type(value, containers, path)
         end
       end
 
       private
+
+      # Whether the class says what to send. A Hash, Struct, Data, exception, or Set is asked for a real definition
+      # (on its class or extended onto it), not respond_to?: some, such as ActiveSupport::OrderedOptions, answer true
+      # for every name and would send nil for the whole value.
+      def squishling?(value)
+        case value
+        when Hash, Struct, Data, Set, Array, Exception
+          value.class.method_defined?(:to_squishling) || value.singleton_class.method_defined?(:to_squishling)
+        else value.respond_to?(:to_squishling)
+        end
+      end
 
       def by_type(value, containers, path)
         case value

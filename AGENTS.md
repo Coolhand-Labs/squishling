@@ -181,8 +181,8 @@ Flag any change that breaks one of these; they are behavior contracts, not style
   instance variables wholesale. Exceptions in context are sent as class and message only. An object that isn't plain
   data (not a JSON primitive, `Time`/`Date`, container, `Struct`/`Data`/`OpenStruct`, `Image`, or exception) raises
   `ConfigurationError` unless it defines `to_squishling`, so `as_json`/`to_json` can't send a model's every attribute.
-  `to_squishling` wins over everything else (it is checked first in `Payload::Normalizer#call`, so it also shapes a
-  `Struct`, `Data`, exception, or container subclass); an object is read as a file only when nothing more explicit
+  `to_squishling` wins over everything else except a `String`, `Image`, or `Document` (it is checked first in
+  `Payload::Normalizer#call`, so it also shapes a `Struct`, `Data`, exception, or container subclass); an object is read as a file only when nothing more explicit
   applies: an `OpenStruct`'s members come first, then the duck-typed file shapes (`Normalizer#other`). An input nested
   more than 100 levels deep (JSON's own limit) is an `InputRejectedError`, not a stack overflow.
   Model-generated output goes to a provider in two places. Escalating to a new step forwards the previous step's

@@ -237,6 +237,49 @@ RSpec.describe "Files passed to a squished call" do # rubocop:disable RSpec/Desc
         "failure" => { "reason" => "failed" }, "listed" => ["shown"])
     end
 
+    it "sends a Hash that answers every method name, such as ActiveSupport::OrderedOptions, as its members" do
+      options = Class.new(Hash) do
+        def respond_to_missing?(*) = true
+        def method_missing(name, *) = self[name]
+      end.new
+      options[:name] = "Jane"
+
+      expect(sent_request(options:).arguments["options"]).to eq("name" => "Jane")
+    end
+
+    it "honors a to_squishling extended onto a Hash or defined on a Struct's singleton" do
+      hash = { name: "Jane", ssn: "123-45-6789" }.extend(Module.new { def to_squishling = { name: self[:name] } })
+      struct = Struct.new(:name, :ssn).new("Jane", "123-45-6789")
+      struct.define_singleton_method(:to_squishling) { { name: } }
+
+      expect(sent_request(hash:, struct:).arguments).to eq("hash" => { "name" => "Jane" },
+        "struct" => { "name" => "Jane" })
+    end
+
+    it "refuses a to_squishling chain that keeps returning new objects, and two that return each other" do
+      endless = Class.new { def to_squishling = self.class.new }.new
+      first = Class.new.new
+      second = Class.new.new
+      first.define_singleton_method(:to_squishling) { second }
+      second.define_singleton_method(:to_squishling) { first }
+
+      expect { sent_request(endless:) }.to raise_error(Squishling::InputRejectedError, /nested too deeply/)
+      expect { sent_request(first:) }.to raise_error(Squishling::ConfigurationError, /contains itself/)
+    end
+
+    it "refuses a deeply nested Struct chain too, without overflowing the stack" do
+      node = Struct.new(:inner)
+      chain = (1..5_000).reduce(nil) { |inner, _| node.new(inner) }
+
+      expect { sent_request(chain:) }.to raise_error(Squishling::InputRejectedError, /nested too deeply/)
+    end
+
+    it "sends a String subclass as its text, whatever its to_squishling says" do
+      text = Class.new(String) { def to_squishling = "ignored" }.new("hello")
+
+      expect(sent_request(text:).arguments["text"]).to eq("hello")
+    end
+
     it "still refuses a to_squishling that returns itself, rather than looping" do
       selfish = Struct.new(:name) { def to_squishling = self }.new("Jane")
 

@@ -304,8 +304,8 @@ All members are sent, so pass a Hash or define `to_squishling` (or `to_h`) to le
 request: serializing it with `as_json` or `to_json` would send every attribute, and an easy mistake would leak them.
 Pass a Hash instead, or define `to_squishling` on the class to return what the model should see; its return value (a
 Hash, a Struct, or anything else listed here) is converted the same way. `to_squishling` is checked first, before
-anything is guessed about the object and for any class, including a `Struct`, `Data`, exception, or `Hash`/`Array`
-subclass (where it is how you leave a field out), so a presenter that also answers `download` or `content_type` is sent
+anything is guessed about the object and for any class but a `String` (a String subclass is sent as its own text),
+including a `Struct`, `Data`, exception, or `Hash`/`Array` subclass (where it is how you leave a field out), so a presenter that also answers `download` or `content_type` is sent
 as what `to_squishling` returns and is never read as a [file](inputs.md). Without it, a `Struct`, `Data`, `OpenStruct`,
 or Hash subclass is sent as its members, and an `OpenStruct` is never read as a file.
 
