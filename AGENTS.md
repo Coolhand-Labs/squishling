@@ -172,12 +172,17 @@ Flag any change that breaks one of these; they are behavior contracts, not style
 - **File bytes leave only to the provider.** A `Squishling::Image` or `Document` argument goes to the provider (and a
   chat judge's) as a content part, with a placeholder in the JSON input; `inspect`/`to_s`/`as_json`/`to_json`/YAML
   describe it without its bytes or an image URL's query (Marshal refuses; see `Concealed`), so logs, errors, `squawk`, and serializers never
-  carry them. An adapter that doesn't declare `images?` is never sent content parts.
+  carry them. An adapter that doesn't declare `images?` is never sent content parts. Squishling never downloads an
+  image's URL, and the RubyLLM adapter hands RubyLLM the URL's media type (`Image.from_url(url, media_type:)`, or its
+  extension), so RubyLLM doesn't download one to find the type out: an image URL with no known type is a
+  `ConfigurationError` there.
 - **Only named context leaves the process.** The LLM sees method arguments, `squish_context` values, a
   `squish!` call's `context:`, and source the developer explicitly passes to `append_to_purpose` — never
   instance variables wholesale. Exceptions in context are sent as class and message only. An object that isn't plain
   data (not a JSON primitive, `Time`/`Date`, container, `Struct`/`Data`/`OpenStruct`, `Image`, or exception) raises
   `ConfigurationError` unless it defines `to_squishling`, so `as_json`/`to_json` can't send a model's every attribute.
+  An object is read as a file only when nothing more explicit applies: `to_squishling` wins, then an `OpenStruct`'s members,
+  then the duck-typed file shapes (`Payload::Normalizer#other`).
   Model-generated output goes to a provider in two places. Escalating to a new step forwards the previous step's
   rejected output (capped at
   `Invoker::MAX_FORWARDED_CHARS`) to that step's provider (and adapter), which may differ; a step can opt out with

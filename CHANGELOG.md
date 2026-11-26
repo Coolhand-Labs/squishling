@@ -53,7 +53,12 @@ an argument that isn't plain data is now refused rather than serialized, and a `
 - The block of `with_call_id` is yielded a `CallId::Handle` with `call_id` and `accepted_request_id`, the request that
   answered the call (`nil` for a Ruby-only call or a fallback). After a retry or an escalation that is `.2` or higher, so
   send feedback to it, not to `.1`. A block, lambda, or method that takes no argument keeps working. (#129)
-- A class may define `to_squishling` to say what the model sees of it; see **Changed**. (#128)
+- A class may define `to_squishling` to say what the model sees of it; see **Changed**. It is checked before an object
+  is guessed to be a file, so a presenter that also answers `download` is sent as what it returns, and an `OpenStruct`
+  whose members are named `download` or `content_type` is sent as its members. See [Inputs](docs/inputs.md). (#128,
+  #131)
+- `Squishling::Image.from_url(url, media_type:)`: the media type of an image given by URL, which is otherwise read from
+  the path's extension (`.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`). (#131)
 
 ### Changed
 
@@ -64,6 +69,14 @@ an argument that isn't plain data is now refused rather than serialized, and a `
   controls what is sent (ActiveSupport defines both on every object): pass a Hash, or define `to_squishling` on the class
   to return what the model should see (cycle-guarded, and converted like any argument). `Squishling::Testing` helpers
   apply the same check. See [Routing](docs/routing.md). (#128, #130)
+- **Behavior change:** with the RubyLLM adapter, an image given by URL that has no known media type (a path with no image
+  extension, and no `media_type:`) now raises `ConfigurationError` before any request. RubyLLM used to download such a
+  URL from your process to read its type, from any host it could reach, redirects followed, which made a user-chosen URL
+  a server-side request forgery risk; the type is now passed to RubyLLM instead, so it doesn't. Pass
+  `Image.from_url(url, media_type: "image/png")` or use a URL that ends in an image extension. RubyLLM can still
+  download a URL image for a provider that can't fetch URLs itself (see
+  [Adapters](docs/adapters.md#known-risk-the-rubyllm-adapter-downloads-some-image-urls-itself)); the OpenAI-compatible
+  adapter never downloads. (#131)
 - **Behavior change:** a `Pathname` argument used to go out as text and now reads the file. The default `max_files` and
   `max_file_bytes` limits also apply to an explicit `Squishling::Image`, and a Hash's keys reach a sanitizer as Strings.
   (#130)

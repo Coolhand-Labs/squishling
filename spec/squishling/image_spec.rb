@@ -59,15 +59,26 @@ RSpec.describe Squishling::Image do
       image = described_class.from_url("https://example.com/r.png?sig=1", detail: :high)
 
       expect(image).to have_attributes(url?: true, url: "https://example.com/r.png?sig=1", detail: :high, data: nil,
-        data_uri: nil, filename: nil, media_type: nil)
+        data_uri: nil, filename: nil, media_type: "image/png")
     end
 
-    it "refuses anything but an http or https URL, and a media type" do
+    it "reads the media type from the path's extension, ignoring the query, or takes the one given" do
+      expect(described_class.from_url("https://example.com/r.JPG?sig=1").media_type).to eq("image/jpeg")
+      expect(described_class.from_url("https://example.com/r").media_type).to be_nil
+      expect(described_class.from_url("https://example.com/r", media_type: "image/webp").media_type).to eq("image/webp")
+      expect(described_class.from_url("https://example.com/r.png", media_type: :"image/gif").media_type)
+        .to eq("image/gif")
+    end
+
+    it "refuses a media type that isn't an image type Squishling sends" do
+      expect { described_class.from_url("https://example.com/r", media_type: "application/pdf") }
+        .to raise_error(Squishling::ConfigurationError, /media_type must be one of/)
+    end
+
+    it "refuses anything but an http or https URL" do
       ["file:///etc/passwd", "ftp://example.com/a.png", "not-a-url", "https://example.com/a b.png"].each do |url|
         expect { described_class.from_url(url) }.to raise_error(Squishling::ConfigurationError, /http or https/)
       end
-      expect { described_class.new(url: "https://example.com/a.png", media_type: "image/png") }
-        .to raise_error(Squishling::ConfigurationError, /takes no media_type/)
     end
 
     it "keeps a refused URL out of the error" do

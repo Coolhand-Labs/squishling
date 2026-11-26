@@ -47,7 +47,6 @@ RSpec.describe "Files passed to a squished call" do # rubocop:disable RSpec/Desc
 
       def initialize(attachment) = @attachment = attachment
       def attached? = !attachment.nil?
-      def to_squishling = { attached: attached? }
     end
   end
   let(:many_class) do
@@ -56,7 +55,6 @@ RSpec.describe "Files passed to a squished call" do # rubocop:disable RSpec/Desc
 
       def initialize(attachments) = @attachments = attachments
       def attached? = attachments.any?
-      def to_squishling = { attached: attached? }
     end
   end
   let(:upload_class) do
@@ -68,8 +66,6 @@ RSpec.describe "Files passed to a squished call" do # rubocop:disable RSpec/Desc
         @content_type = content_type
         @original_filename = original_filename
       end
-
-      def to_squishling = { filename: original_filename }
     end
   end
 
@@ -188,8 +184,8 @@ RSpec.describe "Files passed to a squished call" do # rubocop:disable RSpec/Desc
     end
 
     it "sends a collection or slot of things that aren't files as they were" do
-      many = many_class.new([1, 2])
-      one = one_class.new(3)
+      many = Class.new(many_class) { def to_squishling = { count: attachments.size } }.new([1, 2])
+      one = Class.new(one_class) { def to_squishling = { attached: attached? } }.new(3)
 
       request = sent_request(many:, one:)
 
@@ -202,6 +198,41 @@ RSpec.describe "Files passed to a squished call" do # rubocop:disable RSpec/Desc
 
       expect(sent_request(holder:).arguments["holder"]).to eq("download" => "x", "content_type" => "text/plain",
         "byte_size" => 1)
+    end
+
+    it "leaves an OpenStruct with a download member to be sent as its members, never read as a blob" do
+      holder = OpenStruct.new(download: "https://signed.example/x?sig=1", content_type: "text/plain", byte_size: 1) # rubocop:disable Style/OpenStructUse
+
+      expect(sent_request(holder:).arguments["holder"]).to eq(
+        "download" => "https://signed.example/x?sig=1", "content_type" => "text/plain", "byte_size" => 1
+      )
+    end
+
+    it "lets a class's to_squishling say what it is before anything guesses it is a file" do
+      called = []
+      presenter = Class.new do
+        define_method(:download) { (called << :download) && "bytes" }
+        define_method(:content_type) { "text/plain" }
+        define_method(:byte_size) { 5 }
+        define_method(:to_squishling) { { title: "Receipt" } }
+      end.new
+
+      request = sent_request(presenter:)
+
+      expect(request.arguments["presenter"]).to eq("title" => "Receipt")
+      expect(called).to be_empty
+    end
+
+    it "lets to_squishling return a file, which is then read" do
+      presenter = Class.new do
+        define_method(:initialize) { |bytes| @bytes = bytes }
+        define_method(:to_squishling) { StringIO.new(@bytes) }
+      end.new(png)
+
+      request = sent_request(presenter:)
+
+      expect(request.images.size).to eq(1)
+      expect(request.arguments["presenter"]).to eq("attached_image" => 1)
     end
   end
 
@@ -225,7 +256,8 @@ RSpec.describe "Files passed to a squished call" do # rubocop:disable RSpec/Desc
     end
 
     it "doesn't treat an upload without a tempfile, or a stream that can't read a length, as a file" do
-      upload = upload_class.new(nil, "image/png", "r.png")
+      described = Class.new(upload_class) { def to_squishling = { filename: original_filename } }
+      upload = described.new(nil, "image/png", "r.png")
       odd = Class.new do
         def read = "x"
         def rewind = nil

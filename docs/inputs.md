@@ -41,7 +41,15 @@ Squishling recognizes these by what they respond to, so no ActiveStorage or Rack
 | A binary String that starts with a known file signature (PDF, PNG, JPEG, GIF, WebP, TIFF, HEIC) | that file: what `download`, `File.binread`, or a webhook body returns |
 | An `http(s)` `URI` whose path ends in an image extension | an image URL the provider fetches |
 
-What a file is comes from its bytes, then its declared type, then its name's extension. A text String is never read
+What a file is comes from its bytes, then its declared type, then its name's extension.
+
+An object is recognized by the methods it answers (`download`, `read`, `attachment`, and so on), which is a guess, so
+anything you said explicitly comes first. In order: a class that defines `to_squishling` is sent as what that returns
+(and if it returns a file, the file is read); an `OpenStruct` is sent as its members, even when they are named
+`download` or `content_type`; then the shapes in the table above are read as files. A `Struct`, `Data`, `Hash`, `Set`,
+and `Array` are walked as containers before any of this, and `to_squishling` is not consulted on them.
+
+ A text String is never read
 as a file: a string that names a path would let input choose which file leaves the process, and a text String that
 happens to start with `%PDF-` is still text. Only the LLM path reads files: the Ruby path gets exactly what was passed.
 

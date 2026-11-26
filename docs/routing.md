@@ -303,7 +303,9 @@ All members are sent, so pass a Hash or define `to_h` to leave a field out.
 request: serializing it with `as_json` or `to_json` would send every attribute, and an easy mistake would leak them.
 Pass a Hash instead, or define `to_squishling` on the class to return what the model should see; its return value (a
 Hash, a Struct, or anything else listed here) is converted the same way. `to_squishling` is for these other objects: a
-`Struct`, `Data`, `OpenStruct`, or Hash subclass is sent as its members, so use `to_h` to shape one.
+`Struct`, `Data`, `OpenStruct`, or Hash subclass is sent as its members, so use `to_h` to shape one. `to_squishling` is
+checked before anything is guessed about the object, so a presenter that also answers `download` or `content_type` is
+sent as what `to_squishling` returns and is never read as a [file](inputs.md); an `OpenStruct` is always its members.
 
 ```ruby
 class Receipt

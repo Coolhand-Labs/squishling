@@ -150,9 +150,37 @@ RSpec.describe Squishling::Adapters::RubyLLM do
       expect(sources).to eq(["https://example.com/r.png"])
     end
 
+    it "gives an image URL its media type, so RubyLLM never downloads it to find the type out" do
+      stub_chat("{}")
+      byext = Squishling::Image.from_url("https://example.com/r.png")
+      given = Squishling::Image.from_url("https://example.com/get/123?sig=1", media_type: "image/jpeg")
+      content = [{ type: :text, text: "go" }, { type: :image, image: byext }, { type: :image, image: given }]
+
+      adapter.complete(adapter_request(messages: [{ role: :user, content: }]))
+
+      expect(chats.first.attached.flatten).to contain_exactly(
+        have_attributes(mime_type: "image/png"), have_attributes(mime_type: "image/jpeg")
+      )
+    end
+
+    it "refuses an image URL that doesn't say what it is, before RubyLLM could download it" do
+      stub_chat("{}")
+      linked = Squishling::Image.from_url("https://example.com/get/123?token=s3cret")
+      allow(RubyLLM::Attachment).to receive(:new).and_call_original
+      messages = [{ role: :user, content: [{ type: :image, image: linked }] }, { role: :assistant, content: "bad" },
+                  { role: :user, content: "again" }]
+
+      expect { adapter.complete(adapter_request(messages:)) }
+        .to raise_error(Squishling::ConfigurationError, /media type of an image given by URL.*media_type:/m) { |error|
+          expect(error.message).not_to include("s3cret")
+        }
+      expect(RubyLLM::Attachment).not_to have_received(:new)
+      expect(chats.first.asked).to be_empty
+    end
+
     it "reports a failure building a history attachment as an LLMError, like one from the request" do
       stub_chat("{}")
-      linked = Squishling::Image.from_url("https://example.com/r")
+      linked = Squishling::Image.from_url("https://example.com/r.png")
       allow(RubyLLM::Attachment).to receive(:new).and_raise(Faraday::ConnectionFailed, "down")
       messages = [{ role: :user, content: [{ type: :image, image: linked }] }, { role: :assistant, content: "bad" },
                   { role: :user, content: "again" }]

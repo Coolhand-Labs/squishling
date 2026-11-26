@@ -99,16 +99,16 @@ module Squishling
 
       private
 
-      # The conversation so far added to the chat, then its last message asked. Building an attachment can fetch an
-      # image's URL (RubyLLM reads the media type from the response when the URL has no extension), so the history is
-      # guarded like the request itself.
+      # The conversation so far added to the chat, then its last message asked. Building an attachment can still make
+      # RubyLLM fetch an image's URL (for a provider that can't fetch URLs itself), so the history is guarded like the
+      # request itself.
       def replay_and_ask(chat, request)
         *history, last = request.messages
         history.each do |message|
-          text, attachments = split(message[:content])
+          text, attachments = split(message[:content], request)
           chat.add_message({ role: message[:role], content: text, attachments: }.compact)
         end
-        ask(chat, request, *split(last[:content]))
+        ask(chat, request, *split(last[:content], request))
       end
 
       # RubyLLM checks a caching option against the provider when it renders the request, and raises ArgumentError for
@@ -123,21 +123,35 @@ module Squishling
       end
 
       # A message's text and its files as RubyLLM attachments (nil when it has none).
-      def split(content)
+      def split(content, request)
         return [content, nil] unless content.is_a?(Array)
 
         text = content.filter_map { |part| part[:text] if part[:type] == :text }.join("\n\n")
-        files = content.filter_map { |part| attachment(part[:image] || part[:file]) if part[:type] != :text }
+        files = content.filter_map { |part| attachment(part[:image] || part[:file], request) if part[:type] != :text }
         [text, files]
       end
 
-      def attachment(file)
-        return ::RubyLLM::Attachment.new(file.url, filename: file.filename, resolution: file.detail) if file.url?
+      # An image given by URL is built with its media type. Without one RubyLLM downloads the URL from this process to
+      # read the type from the response (any host it can reach, redirects followed), so a URL image that doesn't say
+      # what it is, by its extension or a media_type:, is a ConfigurationError rather than a request.
+      def attachment(file, request)
+        return url_attachment(file, request) if file.url?
 
         source = StringIO.new(file.data)
         return ::RubyLLM::Attachment.new(source, filename: file.filename, resolution: file.detail) if file.is_a?(Image)
 
         ::RubyLLM::Attachment.new(source, filename: file.filename, mime_type: file.media_type)
+      end
+
+      def url_attachment(file, request)
+        unless file.media_type
+          raise configuration_error(request,
+            "the RubyLLM adapter needs the media type of an image given by URL, so it doesn't download the URL to " \
+            "find out: use Squishling::Image.from_url(url, media_type: \"image/png\") (or a URL ending in .png, " \
+            ".jpg, .jpeg, .gif, or .webp)")
+        end
+
+        ::RubyLLM::Attachment.new(file.url, mime_type: file.media_type, resolution: file.detail)
       end
 
       def tokens_of(response)

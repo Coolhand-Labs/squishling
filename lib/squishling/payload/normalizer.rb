@@ -64,9 +64,16 @@ module Squishling
         InputRejectedError.single("a String can't be converted to UTF-8", label: @label, path:)
       end
 
-      # A file (see Attachment) is read; an object that is none is the plain data it serializes to, so a sanitizer is
-      # offered what is sent (a model's attributes, not the model).
+      # What isn't a String, Exception, or container (those are handled in #call), in this order, so the most explicit
+      # word about an object wins: what its to_squishling says to send; an OpenStruct's members; a file (see
+      # Attachment), which is read; and last the plain data it serializes to, so a sanitizer is offered what is sent
+      # (a model's attributes, not the model). A file is recognized by the methods it answers, which is only a guess:
+      # an object that defines to_squishling has said what it is, and an OpenStruct whose members happen to be named
+      # download or content_type is data, not a file.
       def other(value, containers, path)
+        return squishling(value, containers, path) if value.respond_to?(:to_squishling)
+        return members(value, containers, path) if open_struct?(value)
+
         node = located(path) { Attachment.read(value, @label) }
         return plain(value, containers, path) if Attachment::NOT_A_FILE.equal?(node)
 
@@ -74,28 +81,26 @@ module Squishling
         node
       end
 
-      # Anything that isn't a JSON primitive, a Time, Date or URI, or a container is refused unless its class defines
-      # to_squishling (whose return value is sent in its place, cycle-guarded like any container): as_json/to_json
-      # would send every attribute of, say, an ActiveRecord model.
-      def plain(value, containers, path)
-        return members(value, containers, path) if open_struct?(value)
-        return value if scalar?(value)
-        return squishling(value, containers, path) unless plain_type?(value)
-
-        data = Schema.jsonify(value)
-        data.is_a?(Hash) || data.is_a?(Array) ? call(data, containers, path) : data
-      rescue JSON::JSONError => e
-        raise InputRejectedError.single(Payload.unrepresentable(e), label: @label, path:), cause: nil
+      # What to_squishling returns is sent in its place, converted like any argument and cycle-guarded like any
+      # container: as_json/to_json would send every attribute of, say, an ActiveRecord model.
+      def squishling(value, containers, path)
+        within(value, containers) { |inner| call(value.to_squishling, inner, path) }
       end
 
-      def squishling(value, containers, path)
-        unless value.respond_to?(:to_squishling)
+      # Anything that isn't a JSON primitive, a Time, Date or URI is refused (it reached here without a to_squishling).
+      def plain(value, containers, path)
+        return value if scalar?(value)
+
+        unless plain_type?(value)
           raise ConfigurationError,
             "#{@label}: #{value.class} can't be sent as JSON, because that could send all of its attributes. " \
             "Pass a plain Hash, or define #{value.class}#to_squishling to return what the model should see"
         end
 
-        within(value, containers) { |inner| call(value.to_squishling, inner, path) }
+        data = Schema.jsonify(value)
+        data.is_a?(Hash) || data.is_a?(Array) ? call(data, containers, path) : data
+      rescue JSON::JSONError => e
+        raise InputRejectedError.single(Payload.unrepresentable(e), label: @label, path:), cause: nil
       end
 
       def plain_type?(value)
