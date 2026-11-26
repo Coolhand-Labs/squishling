@@ -374,6 +374,116 @@ RSpec.describe Squishling, "#squish!" do
     end
   end
 
+  describe "arguments that aren't plain data" do
+    let(:klass) do
+      Class.new do
+        include Squishling
+
+        purpose "Explain."
+        output_schema { string :name }
+        squish_context :tier
+
+        def tier = "gold"
+        def call(data:) = data && squish!
+      end
+    end
+    let(:record) do
+      Class.new do
+        def as_json(*) = { "id" => 1, "secret" => "s3cr3t" }
+        def to_json(*args) = JSON.generate(as_json, *args)
+      end
+    end
+
+    def sent(chats) = JSON.parse(chats.first.messages.first)["arguments"]["data"]
+
+    it "refuses an object with as_json, naming its class and none of its attributes" do
+      chats = stub_llm({ "name" => "Ada" })
+
+      expect { klass.call(data: record.new) }
+        .to raise_error(Squishling::ConfigurationError, /can't be sent as JSON.*to_squishling/) { |error|
+          expect(error.message).not_to include("s3cr3t")
+        }
+      expect(chats).to be_empty
+    end
+
+    it "refuses a Range and a plain object, even inside a Hash, an Array, or a Struct" do
+      chats = stub_llm({ "name" => "Ada" })
+      holder = Struct.new(:item)
+
+      [1..2, Object.new].each do |value|
+        [{ a: value }, [value], holder.new(value)].each do |data|
+          expect { klass.call(data:) }.to raise_error(Squishling::ConfigurationError, /can't be sent as JSON/)
+        end
+      end
+      expect(chats).to be_empty
+    end
+
+    it "refuses it in a squish! call's context: too" do
+      context_klass = Class.new do
+        include Squishling
+
+        purpose "Explain."
+        output_schema { string :name }
+
+        def call(item:) = squish!(context: { item: })
+      end
+      chats = stub_llm({ "name" => "Ada" })
+
+      expect { context_klass.call(item: record.new) }.to raise_error(Squishling::ConfigurationError, /can't be sent/)
+      expect(chats).to be_empty
+    end
+
+    it "sends what to_squishling returns, walking it like any argument" do
+      inner = Class.new { def to_squishling = Struct.new(:id).new(1) }
+      outer = Class.new do
+        define_method(:initialize) { |nested| @nested = nested }
+        define_method(:to_squishling) { { id: 7, nested: @nested } }
+      end
+      chats = stub_llm({ "name" => "Ada" })
+
+      klass.call(data: outer.new(inner.new))
+
+      expect(sent(chats)).to eq("id" => 7, "nested" => { "id" => 1 })
+    end
+
+    it "raises a ConfigurationError for a to_squishling that returns itself or a cycle" do
+      chats = stub_llm({ "name" => "Ada" })
+      itself_back = Class.new { def to_squishling = self }.new
+
+      expect { klass.call(data: itself_back) }.to raise_error(Squishling::ConfigurationError, /contains itself/)
+      expect(chats).to be_empty
+    end
+
+    it "refuses what to_squishling returns when that is itself unsupported" do
+      chats = stub_llm({ "name" => "Ada" })
+      hands_back_range = Class.new { def to_squishling = 1..2 }.new
+
+      expect { klass.call(data: hands_back_range) }
+        .to raise_error(Squishling::ConfigurationError, /Range can't be sent as JSON/)
+      expect(chats).to be_empty
+    end
+
+    it "raises a ConfigurationError for a to_squishling that leads back to a container holding it" do
+      chats = stub_llm({ "name" => "Ada" })
+      holder = []
+      loops_back = Class.new { define_method(:to_squishling) { holder } }.new
+      holder << loops_back
+
+      expect { klass.call(data: holder) }.to raise_error(Squishling::ConfigurationError, /contains itself/)
+      expect(chats).to be_empty
+    end
+
+    it "still sends nil, booleans, strings, symbols, numbers, Times and Dates" do
+      chats = stub_llm({ "name" => "Ada" })
+      time = Time.utc(2026, 1, 2, 3, 4, 5)
+
+      klass.call(data: [nil, true, false, "s", :sym, 1, 1.5, time, Date.new(2026, 1, 2), DateTime.new(2026, 1, 2)])
+
+      expect(sent(chats).first(7)).to eq([nil, true, false, "s", "sym", 1, 1.5])
+      expect(sent(chats).drop(7).map(&:class)).to all(eq(String))
+    end
+  end
+
   it "sends an exception passed as an argument as its class and message" do
     klass = Class.new do
       include Squishling

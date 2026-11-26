@@ -5,8 +5,10 @@ module Squishling
   module Router
     # One squished call in progress. `phase` is :routing (deciding, e.g. running squish_when), :ruby (running
     # the implementation), or :llm (on the LLM path, including any fallback); `handed_off` records that squish!
-    # already sent it to the LLM.
-    Frame = Struct.new(:receiver, :definition, :wrapper, :inputs, :phase, :handed_off)
+    # already sent it to the LLM. supplied is the CallId::Handle that gave this call its id (see CallId), or nil.
+    Frame = Struct.new(:receiver, :definition, :wrapper, :inputs, :phase, :handed_off, :supplied) do
+      def call_id = supplied&.call_id
+    end
 
     FRAMES_KEY = :__squishling_frames__
 
@@ -17,7 +19,8 @@ module Squishling
         end
 
         definition = receiver.class.squishling_definition(name)
-        frame = Frame.new(receiver, definition, wrapper, definition.bind_arguments(args, kwargs), :routing, false)
+        frame = Frame.new(receiver, definition, wrapper, definition.bind_arguments(args, kwargs), :routing, false,
+          CallId.claim)
         frames.push(frame)
         begin
           return route_to_llm(frame, definition, "predicate") if definition.squish?(receiver, frame.inputs)
@@ -56,6 +59,11 @@ module Squishling
 
       private
 
+      # The first squish_rescue declaration that matches the error gives the options of the hand-off.
+      def rescue_overrides(definition, error)
+        definition.klass.squishling_rescues.find { |declared| declared.match?(error) }.overrides_for(error)
+      end
+
       # The coerce is in `else`, so the rescues never see its errors.
       def run_ruby(frame, definition, receiver, impl)
         frame.phase = :ruby
@@ -67,10 +75,10 @@ module Squishling
         raise if frame.handed_off || !Wrapper.stub?(e)
 
         route_to_llm(frame, definition, "not implemented")
-      rescue *definition.rescued_errors => e
+      rescue *definition.klass.squishling_rescues.flat_map(&:errors) => e
         raise if frame.handed_off || unrescuable?(e)
 
-        hand_off(receiver, definition.rescue_overrides(e), "squish_rescue #{e.class}")
+        hand_off(receiver, rescue_overrides(definition, e), "squish_rescue #{e.class}")
       else
         ruby_seconds = Apprentice.clock - started
         definition.coerce(value).tap do |result|
@@ -96,7 +104,7 @@ module Squishling
         log(definition, reason)
         previous = frame.phase
         frame.phase = :llm
-        definition.invoke_llm(frame.receiver, frame.inputs)
+        definition.invoke_llm(frame.receiver, frame.inputs, call_id: frame.call_id, supplied: frame.supplied)
       ensure
         frame.phase = previous
       end

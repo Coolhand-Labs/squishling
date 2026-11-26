@@ -144,11 +144,15 @@ The rest runs in the job, against the same instance: the escalation (with any `i
 
 ## Identifying the request
 
-Every squished call that reaches the LLM gets a `call_id` (a UUID), and each of its requests a `request_id`
+Every squished call that reaches the LLM gets a `call_id` (a UUID, or your own, from
+[`Squishling.with_call_id`](observers.md#supplying-your-own-call-id) or a
+[`call_id:` declaration](observers.md#declaring-the-call-id), which a shadow run reads unless its `when:` skips the call),
+and each of its requests a `request_id`
 (`"<call_id>.1"`, `".2"`, ... in the order they start). Observers see both on their [`call`](observers.md#the-call), and
 `squawk` metadata has the `call_id`. A report's `request_id` names the request whose output was accepted: for an
 escalation, the attempt that passed; for a judged squishsum, the sample the judge picked. So the report can be joined
-with whatever an observer recorded about that request.
+with whatever an observer recorded about that request. A call that wasn't shadowed (the LLM answered it) gets its
+accepted request from the handle `with_call_id` yields (`accepted_request_id`), since after a retry it is not always `.1`.
 
 ### Coolhand Labs
 

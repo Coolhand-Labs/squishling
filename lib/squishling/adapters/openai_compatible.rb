@@ -52,12 +52,16 @@ module Squishling
       # over plain http to a host that isn't loopback; without it that is a ConfigurationError. max_response_bytes:
       # the most a response (an error body too) may hold, 8 MiB by default. total_timeout: the most seconds one
       # attempt may take (read_timeout restarts at every read); it defaults to open_timeout + 2 * read_timeout.
+      # media_types: the types the server takes (the four image types by default, and application/pdf for OpenAI's
+      # own endpoint); a call with another is refused before any request.
       # Responses are requested and accepted uncompressed only. Raises ConfigurationError for a bad option.
       def initialize(base_url: DEFAULT_BASE_URL, api_key: nil, headers: {}, default_model: nil, open_timeout: 10,
         read_timeout: 120, max_retries: 2, max_tokens_param: :max_completion_tokens, structured_output: :json_schema,
-        allow_insecure_http: false, max_response_bytes: DEFAULT_MAX_RESPONSE_BYTES, total_timeout: nil)
+        allow_insecure_http: false, max_response_bytes: DEFAULT_MAX_RESPONSE_BYTES, total_timeout: nil,
+        media_types: nil)
         super()
         @endpoint = Options.endpoint(base_url)
+        @media_types = Options.media_types(media_types, @endpoint)
         @api_key = (Secret.new(api_key) unless api_key.nil?)
         @headers = Secret.new(Options.headers(headers))
         @allow_insecure_http = Options.flag(:allow_insecure_http, allow_insecure_http)
@@ -77,9 +81,13 @@ module Squishling
           "default_model=#{@default_model.inspect} structured_output=#{@structured_output.inspect}>"
       end
 
-      # Images go out as image_url content parts (a data: URI, or the image's own URL).
+      # Images go out as image_url content parts (a data: URI, or the image's own URL), documents as file parts.
       def images?
         true
+      end
+
+      def media_types(_step = nil)
+        @media_types
       end
 
       def complete(request)

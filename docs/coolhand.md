@@ -67,6 +67,29 @@ So `Parser#call/squish:L2` is the second attempt of `Parser#call`, e.g. `Parser#
 - `observer = :coolhand` loads the gem when it is assigned, so assign it after `coolhand` is available (the default
   needs no ordering).
 
+## Correlating with your own ids
+
+Give a call your own id (with `with_call_id`, or a [`call_id:` declaration](observers.md#declaring-the-call-id)), and Coolhand's `client_unique_id` for its requests is built from it (`"<id>.1"`, `"<id>.2"`, ...),
+so you can send feedback against a request without storing Squishling's UUID:
+
+```ruby
+request_id = nil
+Squishling.with_call_id("ticket-123") do |call|
+  triage.call(ticket)
+  request_id = call.accepted_request_id # "ticket-123.1", or ".2" and up after a retry or escalation
+end
+
+Coolhand.flush # logs are sent in the background; make sure this one has been delivered
+Coolhand.feedback_service.create_feedback(client_unique_id: request_id, sentiment: "like")
+```
+
+Requests are numbered in the order they start, so the request whose output was accepted is `"<id>.1"` only when nothing
+was retried or escalated. Feedback belongs on the accepted one: read it from the handle `with_call_id` yields
+(`accepted_request_id`, `nil` when the call ran only Ruby or a fallback answered), or from a report's or review's
+`request_id` for an [apprentice](apprentice.md#identifying-the-request) shadow run.
+
+It needs coolhand 0.12.0 or later, and the id and reuse rules in [Observers](observers.md#supplying-your-own-call-id).
+
 ## Apprentice feedback
 
 With [apprentice mode](apprentice.md), every shadow run also becomes feedback in Coolhand on the request whose output was

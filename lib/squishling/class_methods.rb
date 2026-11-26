@@ -35,9 +35,12 @@ module Squishling
     # apprentice_mode: returns the Ruby result and runs the LLM alongside it, to compare the two (see Apprentice); true,
     # or a Hash of when:, compare: and report:, and false turns off an inherited one:
     #   squishling apprentice_mode: { when: ->(**) { rand < 0.05 }, report: ->(match:, metadata:, **) { ... } }
+    # call_id: names an input whose value is each call's id (see Squishling.with_call_id, which wins for the call it
+    # names), or is a Proc that gets the inputs as keywords and returns it; false turns off an inherited one:
+    #   squishling call_id: :record_id
     def squishling(model: nil, escalation: nil, provider: nil, params: nil, cache: nil, harness: nil, purpose: nil,
       append_to_purpose: nil, output_schema: nil, squawk: nil, squawk_on: nil, max_total_output_tokens: nil,
-      max_total_input_tokens: nil, apprentice_mode: nil)
+      max_total_input_tokens: nil, apprentice_mode: nil, call_id: nil)
       path = ModelPath.declare(model, escalation, to_s)
       # A provider belongs to the model declared at the same level. Without a model here it would apply to
       # nothing (the model comes from the config or a parent class), so it is an error unless this class already
@@ -57,7 +60,13 @@ module Squishling
       declare_squawk(squawk, squawk_on)
       declare_budget(max_total_output_tokens, max_total_input_tokens)
       declare_apprentice(apprentice_mode)
+      declare_call_id(call_id)
       self
+    end
+
+    # The class's (or nearest ancestor's) call_id: declaration (see CallId), nil when none declared it.
+    def squishling_call_id
+      squishling_lookup(:@squishling_call_id)
     end
 
     # The class's (or nearest ancestor's) apprentice setting (see Apprentice), nil when none declared it.
@@ -168,6 +177,31 @@ module Squishling
       squishling_lookup(:@squishling_validator)
     end
 
+    # Filters or rewrites everything a call would send (the arguments, squish_context values, and a squish! call's
+    # context:) before any request, evaluated against the instance: a de-identifier for health data, a converter for a
+    # fax's TIFF, a scan for malware. It is offered every node of the input, parents first, and returns what the model
+    # gets instead. The block takes the keywords it needs: value (a Hash, Array, String, number, nil, or a
+    # Squishling::Image or Document), path ("arguments.pages[1]"), and reject (call it with a message to refuse the
+    # call, listing every problem at once). The return value always replaces the node, so return value to keep it. A
+    # rejected call raises InputRejectedError, and runs neither the model nor squish_fallback. The Ruby path,
+    # squish_when, and squish_fallback still get the input as it was passed. The sanitizers of the configuration,
+    # each class in the chain, and the method all run, in that order: none can switch another off.
+    #   squish_sanitize do |value:, **|
+    #     value.is_a?(String) ? value.gsub(/\b\d{3}-\d{2}-\d{4}\b/, "[SSN]") : value
+    #   end
+    def squish_sanitize(hook = nil, &block)
+      hook = block if hook.nil?
+      raise ConfigurationError, "#{self} squish_sanitize needs a block or a callable" if hook.nil?
+
+      (@squishling_sanitizers ||= []) << Sanitizer.validate(hook, to_s)
+      self
+    end
+
+    # The class chain's sanitizers, a superclass's first.
+    def squishling_sanitizers
+      squishling_inherited(:squishling_sanitizers, []) + (@squishling_sanitizers || [])
+    end
+
     # Instance state (attributes or instance variables) to send to the LLM alongside the arguments.
     def squish_context(*names)
       (@squishling_context_names ||= []).concat(names.map(&:to_sym))
@@ -181,15 +215,16 @@ module Squishling
     #   squish :triage, purpose: "...", escalation: %w[claude-haiku-4-5 claude-sonnet-5-5], when: ->(**) { true },
     #                   fallback: ->(error, **) { { priority: "medium" } }, append_to_purpose: [...],
     #                   validate: ->(result, **) { "team is required" if result.team.empty? },
+    #                   sanitize: ->(value:, **) { value.is_a?(String) ? value.strip : value },
     #                   harness: :squishsum, max_total_output_tokens: 25_000,
     #                   squawk: ->(output:, error:, **) { Tracer.record(output, error) },
-    #                   squawk_on: :retries, apprentice_mode: { report: ->(match:, **) { ... } } do
+    #                   squawk_on: :retries, apprentice_mode: { report: ->(match:, **) { ... } }, call_id: :ticket_id do
     #     string :priority
     #   end
     def squish(*names, purpose: nil, append_to_purpose: nil, output_schema: nil, model: nil, escalation: nil,
       provider: nil, params: nil, cache: nil, harness: nil, when: nil, fallback: nil, validate: nil,
-      squawk: nil, squawk_on: nil, max_total_output_tokens: nil, max_total_input_tokens: nil, apprentice_mode: nil,
-      &schema_block)
+      sanitize: nil, squawk: nil, squawk_on: nil, max_total_output_tokens: nil, max_total_input_tokens: nil,
+      apprentice_mode: nil, call_id: nil, &schema_block)
       schema = schema_block ? Schematist::Schema.create(&schema_block) : output_schema
       model = ModelPath.declare(model, escalation, "#{self} squish")
       raise ConfigurationError, "#{self} squish: provider: needs a model: or escalation:" if provider && !model
@@ -200,13 +235,15 @@ module Squishling
       unless append_to_purpose.nil?
         append_to_purpose = Appendices.normalize(append_to_purpose, "#{self} squish append_to_purpose")
       end
+      sanitize = Sanitizer.validate(sanitize, "#{self} squish")
       squawk = Squawk.validate(squawk, "#{self} squish")
       squawk_on = Squawk.validate_on(squawk_on, "#{self} squish")
       budget = Budget.build("#{self} squish", output: max_total_output_tokens, input: max_total_input_tokens)
       apprentice = Apprentice.normalize(apprentice_mode, "#{self} squish")
+      call_id = CallId.normalize_source(call_id, "#{self} squish")
       options = { purpose:, append_to_purpose:, output_schema: schema, model:, provider:, params:, cache:, harness:,
-                  predicate: binding.local_variable_get(:when), fallback:, validator: validate, squawk:,
-                  squawk_on:, budget:, apprentice: }.compact
+                  predicate: binding.local_variable_get(:when), fallback:, validator: validate,
+                  sanitizer: sanitize, squawk:, squawk_on:, budget:, apprentice:, call_id: }.compact
 
       names.map(&:to_sym).each do |name|
         (@squishling_methods ||= {})[name] = options
@@ -266,6 +303,11 @@ module Squishling
     # nil leaves the level unset (so the parent's applies); false is stored, to turn an inherited one off.
     def declare_apprentice(apprentice)
       @squishling_apprentice = Apprentice.normalize(apprentice, to_s) unless apprentice.nil?
+    end
+
+    # nil leaves the level unset (so the parent's applies); false is stored, to turn an inherited one off.
+    def declare_call_id(call_id)
+      @squishling_call_id = CallId.normalize_source(call_id, to_s) unless call_id.nil?
     end
 
     # Adds the class's own token limits to those it declared before.

@@ -15,7 +15,8 @@ module Squishling
 
     def initialize(klass:, name:, purpose: nil, append_to_purpose: nil, output_schema: nil, model: nil,
       provider: nil, params: nil, cache: nil, harness: nil, predicate: nil, fallback: nil, validator: nil,
-      squawk: nil, squawk_on: nil, budget: nil, apprentice: nil, call_context: {}, handed_off: false)
+      sanitizer: nil, squawk: nil, squawk_on: nil, budget: nil, apprentice: nil, call_id: nil, call_context: {},
+      handed_off: false)
       @klass = klass
       @name = name
       @purpose = purpose
@@ -29,10 +30,12 @@ module Squishling
       @predicate = predicate
       @fallback = fallback
       @validator = validator
+      @sanitizer = sanitizer
       @squawk = squawk
       @squawk_on = squawk_on
       @budget = budget || {}
       @apprentice = apprentice
+      @call_id = call_id
       @call_context = call_context
       @handed_off = handed_off
       @apprentice_run = false
@@ -55,7 +58,7 @@ module Squishling
       call_budget = Budget.build("#{label} squish!", output: max_total_output_tokens, input: max_total_input_tokens)
       self.class.new(
         klass:, name:, output_schema: @output_schema, predicate: @predicate, fallback: @fallback,
-        validator: @validator, squawk: @squawk, squawk_on: @squawk_on,
+        validator: @validator, sanitizer: @sanitizer, squawk: @squawk, squawk_on: @squawk_on, call_id: @call_id,
         purpose: purpose || @purpose,
         append_to_purpose: [*@append_to_purpose, *appended],
         model: call_path || @model, provider: call_path ? provider : @provider,
@@ -74,9 +77,16 @@ module Squishling
       dup.tap { |copy| copy.instance_variable_set(:@apprentice_run, true) }
     end
 
-    def label
-      "#{klass}##{name}"
+    def label = "#{klass}##{name}"
+
+    # The id of one call (see CallId): the one the caller gave (supplied, from Squishling.with_call_id), else what the
+    # method's (or its class's) call_id: declaration gives, else nil, for a generated UUID.
+    def call_id_for(receiver, inputs, supplied = nil)
+      supplied || CallId.declared(call_id_source, receiver, inputs, label)
     end
+
+    # The call_id: declaration the method resolves to (its own over its class's).
+    def call_id_source = @call_id.nil? ? klass.squishling_call_id : @call_id
 
     # The system prompt: the purpose, then each append_to_purpose section.
     def purpose(receiver)
@@ -168,6 +178,10 @@ module Squishling
       @validator || klass.squishling_validator
     end
 
+    # The sanitizers a call runs, in order: the configuration's, each class in the chain (see
+    # ClassMethods#squish_sanitize), then the method's. All of them run.
+    def sanitizers = [*Squishling.config.sanitizers, *klass.squishling_sanitizers, @sanitizer].compact
+
     # The squish_fallback handler: the method's, else the class's (nil when there is none).
     def fallback
       @fallback || klass.squishling_fallback
@@ -209,14 +223,6 @@ module Squishling
       !Wrapper.implementation(klass.instance_method(name)).nil?
     end
 
-    def rescued_errors
-      klass.squishling_rescues.flat_map(&:errors)
-    end
-
-    def rescue_overrides(error)
-      klass.squishling_rescues.find { |declared| declared.match?(error) }.overrides_for(error)
-    end
-
     def squish?(receiver, inputs)
       return false unless predicate
 
@@ -225,8 +231,9 @@ module Squishling
 
     # Runs the elastic path. When the LLM fails (InvalidOutputError or LLMError) and a fallback is
     # declared, the fallback's return value is used instead, coerced like a deterministic return.
-    def invoke_llm(receiver, inputs)
-      Invoker.new(self, receiver, inputs).call
+    # supplied is the CallId::Handle that gave the call its id (Squishling.with_call_id), told the accepted request.
+    def invoke_llm(receiver, inputs, call_id: nil, supplied: nil)
+      Invoker.new(self, receiver, inputs, call_id: call_id_for(receiver, inputs, call_id), supplied:).call
     rescue InvalidOutputError, LLMError => e
       handler = fallback
       raise unless handler

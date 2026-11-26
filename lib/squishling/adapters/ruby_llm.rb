@@ -52,6 +52,18 @@ module Squishling
         true
       end
 
+      # What the step's model reads, from RubyLLM's model registry. A model it lists without image input takes no
+      # images, and none of the files either (a text-only model), so a call with any is refused before any request.
+      # Otherwise it takes every type: the registry is often behind on PDF input, so a model it doesn't list for it is
+      # left to the provider, whose refusal (a 400) is a RequestRejectedError. Every type for a model it doesn't know.
+      def media_types(step = nil)
+        modalities = input_modalities(step)
+        return [] if modalities && !modalities.include?("image") && !modalities.include?("pdf")
+
+        [*(Image::MEDIA_TYPES.keys if modalities.nil? || modalities.include?("image")),
+         *Document::MEDIA_TYPES.keys]
+      end
+
       # A System One judgment (RubyLLM.judge) on one step. The step's params are sent as provider options.
       # RubyLLM raises ArgumentError for a judgment it can't build (e.g. a model on a provider that takes none, or
       # a provider option its protocol reserves), and a bare RubyLLM::Error without an HTTP response for a provider
@@ -110,18 +122,22 @@ module Squishling
           "RubyLLM rejected the request, cache #{request.cache.inspect} (#{e.message})")
       end
 
-      # A message's text and its images as RubyLLM attachments (nil when it has none).
+      # A message's text and its files as RubyLLM attachments (nil when it has none).
       def split(content)
         return [content, nil] unless content.is_a?(Array)
 
         text = content.filter_map { |part| part[:text] if part[:type] == :text }.join("\n\n")
-        images = content.filter_map { |part| attachment(part[:image]) if part[:type] == :image }
-        [text, images]
+        files = content.filter_map { |part| attachment(part[:image] || part[:file]) if part[:type] != :text }
+        [text, files]
       end
 
-      def attachment(image)
-        source = image.url? ? image.url : StringIO.new(image.data)
-        ::RubyLLM::Attachment.new(source, filename: image.filename, resolution: image.detail)
+      def attachment(file)
+        return ::RubyLLM::Attachment.new(file.url, filename: file.filename, resolution: file.detail) if file.url?
+
+        source = StringIO.new(file.data)
+        return ::RubyLLM::Attachment.new(source, filename: file.filename, resolution: file.detail) if file.is_a?(Image)
+
+        ::RubyLLM::Attachment.new(source, filename: file.filename, mime_type: file.media_type)
       end
 
       def tokens_of(response)
@@ -242,6 +258,17 @@ module Squishling
         options = { model:, provider: }.compact
         options[:assume_model_exists] = true if model && provider && !known_model?(model, provider)
         options
+      end
+
+      # The model's input modalities, or nil when they aren't known: no model named, one RubyLLM has no entry for, or
+      # an entry that lists none.
+      def input_modalities(step)
+        return unless step&.model
+
+        input = ::RubyLLM.models.find(step.model, provider: step.provider).modalities.input
+        input unless input.empty?
+      rescue ::RubyLLM::ModelNotFoundError
+        nil
       end
 
       def known_model?(model, provider)

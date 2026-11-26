@@ -28,6 +28,11 @@ module Squishling
         true
       end
 
+      # The fake takes every type, so a spec isn't refused for a file the real adapter would take.
+      def media_types(_step = nil)
+        Payload::SENDABLE
+      end
+
       # Every request so far, in the order they arrived (Testing::Request).
       def requests
         @lock.synchronize { @requests.dup }
@@ -190,6 +195,11 @@ module Squishling
 
       def images?
         true
+      end
+
+      # The fake takes every type, so a spec isn't refused for a file the real adapter would take.
+      def media_types(_step = nil)
+        Payload::SENDABLE
       end
 
       def complete(request)

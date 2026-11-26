@@ -25,14 +25,15 @@ module Squishling
         end
 
         # The first request a call would make, without making it: { system_prompt:, user_message:, images:,
-        # output_schema:, step: } (images are the Squishling::Images sent with the message; the step is the
-        # ModelPath::Step with the model, provider and params; rotation isn't advanced).
+        # documents:, output_schema:, step: } (the Squishling::Images and Documents sent with the message; the step
+        # is the ModelPath::Step with the model, provider and params; rotation isn't advanced).
         def preview(klass, method: :call, receiver: nil, args: [], **kwargs)
           definition = klass.squishling_definition(method)
           receiver ||= klass.new
           inputs = definition.bind_arguments(args, kwargs)
           prompt = Invoker.new(definition, receiver, inputs).prompt
           { system_prompt: prompt.instructions, user_message: prompt.input, images: prompt.images,
+            documents: prompt.documents,
             output_schema: prompt.schema.llm_schema["schema"],
             step: definition.escalation_path(receiver, inputs, advance: false).first }
         end

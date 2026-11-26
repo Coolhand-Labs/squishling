@@ -58,8 +58,18 @@ module Squishling
 
       # The Squishling::Images sent with the conversation's first message (empty when none were).
       def images
+        parts.filter_map { |part| part[:image] if part[:type] == :image }
+      end
+
+      # The Squishling::Documents sent with the conversation's first message (empty when none were).
+      def documents
+        parts.filter_map { |part| part[:file] if part[:type] == :file }
+      end
+
+      # The content parts of the conversation's first message (none when it is plain text).
+      def parts
         content = messages.first&.fetch(:content, nil)
-        content.is_a?(Array) ? content.filter_map { |part| part[:image] if part[:type] == :image } : []
+        content.is_a?(Array) ? content : []
       end
 
       # The JSON payload of the first user message, parsed (an escalation message wraps it in its own text).
@@ -70,7 +80,7 @@ module Squishling
         {}
       end
 
-      # A message's text: the content itself, or its text part when it carries images.
+      # A message's text: the content itself, or its text part when it carries files.
       def self.text_of(content)
         return content unless content.is_a?(Array)
 
