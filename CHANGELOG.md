@@ -7,6 +7,79 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-11-26
+
+Files and PDFs as plain inputs, a sanitizer over everything sent, a way to declare which Ruby errors the LLM recovers,
+apprentice mode to measure a model against your Ruby, and caller-supplied call ids. Read **Changed** before upgrading:
+an argument that isn't plain data is now refused rather than serialized, and a `Pathname` argument now reads the file.
+
+### Added
+
+- Files as plain inputs. Callers no longer wrap a file in `Squishling::Image`: a blob (Active Storage), upload, `File`,
+  `StringIO`, `Pathname`, or binary String passed as an argument (or inside a Hash or Array, or as a `squish_context`
+  value) is read as an image, a PDF (`Squishling::Document`), or text (HL7, FHIR, CSV). The JSON input carries
+  `{"attached_image": N}` or `{"attached_document": N}` in its place, and the same file passed twice is attached once.
+  `config.max_files` (20) and `config.max_file_bytes` (20 MB) cap what one call sends. Adapters declare what they take
+  with `Adapter::Base#media_types(step)`: the RubyLLM adapter reads each model's modalities, and the OpenAI-compatible
+  adapter sends PDFs as `file` parts, by default only to `api.openai.com`. A custom adapter that only defines `images?`
+  keeps getting images. See [Inputs](docs/inputs.md). (#130)
+- `squish_sanitize` (also `squish ... sanitize:` and `config.sanitizer`): a block offered every node of the input before
+  any request, which returns what the model gets. Redact a value, convert a fax's TIFF or an iPhone's HEIC, or refuse
+  with `reject.call`. The class, method, and config levels compose and none can be switched off; the Ruby path and
+  `squish_fallback` still see the raw input. See [Inputs](docs/inputs.md). (#130)
+- `Squishling::InputRejectedError`: raised before any request when a sanitizer rejects, a file is empty, unreadable, over
+  `max_files`/`max_file_bytes`, or of a type no adapter sends. `rejections` lists each problem by input path, never a
+  value, bytes, or a file name. It is not a `ConfigurationError`, and `squish_fallback` doesn't absorb it. (#130)
+- `squish_rescue`: declares, once per class, which errors from the Ruby implementation the LLM recovers, in place of a
+  hand-written `rescue ParseError => e; squish!(..., context: { error: e })` in every method. It takes the options of
+  `squish!` plus `as:`, the context key of the error (`:error` by default). Only the Ruby path is rescued; a Squishling
+  error is never rescued, and the first matching declaration wins. The error reaches the provider as its class and
+  message, like any exception in context. `Squishling.verify` checks each declaration. See
+  [Rescuing declared errors](docs/routing.md#rescuing-declared-errors-with-squish_rescue). (#126, thanks @agrberg)
+- Apprentice mode: `apprentice_mode:` (class or method, with `when:`, `compare:`, and `report:`) returns the validated
+  Ruby result to the caller and runs the LLM path on the same inputs alongside it, on every call or a sample, then
+  compares the two typed results and hands them to a report hook and to observers. A failure of the shadow run goes to
+  the hook's `error:` and a log line, never to the caller. `config.apprentice_runner` (`:inline`, a `:thread` pool, or a
+  callable) keeps the LLM off the caller's thread, and `config.apprentice_enabled = false` is a kill switch.
+  `Squishling::Testing` gains `disable_apprentice!`/`without_apprentice`, `script.apprentice`,
+  `requests_for(apprentice:)`, and `with_apprentice`. See [Apprentice mode](docs/apprentice.md). (#113)
+- Every call has a `call_id` and every request a `request_id` (`"<call_id>.<n>"`), on `Observer::Call`, `squawk`
+  metadata, and apprentice reports. With the `coolhand` gem the Coolhand observer tags each log with it and sends the
+  Ruby result as feedback on the accepted request. (#113)
+- `Squishling.with_call_id("ticket-123") { ... }` gives the first squished call started in the block your id instead of
+  a generated UUID, and `call_id:` on `squishling` and `squish` takes each call's id from an input or a Proc. The id is
+  validated up front, goes to observers, `squawk`, and reports, and never to the provider; `Squishling.verify` checks a
+  declared one. See [Observers](docs/observers.md). (#127)
+- The block of `with_call_id` is yielded a `CallId::Handle` with `call_id` and `accepted_request_id`, the request that
+  answered the call (`nil` for a Ruby-only call or a fallback). After a retry or an escalation that is `.2` or higher, so
+  send feedback to it, not to `.1`. A block, lambda, or method that takes no argument keeps working. (#129)
+- A class may define `to_squishling` to say what the model sees of it; see **Changed**. (#128)
+
+### Changed
+
+- **Breaking:** an argument or `squish_context` value that isn't plain data now raises `ConfigurationError`, naming its
+  class and never its values, before any request. Plain data is `nil`, booleans, Strings, Symbols, numbers, `Time`,
+  `Date`, `URI`, Hashes, Arrays, `Set`, `Struct`, `Data`, `OpenStruct`, exceptions, and files. Before, anything else went
+  through `as_json`/`to_json`, so an ActiveRecord model sent every attribute. A custom `to_json` or `as_json` no longer
+  controls what is sent (ActiveSupport defines both on every object): pass a Hash, or define `to_squishling` on the class
+  to return what the model should see (cycle-guarded, and converted like any argument). `Squishling::Testing` helpers
+  apply the same check. See [Routing](docs/routing.md). (#128, #130)
+- **Behavior change:** a `Pathname` argument used to go out as text and now reads the file. The default `max_files` and
+  `max_file_bytes` limits also apply to an explicit `Squishling::Image`, and a Hash's keys reach a sanitizer as Strings.
+  (#130)
+- `Squishling.with_call_id`'s block is yielded a `CallId::Handle`; code whose block takes no argument works unchanged.
+  (#129)
+
+### Internal
+
+- Development dependencies: `ruby_llm` 2.2.3, RuboCop 1.92.3, and WebMock 3.36.0; `ruby/setup-ruby` 1.343.0 in CI;
+  `rubygems/release-gem` 1.4.2 in the Publish workflow, which fixes the `await-release` step that turned the v0.7.0
+  Publish run red after the gem was pushed. (#112, #114, #115, #117, #118)
+
+### Thanks
+
+- Welcome and thank you to @agrberg, whose first contribution to Squishling, #126, adds `squish_rescue`.
+
 ## [0.7.0] - 2026-11-23
 
 Images as call inputs, mixing adapters in one escalation, and structured Ruby values that now reach the model as

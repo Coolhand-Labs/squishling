@@ -243,17 +243,18 @@
 </header>
 
 <aside class="release" id="latest-release" aria-label="Latest release">
-  <p class="kicker">Latest release · v0.7.0 · <time datetime="2026-11-23">November 23, 2026</time></p>
-  <p>Squishling turns any Ruby class into a hybrid of code and LLM inference working together. v0.7.0 lets a method read
-  images, gives you more control over which models do the inferring, and sends the model cleaner data.</p>
+  <p class="kicker">Latest release · v0.8.0 · <time datetime="2026-11-26">November 26, 2026</time></p>
+  <p>Squishling turns any Ruby class into a hybrid of code and LLM inference working together. v0.8.0 lets a method take
+  real files, puts you in control of exactly what the model is sent, and lets you measure a model against your Ruby
+  before it serves a single call.</p>
   <ul>
-    <li>🖼️ <strong>Images as inputs:</strong> pass a <code>Squishling::Image</code> (from a file, bytes, or URL) to a squished method and the model reads it, with no OCR step. Only build one from a URL or path you trust</li>
-    <li>🔀 <strong>Mix adapters in one escalation:</strong> name adapters in <code>config.adapters</code> and pick one per step with <code>adapter:</code>, so a single method can try Apple FM, then Claude Code, then Ollama</li>
-    <li>🧱 <strong>Structs reach the model as structure:</strong> a <code>Struct</code>, <code>Data</code>, <code>OpenStruct</code> or <code>Set</code> argument is now sent as an object or array of its members instead of Ruby's <code>inspect</code> text. Pass a Hash or define <code>to_h</code> to leave a field out</li>
-    <li>🧪 <strong>Tests and observers know the adapter:</strong> <code>Observer::Call#adapter</code>, and <code>step(adapter:)</code> in test scripts</li>
-    <li>🔎 <strong>Verified ahead of time:</strong> <code>Squishling.verify</code> catches an unknown adapter name before any request</li>
+    <li>📄 <strong>Files as plain inputs:</strong> pass a blob, upload, <code>File</code>, or <code>Pathname</code> and the model reads the image, PDF, or text (HL7, FHIR, CSV), with no wrapping step</li>
+    <li>🧼 <strong>Sanitize everything sent:</strong> <code>squish_sanitize</code> sees every part of the input before any request, so you can redact, convert a fax's TIFF or an iPhone's HEIC, or refuse the call</li>
+    <li>🛡️ <strong>No accidental data leaks:</strong> an argument that isn't plain data, such as an ActiveRecord model, is now refused instead of sent with every attribute. Pass a Hash or define <code>to_squishling</code></li>
+    <li>🩹 <strong>Let the LLM recover declared errors:</strong> <code>squish_rescue</code> hands a call to the model when your Ruby raises an error you named, once per class, thanks to @agrberg</li>
+    <li>🧑‍🎓 <strong>Apprentice mode and your own call ids:</strong> run the LLM alongside your Ruby and compare the two results, and name each call with <code>Squishling.with_call_id</code> so feedback lands on the request that answered</li>
   </ul>
-  <p class="more"><a href="https://github.com/Coolhand-Labs/squishling/releases/tag/v0.7.0">Release notes</a> ·
+  <p class="more"><a href="https://github.com/Coolhand-Labs/squishling/releases/tag/v0.8.0">Release notes</a> ·
   <a href="https://github.com/Coolhand-Labs/squishling/blob/main/CHANGELOG.md">Changelog</a></p>
 </aside>
 
