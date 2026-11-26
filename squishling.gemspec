@@ -12,8 +12,9 @@ Gem::Specification.new do |spec|
                  "and code only where it's worth maintaining."
   spec.description = "Squishling makes Ruby classes elastic. Add a squishling to a class and it can send inputs " \
                      "straight to an LLM (OpenAI, Anthropic Claude, Google Gemini, or any provider RubyLLM " \
-                     "supports) and return strict-schema-validated, typed results: the same type your Ruby code " \
-                     "returns. Use it to gracefully maintain fickle integrations, build interfaces for unknown " \
+                     "supports, or any OpenAI-compatible endpoint, or your own adapter) and return " \
+                     "strict-schema-validated, typed results: the same type your Ruby code returns. Use it to " \
+                     "gracefully maintain fickle integrations, build interfaces for unknown " \
                      "data formats, and rescue production errors by handing the failing call to the LLM with the " \
                      "source class as context. Write Ruby only for the paths where token costs justify " \
                      "maintaining it. Per-input routing, validated retries, and fallbacks for your LLM calls " \
@@ -41,7 +42,6 @@ Gem::Specification.new do |spec|
   spec.require_paths = ["lib"]
 
   spec.add_dependency "json_schemer", "~> 2.0"
-  spec.add_dependency "ruby_llm", "~> 2.1"
   spec.add_dependency "schematist", "~> 1.1"
 
   spec.metadata["rubygems_mfa_required"] = "true"

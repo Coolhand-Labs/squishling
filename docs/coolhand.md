@@ -62,5 +62,55 @@ So `Parser#call/squish:L2` is the second attempt of `Parser#call`, e.g. `Parser#
 - The description never contains the purpose text, which can be a proc that differs per call. The workload's key
   and name stay `Class#method` either way, so calls that went through `squish!` and calls that didn't share one
   workload.
+- With coolhand 0.12.0 or later (whose `Coolhand.with_context` takes `client_unique_id:`), each request is also tagged
+  with its [`request_id`](observers.md#the-call), so feedback can name it (see below).
 - `observer = :coolhand` loads the gem when it is assigned, so assign it after `coolhand` is available (the default
   needs no ordering).
+
+## Correlating with your own ids
+
+Give a call your own id (with `with_call_id`, or a [`call_id:` declaration](observers.md#declaring-the-call-id)), and Coolhand's `client_unique_id` for its requests is built from it (`"<id>.1"`, `"<id>.2"`, ...),
+so you can send feedback against a request without storing Squishling's UUID:
+
+```ruby
+request_id = nil
+Squishling.with_call_id("ticket-123") do |call|
+  triage.call(ticket)
+  request_id = call.accepted_request_id # "ticket-123.1", or ".2" and up after a retry or escalation
+end
+
+Coolhand.flush # logs are sent in the background; make sure this one has been delivered
+Coolhand.feedback_service.create_feedback(client_unique_id: request_id, sentiment: "like")
+```
+
+Requests are numbered in the order they start, so the request whose output was accepted is `"<id>.1"` only when nothing
+was retried or escalated. Feedback belongs on the accepted one: read it from the handle `with_call_id` yields
+(`accepted_request_id`, `nil` when the call ran only Ruby or a fallback answered), or from a report's or review's
+`request_id` for an [apprentice](apprentice.md#identifying-the-request) shadow run.
+
+It needs coolhand 0.12.0 or later, and the id and reuse rules in [Observers](observers.md#supplying-your-own-call-id).
+
+## Apprentice feedback
+
+With [apprentice mode](apprentice.md), every shadow run also becomes feedback in Coolhand on the request whose output was
+accepted:
+
+| Outcome | Feedback |
+|---|---|
+| The LLM matched the Ruby result | `sentiment: "like"` |
+| It differed | `sentiment: "dislike"`, with the Ruby result (JSON) as `revised_output` |
+| The shadow run failed, or `compare:` raised | none |
+
+The feedback finds its log by `client_unique_id`, the request's `request_id`. So it needs:
+
+- **coolhand 0.12.0 or later**, which tags each log with that id (`Coolhand.with_context(client_unique_id:)`).
+  Squishling checks for it: with an older gem, no feedback is sent and everything else works as before.
+- **A Coolhand server that stores `client_unique_id` on logs and matches feedback by it**, which Coolhand added
+  alongside coolhand 0.12.0.
+
+Squishling doesn't depend on the coolhand gem; add `gem "coolhand", ">= 0.12"` to your own Gemfile. The feedback is
+sent from the shadow run's job as soon as the run ends. Coolhand sends its logs from a background queue, so the
+feedback can reach Coolhand before the log it names; whether it is still attached then is up to the Coolhand server,
+which matches the two by `client_unique_id`. With a [background runner](apprentice.md#running-it-in-the-background),
+sending it adds nothing to the call's latency. Each apprentice request's workload is described as
+`Class#method (apprentice)`, under the same workload and template keys as the method's other calls.

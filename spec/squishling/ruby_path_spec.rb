@@ -275,178 +275,45 @@ RSpec.describe Squishling::RubyPath do
     end
   end
 
-  describe "squish_rescue" do
-    let(:raising) do
+  describe "next to squish_rescue" do
+    let(:klass) do
       parser do
-        def call(record:)
-          raise ArgumentError, "no comma in #{record.inspect}" unless record.include?(",")
+        squish_validate(both_paths: true)
+        squish_rescue ArgumentError
 
-          { name: record.split(",").first }
+        def call(record:)
+          raise ArgumentError, "no comma" unless record.include?(",")
+
+          record.start_with?("bad") ? { nope: record } : { name: record.split(",").first }
         end
       end
     end
 
-    it "hands a named error to the LLM as its class and message, never a backtrace" do
-      chats = stub_llm({ "name" => "Ada" })
-      klass = Class.new(raising) { squish_rescue ArgumentError }
-
-      result = klass.call(record: "Ada")
-
-      expect(result.squished?).to be(true)
-      expect(context_of(chats.first)).to eq(
-        "ruby_error" => { "class" => "ArgumentError", "message" => 'no comma in "Ada"' }
-      )
-    end
-
-    it "lets other errors propagate" do
-      chats = stub_llm
-      klass = Class.new(raising) { squish_rescue KeyError }
-
-      expect { klass.call(record: "Ada") }.to raise_error(ArgumentError)
-      expect(chats).to be_empty
-    end
-
-    it "accepts several classes, and a subclass of a named class" do
-      stub_llm({ "name" => "A" }, { "name" => "B" })
-      klass = Class.new(raising) { squish_rescue KeyError, StandardError }
+    it "hands a raised error to the LLM through squish_rescue, and a rejected return through both_paths" do
+      chats = stub_llm({ "name" => "A" }, { "name" => "B" })
 
       expect(klass.call(record: "Ada").squished?).to be(true)
-      expect(Class.new(klass).call(record: "Ada").squished?).to be(true)
+      expect(klass.call(record: "bad,1").squished?).to be(true)
+      expect(context_of(chats.first)).to eq("error" => { "class" => "ArgumentError", "message" => "no comma" })
+      expect(context_of(chats.last).keys).to eq(%w[ruby_draft ruby_problems])
     end
 
-    it "raises the LLM's failure with the Ruby error as the cause" do
-      stub_llm(RubyLLM::ServerError.new("boom"))
-      klass = Class.new(raising) { squish_rescue ArgumentError }
-
-      expect { klass.call(record: "Ada") }.to raise_error(Squishling::LLMError)
-    end
-
-    it "goes to squish_fallback when the LLM fails" do
-      stub_llm("not json")
-      klass = Class.new(raising) do
-        squish_rescue ArgumentError
-        squish_fallback { |_error, **| { name: "fallback" } }
-      end
-
-      result = klass.call(record: "Ada")
-
-      expect(result.name).to eq("fallback")
-      expect(result.squished?).to be(false)
-    end
-
-    it "cuts a very long error message" do
-      chats = stub_llm({ "name" => "Ada" })
-
-      parser do
-        squish_rescue IOError
-        def call(*) = raise(IOError, "x" * 10_000)
-      end.call(record: "Ada")
-
-      expect(context_of(chats.first)["ruby_error"]["message"].size).to eq(Squishling::Invoker::MAX_FORWARDED_CHARS)
-    end
-
-    it "sends another squished object's failure as an error (class and message only), never its raw output" do
-      inner = parser do
-        purpose "Inner."
-        squish_when { |**| true }
-      end
-      chats = stub_llm("SECRET raw output", { "name" => "Ada" })
-      outer = Class.new(parser) do
-        squish_rescue Squishling::InvalidOutputError
-        define_method(:call) { |record:| inner.call(record:) }
-      end
-
-      outer.call(record: "no comma")
-
-      context = context_of(chats.last)
-      expect(context.keys).to eq(["ruby_error"])
-      expect(JSON.generate(context)).not_to include("SECRET")
-    end
-
-    it "never takes a ConfigurationError" do
+    it "keeps a valid return in Ruby" do
       chats = stub_llm
-      klass = parser do
-        squish_rescue StandardError
-        def call(*) = raise(Squishling::ConfigurationError, "bad setup")
-      end
 
-      expect { klass.call(record: "Ada") }.to raise_error(Squishling::ConfigurationError, "bad setup")
+      expect(klass.call(record: "Ada,1").squished?).to be(false)
       expect(chats).to be_empty
     end
 
-    it "keeps raising its own errors in a class with no purpose to hand over" do
+    it "does not hand off an error nobody declared" do
       chats = stub_llm
-      klass = Class.new do
-        include Squishling
-
-        output_schema { string :name }
-        squish_rescue ArgumentError
-
-        def call(record:) = raise(ArgumentError, "typing only: #{record}")
+      other = parser do
+        squish_validate(both_paths: true)
+        def call(*) = raise(KeyError, "missing")
       end
 
-      expect { klass.call(record: "x") }.to raise_error(ArgumentError, "typing only: x")
+      expect { other.call(record: "x") }.to raise_error(KeyError)
       expect(chats).to be_empty
-    end
-
-    it "is not handed off twice when the method already did, or when the LLM's own failure comes back out" do
-      chats = stub_llm(RubyLLM::ServerError.new("boom"))
-      klass = parser do
-        squish_rescue ArgumentError
-
-        def call(*)
-          raise ArgumentError, "no"
-        rescue ArgumentError
-          squish!(context: { record: "x" })
-        end
-      end
-
-      expect { klass.call(record: "Ada") }.to raise_error(Squishling::LLMError)
-      expect(chats.size).to eq(1)
-    end
-
-    it "is inherited by subclasses, and names add up across calls and down the chain" do
-      stub_llm({ "name" => "Ada" })
-      parent = Class.new(raising) { squish_rescue ArgumentError }
-      child = Class.new(parent) { squish_rescue KeyError }
-      child.send(:squish_rescue, IOError)
-
-      expect(child.call(record: "Ada").squished?).to be(true)
-      expect(child.squishling_rescue).to eq([ArgumentError, KeyError, IOError])
-    end
-
-    it "does not change that Ruby's own rejected return follows both_paths, even naming InvalidOutputError" do
-      chats = stub_llm
-      klass = parser { squish_rescue Squishling::InvalidOutputError }
-
-      expect { klass.call(record: "Ada") }.to raise_error(Squishling::InvalidOutputError, /Deterministic/)
-      expect(chats).to be_empty
-    end
-
-    it "needs StandardError classes, or options" do
-      expect do
-        parser do
-          squish_rescue "ArgumentError"
-        end
-      end.to raise_error(Squishling::ConfigurationError, /StandardError/)
-      expect { parser { squish_rescue ScriptError } }.to raise_error(Squishling::ConfigurationError, /StandardError/)
-      expect { parser { squish_rescue } }.to raise_error(Squishling::ConfigurationError, /classes or options/)
-      expect { parser { squish_rescue false } }.to raise_error(Squishling::ConfigurationError, /StandardError/)
-    end
-
-    it "logs the hand-off with the error class, never its message" do
-      logger = instance_double(Logger, debug: nil)
-      allow(logger).to receive(:warn)
-      Squishling.config.logger = logger
-      stub_llm({ "name" => "Ada" })
-
-      parser do
-        squish_rescue ArgumentError
-        def call(record:) = raise(ArgumentError, "secret #{record}")
-      end.call(record: "Ada")
-
-      expect(logger).to have_received(:warn).with(/ruby raised ArgumentError, handing off/)
-      expect(logger).not_to have_received(:warn).with(/secret/)
     end
   end
 
@@ -489,101 +356,6 @@ RSpec.describe Squishling::RubyPath do
 
       expect(child.call(record: "Ada").squished?).to be(false)
       expect(chats).to be_empty
-    end
-  end
-
-  describe "squish_rescue options" do
-    it "send the squish! overrides, such as a stronger model, with every hand-off" do
-      chats = stub_llm({ "name" => "Ada" })
-
-      parser do
-        squish_validate(both_paths: true)
-        squish_rescue model: "claude-opus-5-5"
-      end.call(record: "Ada")
-
-      expect(chats.first.model).to eq("claude-opus-5-5")
-    end
-
-    it "do not apply to calls that never failed" do
-      chats = stub_llm({ "name" => "Ada" })
-      klass = parser do
-        squish_rescue model: "claude-opus-5-5"
-        squish_when { |record:| record == "llm" }
-      end
-
-      klass.call(record: "llm")
-
-      expect(chats.first.model).not_to eq("claude-opus-5-5")
-    end
-
-    it "keep the named classes as inherited when they are given alone" do
-      child = Class.new(Class.new(parser) { squish_rescue KeyError }) { squish_rescue model: "claude-opus-5-5" }
-
-      expect(child.squishling_rescue).to eq([KeyError])
-    end
-
-    it "fail at declaration when invalid" do
-      expect { parser { squish_rescue ArgumentError, provider: :openai } }
-        .to raise_error(Squishling::ConfigurationError, /squish_rescue provider/)
-      expect { parser { squish_rescue ArgumentError, context: { a: 1 } } }.to raise_error(ArgumentError)
-    end
-
-    it "replace a model declared earlier in the same class when an escalation follows" do
-      chats = stub_llm({ "name" => "A" })
-      klass = parser do
-        squish_validate(both_paths: true)
-        squish_rescue model: "claude-haiku-4-5"
-        squish_rescue escalation: %w[claude-opus-5-5]
-      end
-
-      klass.call(record: "x")
-
-      expect(chats.first.model).to eq("claude-opus-5-5")
-    end
-
-    it "add sections after the note, with false dropping what is above" do
-      chats = stub_llm({ "name" => "A" }, { "name" => "B" })
-
-      parser do
-        squish_validate(both_paths: true)
-        squish_rescue append_to_purpose: "From the class."
-      end.call(record: "x")
-      parser do
-        squish_validate(both_paths: true)
-        squish_rescue append_to_purpose: [false, "Only this."]
-      end.call(record: "x")
-
-      sections = chats.first.instructions.split("\n\n")
-      expect(sections.index { |text| text.start_with?("The Ruby implementation") })
-        .to be < sections.index("From the class.")
-      expect(chats.last.instructions).to include("Parse the record.\n\nOnly this.\n\nThe input is a JSON")
-      expect(chats.last.instructions).not_to include("The Ruby implementation")
-    end
-
-    it "accumulate down the chain" do
-      parent = parser do
-        squish_validate(both_paths: true)
-        squish_rescue append_to_purpose: "Parent."
-      end
-      child = Class.new(parent) { squish_rescue append_to_purpose: "Child." }
-      chats = stub_llm({ "name" => "A" })
-
-      child.call(record: "x")
-
-      expect(chats.first.instructions).to include("Parent.\n\nChild.\n\nThe input is a JSON")
-    end
-
-    it "mention the Ruby source only when it was appended" do
-      chats = stub_llm({ "name" => "A" }, { "name" => "B" })
-
-      parser { squish_validate(both_paths: true) }.call(record: "x")
-      parser do
-        squish_validate(both_paths: true)
-        append_to_purpose "The Ruby:", self
-      end.call(record: "x")
-
-      expect(chats.first.instructions).not_to include(described_class::SOURCE_NOTE)
-      expect(chats.last.instructions).to include(described_class::SOURCE_NOTE)
     end
   end
 end

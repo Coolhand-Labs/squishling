@@ -1,14 +1,29 @@
 # frozen_string_literal: true
 
 require "json"
+require "securerandom"
 require "json_schemer"
-require "ruby_llm"
 require "schematist"
 
 require_relative "squishling/version"
 require_relative "squishling/errors"
 require_relative "squishling/configuration"
 require_relative "squishling/params"
+require_relative "squishling/cache"
+require_relative "squishling/named_registry"
+require_relative "squishling/secret"
+require_relative "squishling/concealed"
+require_relative "squishling/image"
+require_relative "squishling/document"
+require_relative "squishling/attachment"
+require_relative "squishling/adapter/error_body"
+require_relative "squishling/adapter"
+require_relative "squishling/adapters/ruby_llm"
+require_relative "squishling/adapters/openai_options"
+require_relative "squishling/adapters/openai_transport"
+require_relative "squishling/adapters/openai_content"
+require_relative "squishling/adapters/openai_compatible"
+require_relative "squishling/keyword_hook"
 require_relative "squishling/squawk"
 require_relative "squishling/observer"
 require_relative "squishling/observers/coolhand"
@@ -23,20 +38,35 @@ require_relative "squishling/harness/judged_squishsum"
 require_relative "squishling/harness"
 require_relative "squishling/result"
 require_relative "squishling/schema"
+require_relative "squishling/payload"
+require_relative "squishling/payload/normalizer"
 require_relative "squishling/source"
 require_relative "squishling/appendices"
 require_relative "squishling/definition"
+require_relative "squishling/budget"
 require_relative "squishling/llm_client"
 require_relative "squishling/output_check"
+require_relative "squishling/sanitizer"
 require_relative "squishling/run/messages"
+require_relative "squishling/run/rejections"
+require_relative "squishling/run/reports"
 require_relative "squishling/run"
 require_relative "squishling/invoker"
 require_relative "squishling/ruby_path"
+require_relative "squishling/apprentice"
+require_relative "squishling/apprentice/shadow"
+require_relative "squishling/apprentice/thread_runner"
+require_relative "squishling/call_id"
 require_relative "squishling/judge"
+require_relative "squishling/rescue"
 require_relative "squishling/router"
 require_relative "squishling/wrapper"
 require_relative "squishling/class_methods"
 require_relative "squishling/collisions"
+require_relative "squishling/class_registry"
+require_relative "squishling/verification"
+require_relative "squishling/verifier"
+require_relative "squishling/railtie" if defined?(Rails::Railtie)
 
 # Include Squishling in a class to make it elastic: its squished methods either run their
 # Ruby implementation or send their inputs through an LLM and return schema-validated results.
@@ -48,6 +78,21 @@ module Squishling
 
     def configure
       yield config
+    end
+
+    # Runs the block with call_id as the id of the first squished call it starts, instead of a generated UUID. The id
+    # reaches observers (Observer::Call#call_id, and "<call_id>.<n>" as each request_id, which the Coolhand observer
+    # sends as client_unique_id), squawk metadata and apprentice reports, never the provider. Any other squished call in
+    # the block gets a generated id; the first keeps the id even when it only runs Ruby. Keeping ids unique across
+    # blocks is up to the caller. Raises ConfigurationError for an id that isn't a String of 1-250 characters without
+    # surrounding whitespace or control or invisible characters. Returns the block's value. The block is given a
+    # CallId::Handle: #call_id, and #accepted_request_id, the request whose output the call accepted (requests are
+    # numbered as they start, so after a retry it is not always "<call_id>.1"; nil until the call ends, and when it
+    # only ran Ruby or a squish_fallback answered). See docs/observers.md.
+    def with_call_id(call_id, &)
+      raise ConfigurationError, "with_call_id needs a block" unless block_given?
+
+      CallId.with(call_id, &)
     end
 
     def reset_config!
@@ -73,6 +118,47 @@ module Squishling
     # The names of the harnesses that can be declared: the built-ins, then those registered.
     def harnesses
       Harness.types
+    end
+
+    # Registers a custom adapter class (see Adapter::Base) under a name, usable as config.adapter = :name, or
+    # config.adapter = { type: :name, option: value } for an adapter whose initialize takes options. To use an adapter
+    # without registering it, assign an instance: config.adapter = MyAdapter.new. Raises ConfigurationError for a name
+    # that is invalid or already taken, including the built-in :ruby_llm and :openai_compatible.
+    def register_adapter(name, klass)
+      Adapter::Registry.register(name, klass)
+    end
+
+    # The names of the adapters that can be configured: the built-ins, then those registered.
+    def adapters
+      Adapter::Registry.names
+    end
+
+    # Forgets the registered adapters (the built-ins stay), e.g. between specs.
+    def reset_adapters!
+      Adapter::Registry.reset!
+    end
+
+    # Every class that includes Squishling, and each subclass of one, that is loaded and hasn't been replaced by a
+    # reload. Classes are held weakly, so listing them doesn't keep reloaded ones alive. In Rails, eager load first
+    # (Rails.application.eager_load!) to include classes not yet autoloaded.
+    def squished_classes
+      ClassRegistry.classes
+    end
+
+    # Checks squished classes without making a request: each method's output schema and typed result, its resolved
+    # escalation, params, squawk and harness, and the keywords its include_when: and squish_when procs take. Checks
+    # the given classes, or every squished_classes when none are given. Returns a Verification::Report listing every
+    # problem found (ok? when none).
+    def verify(*classes)
+      Verifier.new(classes.empty? ? squished_classes : classes.flatten).call
+    end
+
+    # Like verify, but raises a VerificationError (a ConfigurationError) naming every problem. For CI and boot checks.
+    def verify!(*classes)
+      report = verify(*classes)
+      raise VerificationError, report unless report.ok?
+
+      report
     end
 
     def included(base)
@@ -109,10 +195,12 @@ module Squishling
   # it); return it from the method. The overrides apply to this call only: append_to_purpose adds to (or,
   # with false, replaces) the declared sections, context is sent alongside the declared squish_context,
   # model/escalation (one or the other)/provider/purpose/harness replace the declared ones, and params merge
-  # key by key over them.
+  # key by key over them. cache: replaces the declared prompt caching setting (false turns it off, see Cache).
+  # max_total_output_tokens/max_total_input_tokens cap what the call may spend across all its
+  # requests (false lifts a declared cap).
   def squish!(append_to_purpose: nil, context: nil, purpose: nil, model: nil, escalation: nil, provider: nil,
-    params: nil, harness: nil)
+    params: nil, cache: nil, harness: nil, max_total_output_tokens: nil, max_total_input_tokens: nil)
     Router.hand_off(self, { append_to_purpose:, context:, purpose:, model:, escalation:, provider:, params:,
-                            harness: })
+                            cache:, harness:, max_total_output_tokens:, max_total_input_tokens: })
   end
 end

@@ -30,6 +30,11 @@ output_schema(
 )
 ```
 
+A raw schema's `$ref`s must point inside the schema (`"#/$defs/address"`). Squishling resolves them when it builds the
+schema, so one that points nowhere (a remote URI, which is never fetched, or a `$defs` entry that doesn't exist)
+raises `Squishling::ConfigurationError` then, and [`Squishling.verify`](verifying.md) reports it, instead of failing on
+the first response.
+
 ## Describing fields
 
 Every DSL type, and `optional`, takes a `description:`. It is sent to the provider as guidance for that field
@@ -49,8 +54,10 @@ end
 
 ## Strict schemas only
 
-Squishling only supports **strict** output schemas: it always asks RubyLLM for strict structured output, and a
-schema declaring `strict: false` raises `Squishling::ConfigurationError`. RubyLLM 2.0 on its own would send a
+Squishling only supports **strict** output schemas: it always asks the adapter for strict structured output (the
+OpenAI-compatible adapter's `structured_output: :json_object` and `:none` modes are the explicit exception, for servers
+that lack it, where the schema goes into the prompt instead), and a schema declaring `strict: false` raises
+`Squishling::ConfigurationError`. Squishling validates every answer against the schema either way. RubyLLM 2.0 on its own would send a
 schema with optional properties non-strict; Squishling always sets the flag explicitly, so it stays strict.
 
 With raw hashes, follow your provider's strict-mode rules (e.g. list every property in `required` and set
@@ -74,6 +81,21 @@ r.line_items.first.description   # nested Data
 r.to_h                           # deep Hash with symbol keys
 r.squished?                      # => true when it came from the LLM
 ```
+
+A property can't share a name with a method the result depends on, because the `Data` member would replace it.
+Squishling raises `ConfigurationError` when the schema is built (before any request), naming the clashing
+fields; rename them (`class` to `ticket_class`). The reserved names are `class`, `is_a?`, `kind_of?`, `hash`, `inspect`, `to_s`,
+`to_h`, `members`, `with`, `dup`, `send`, `public_send`, `eql?`, `==`, `[]`, `squished?`, `object_id`,
+`deconstruct_keys`, and a few Ruby and Squishling internals (`initialize*`, `__send__`, `squishling_squished`).
+Other names, such as `method`, `format`, or `type`, work as usual. This applies to nested objects and array items too.
+
+With a hand-written Hash schema, every object schema that becomes a result (and so a nested result) must also say
+`type: "object"`; `allOf` parts and unions with several non-null branches aren't typed, so they are exempt. A schema with
+`properties` alone accepts a String or Array too (JSON Schema applies `properties` only to objects), which would end
+up in the typed result where a nested result belongs. Squishling raises `ConfigurationError` when the schema is built
+(and `Squishling.verify` reports it) for the root, a nested property, array `items`, the object branch of an
+`optional`, or a `$ref` target. A union that includes it, like `["object", "null"]`, is fine. The DSL always sets
+the type for you.
 
 On the deterministic path, return a `Hash` or build the result with `result(...)`. Either way it's validated
 against the schema, and so is anything else you return (`nil`, a string, another schema's result), which raises

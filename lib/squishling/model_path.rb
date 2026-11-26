@@ -12,18 +12,33 @@ module Squishling
   # instead of positional. Steps sharing a priority are one tier: each call rotates which of them goes first
   # (see Rotation), and the others follow before the next tier, unless a step in the tier sets rotate: false.
   # order: is the deprecated name of priority:. forward_rejected: false starts a step from the original input
-  # alone, without the previous step's rejected output.
+  # alone, without the previous step's rejected output. include_when: (a Proc, called like squish_when with the
+  # method's inputs as keywords, on the instance) drops the step from any call where it is falsy.
+  # retry_temperature: (a Numeric) is the temperature for the step's same-chat retries after the first attempt.
   module ModelPath
-    # One attempt: the model, its provider, the fully resolved generation params, and whether the previous
-    # step's rejected output is shown to it.
-    Step = Data.define(:model, :provider, :params, :forward_rejected) do
-      # The model for logs and messages (nil means RubyLLM's default model).
+    # One attempt: the model, its provider, the name of the adapter that makes the request (nil for the default
+    # one, see Configuration#adapters), the fully resolved generation params, whether the previous
+    # step's rejected output is shown to it, the temperature its retries in the same chat use, if any, and the
+    # prompt caching options to request (false for none, see Cache).
+    Step = Data.define(:model, :provider, :params, :forward_rejected, :retry_temperature, :cache, :adapter) do
+      def initialize(model:, provider:, params:, forward_rejected:, adapter: nil, retry_temperature: nil, cache: false)
+        super
+      end
+
+      # The params for a request: on a retry in the same chat (reask), the step's retry_temperature replaces the
+      # temperature, if it sets one.
+      def request_params(reask)
+        reask && retry_temperature ? Params.resolve(params, temperature: retry_temperature) : params
+      end
+
+      # The model for logs and messages (nil means the adapter's default model).
       def display_name
-        model || "RubyLLM default model"
+        model || "the adapter's default model"
       end
     end
 
-    STEP_KEYS = %i[model provider params attempts priority order rotate forward_rejected].freeze
+    STEP_KEYS = %i[model provider adapter params cache attempts priority order rotate forward_rejected include_when
+                   retry_temperature].freeze
 
     module_function
 
@@ -59,14 +74,28 @@ module Squishling
     end
 
     # One Step per attempt. The level's provider applies to steps that don't name their own, and each
-    # step's params are merged over the level-resolved params. turn is this call's place in the method's rotation
+    # step's params are merged over the level-resolved params, and its cache: replaces the level-resolved one (a Hash
+    # or false, see Cache). turn is this call's place in the method's rotation
     # (see Rotation): each tier of tied priorities starts turn steps further along.
-    def steps(path, provider:, params:, turn: 0)
+    def steps(path, provider:, params:, cache: false, turn: 0)
       rotated(path, turn).flat_map do |step|
-        attempt = Step.new(model: step[:model], provider: step[:provider] || provider,
-          params: Params.resolve(params, step[:params]), forward_rejected: step[:forward_rejected])
+        attempt = Step.new(model: step[:model], provider: step[:provider] || provider, adapter: step[:adapter],
+          params: Params.resolve(params, step[:params]), forward_rejected: step[:forward_rejected],
+          retry_temperature: step[:retry_temperature], cache: Cache.resolve(cache, step[:cache]))
         [attempt] * step[:attempts]
       end
+    end
+
+    # The steps this call may use: those without an include_when:, and those whose include_when: is truthy for the
+    # call's inputs (evaluated against the receiver, like squish_when). Priority order is kept.
+    def eligible(path, receiver, inputs, label)
+      kept = path.select do |step|
+        gate = step[:include_when]
+        gate.nil? || receiver.instance_exec(**inputs, &gate)
+      end
+      raise ConfigurationError, "#{label}: include_when: excluded every escalation step" if kept.empty?
+
+      kept
     end
 
     # Whether any tier of the path has several models to rotate between.
@@ -105,7 +134,8 @@ module Squishling
     def normalize_step(step, label, extras: [])
       case step
       when String, Symbol
-        { model: model_name(step, label), provider: nil, params: nil, attempts: 1, forward_rejected: true }
+        { model: model_name(step, label), provider: nil, adapter: nil, params: nil, cache: nil, attempts: 1,
+          forward_rejected: true }
       when Hash then normalize_hash(step, label, extras)
       else
         raise ConfigurationError, "#{label}: each step must be a model name or a Hash with model:, got #{step.inspect}"
@@ -134,6 +164,8 @@ module Squishling
         raise ConfigurationError, "#{label} (#{model}): rotate: must be true or false, got #{step[:rotate].inspect}"
       end
 
+      check_include_when!(step, label, model)
+      check_retry_temperature!(step, label, model)
       forward_rejected = step.fetch(:forward_rejected, true)
       unless [true, false].include?(forward_rejected)
         raise ConfigurationError,
@@ -141,16 +173,49 @@ module Squishling
       end
 
       params = step[:params] && Params.normalize(step[:params], "#{label} (#{model}) params")
-      normalized = { model:, provider: step[:provider], params:, attempts:, forward_rejected: }
-      normalized.merge(step.slice(:priority, :rotate, *extras))
+      cache = Cache.normalize(step[:cache], "#{label} (#{model}) cache")
+      adapter = adapter_name(step[:adapter], label, model)
+      normalized = { model:, provider: step[:provider], adapter:, params:, cache:, attempts:, forward_rejected: }
+      normalized.merge(step.slice(:priority, :rotate, :include_when, :retry_temperature, *extras))
     end
 
-    # A step used on its own (a judge, a harness's step) can't take part in a tier, so it takes no priority: or
-    # rotate:. who names it for the message.
-    def single_step!(step, who)
-      return unless step.key?(:priority) || step.key?(:rotate)
+    # The name of a configured adapter (see Configuration#adapters) as a Symbol, or nil for the default adapter. Whether
+    # the name is configured is checked when the step is used, since a class can load before Squishling.configure runs.
+    def adapter_name(adapter, label, model)
+      return if adapter.nil?
+      unless (adapter.is_a?(Symbol) || adapter.is_a?(String)) && !adapter.to_s.strip.empty?
+        raise ConfigurationError,
+          "#{label} (#{model}): adapter: must be the name of a configured adapter, got #{adapter.inspect}"
+      end
 
-      raise ConfigurationError, "#{who} takes no priority: or rotate:"
+      adapter.to_sym
+    end
+
+    def check_include_when!(step, label, model)
+      return if !step.key?(:include_when) || step[:include_when].is_a?(Proc)
+
+      raise ConfigurationError,
+        "#{label} (#{model}): include_when: must be a Proc, got #{step[:include_when].inspect}"
+    end
+
+    def valid_temperature?(temperature)
+      temperature.is_a?(Numeric) && temperature.real? && temperature.finite? && !temperature.negative?
+    end
+
+    def check_retry_temperature!(step, label, model)
+      temperature = step[:retry_temperature]
+      return if !step.key?(:retry_temperature) || valid_temperature?(temperature)
+
+      raise ConfigurationError,
+        "#{label} (#{model}): retry_temperature: must be a finite Numeric of 0 or more, got #{temperature.inspect}"
+    end
+
+    # A step used on its own (a judge, a harness's step) can't take part in a tier or be left out of a call, so it
+    # takes no priority:, rotate:, or include_when:. who names it for the message.
+    def single_step!(step, who)
+      return unless step.key?(:priority) || step.key?(:rotate) || step.key?(:include_when)
+
+      raise ConfigurationError, "#{who} takes no priority:, rotate:, or include_when:"
     end
 
     # order: is the deprecated name of priority:.

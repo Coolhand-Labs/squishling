@@ -17,11 +17,13 @@ A squished call runs its Ruby implementation unless one of these sends it to the
 | Trigger | Declared where | Decided |
 |---|---|---|
 | `squish_when` (or `when:`) predicate is truthy | class, or per method | before Ruby runs |
-| The method has no implementation: it isn't defined, or it raises `NotImplementedError` | the method body | when Ruby gives up |
+| The method has no implementation: it isn't defined, or its own body raises `NotImplementedError` | the method body | when Ruby gives up |
 | `squish!` | inside the method, e.g. in a `rescue` | after Ruby has partly run, see [Handing off to the LLM](#handing-off-to-the-llm-with-squish) |
-| The Ruby implementation raises an error the class named with `squish_rescue`, or (with `both_paths`) returns something the schema or `squish_validate` rejects | the class | after Ruby has run, see [When the Ruby path fails](failures.md#when-the-ruby-path-fails) |
+| `squish_rescue` | class | when Ruby raises a declared error, see [Rescuing declared errors](#rescuing-declared-errors-with-squish_rescue) |
+| `squish_validate both_paths: true` | class | when the Ruby return is rejected by the schema or `squish_validate`, see [When the Ruby path fails](failures.md#when-the-ruby-path-fails) |
 
-With no predicate and a working implementation, every call runs Ruby.
+With no predicate and a working implementation, every call runs Ruby. To run the LLM *alongside* the Ruby path and
+compare the two without changing what the caller gets, see [Apprentice mode](apprentice.md).
 
 The predicate receives the method's inputs as keywords and is evaluated against the instance, so it can read
 instance state too. Accept `**` to ignore inputs you don't need.
@@ -43,8 +45,14 @@ already has a `result` (see [Naming and collisions](naming.md)). Invalid determi
 `Squishling::InvalidOutputError` (source "Deterministic"), so a hardened path can't silently drift from the contract;
 with `squish_validate both_paths: true` the LLM is given the draft and the problems instead.
 
-A `NotImplementedError` raised anywhere inside the method, including from code it calls (but not from your own
-`squish_validate`), also routes to the LLM.
+Only the method's own stub routes: a `NotImplementedError` raised directly in the method body (`raise
+NotImplementedError` in a `def` or a `define_method` block, including one in a module prepended before
+`include Squishling`, or in a squished parent reached through `super`). One raised by code the method calls
+(a helper, another object, a block, or a `super` into a parent that isn't squished) is a bug in that code, not a
+missing implementation, so it propagates and nothing is sent to the provider. Keep the `raise` in the method body:
+a shared `not_implemented!` helper, or a decorator prepended before `include Squishling` that wraps the method with
+its own `super` frame, hides the stub and the error propagates (use `squish_when { true }` or `squish!` to
+send those calls to the LLM).
 
 Each call is routed on its own, including a squished method that calls itself on smaller inputs (those
 recursive calls must return schema-valid values too). A subclass
@@ -62,6 +70,9 @@ This is the workflow from [Elastic Software](https://everythingengineer.substack
 3. Write Ruby for the high-volume cases and narrow `squish_when` so only the rest go to the LLM.
 
 Callers never change, because both paths return the same result class.
+
+To keep a particular model off certain inputs (a client that needs a BAA, say), give its escalation step an
+`include_when:` Proc; see [Excluding a model per call](configuration.md#excluding-a-model-per-call).
 
 ## Entry points
 
@@ -91,8 +102,9 @@ end
 - `purpose:` (replaces the class's)
 - `append_to_purpose:` (added to the class's, see [Appending to the purpose](#appending-to-the-purpose))
 - `output_schema:` (or a schema block)
-- `model:` or `escalation:`, `provider:`, and `params:` (generation params; see [Configuration](configuration.md))
+- `model:` or `escalation:`, `provider:`, `params:` (generation params), and `cache:` (prompt caching); see [Configuration](configuration.md)
 - `harness:` (see [Harnesses](harnesses.md), including your own)
+- `max_total_output_tokens:` and `max_total_input_tokens:` (see [Capping a call's cost](failures.md#capping-a-calls-cost-token-budgets))
 - `when:`, a predicate proc
 - `validate:` and `fallback:` (see [Failure handling](failures.md))
 
@@ -101,10 +113,10 @@ end
 ## Handing off to the LLM with `squish!`
 
 Call `squish!` inside a squished method to hand *this call* to the LLM yourself: for example, when the Ruby
-parser fails on an input it wasn't written for. (Often you don't need to: an error named with `squish_rescue`, or a rejected return under `both_paths`, is
-[handed off for you](failures.md#when-the-ruby-path-fails), with the draft and the problems as
-context. Reach for `squish!` to choose the context, or the model, for one specific failure. A `squish!` in your own
-`rescue` runs first, and the call isn't handed off twice.) It sends the call's arguments, as any LLM call would, and returns the
+parser fails on an input it wasn't written for. (Often you don't need to: an error named with [`squish_rescue`](#rescuing-declared-errors-with-squish_rescue), or a
+return rejected under [`both_paths`](failures.md#when-the-ruby-path-fails), is handed off for you. Reach for `squish!`
+to choose the context, or the model, for one specific failure. A `squish!` in your own `rescue` runs first, and the
+call isn't handed off twice.) It sends the call's arguments, as any LLM call would, and returns the
 typed result (`squished?` is `true`, or `false` if the declared `squish_fallback` supplied it). Return that result
 from the method.
 
@@ -138,7 +150,9 @@ end
 | `append_to_purpose:` | Added to the declared sections; `false` (alone or first in an Array) drops them for this call |
 | `purpose:` | Replaces the purpose |
 | `model:` or `escalation:`, `provider:`, `params:` | E.g. send this call to a stronger model, or a whole [escalation](configuration.md#models-and-escalation), when Ruby fails. A `provider:` needs a `model:` or `escalation:`; `params:` merge key by key over the declared ones. |
+| `cache:` | Replaces the declared [prompt caching](configuration.md#prompt-caching) setting; `false` turns it off for this call |
 | `harness:` | Replaces the declared [harness](harnesses.md), e.g. `harness: :judged_squishsum` to double-check a hand-off |
+| `max_total_output_tokens:`, `max_total_input_tokens:` | Cap what this call may spend, e.g. a tighter budget for a hand-off; `false` lifts a declared cap. See [Capping a call's cost](failures.md#capping-a-calls-cost-token-budgets). |
 
 - **The output schema can't be overridden.** The call still returns the method's result type.
 - **Failures** go through the normal LLM path: a declared `squish_fallback` is used, otherwise
@@ -157,6 +171,64 @@ end
 - It works anywhere beneath a squished method on the same object: in the method itself, in a helper it calls,
   or in a parent implementation reached through `super`. Calling it anywhere else, or from a `squish_fallback`
   (which would loop), raises `Squishling::Error`.
+
+## Rescuing declared errors with `squish_rescue`
+
+To hand a call to the LLM whenever the Ruby raises a known error, declare the error once on the class. You do not
+write a `rescue` in each method:
+
+```ruby
+class InvoiceParser
+  include Squishling
+
+  purpose "Extract the invoice fields from the vendor's document."
+  append_to_purpose "The Ruby parser that handles well-formed invoices:", self
+  output_schema do
+    string :invoice_number
+    number :total
+  end
+  squish_rescue VendorFormats::ParseError,
+                append_to_purpose: "The parser failed on this document; the error is in the context."
+
+  def call(vendor:, document:)
+    invoice = VendorFormats.fetch(vendor).parse(document)
+    result(invoice_number: invoice.number, total: invoice.total)
+  end
+end
+```
+
+A declared error acts as `rescue ParseError => e; squish!(..., context: { error: e })` in every squished method of
+the class, `call` and the methods you declare with `squish`. The error reaches the LLM as context, as its class and
+message, whatever raised it, so a broad declaration such as `StandardError` can send the text of a library's error
+(a database key value, a URL with a token). Declare the narrow error classes of your own code. A call that raises
+no declared error stays in Ruby, and any other error propagates.
+
+`squish_rescue` accepts:
+
+- One or more exception classes, as positional arguments. A subclass of a declared class matches.
+- `as:`, the name of the context key for the error (`:error` by default). It replaces a `squish_context` name
+  spelled the same.
+- The other options of [`squish!`](#handing-off-to-the-llm-with-squish) (`append_to_purpose:`, `context:`, `model:`,
+  `escalation:`, `params:`, and so on), checked when you declare it.
+
+Rules:
+
+- **Only the Ruby path is rescued.** An error from `squish_when`, from the LLM path, or from `squish_fallback` of the
+  same call is never rescued, so a fallback cannot loop. (A call to another squished object is its own call: if its
+  `squish_fallback` raises a declared error, the enclosing call's Ruby raised it, and the enclosing call rescues
+  it.) If the LLM also fails, the error it raises has the declared error as its
+  `cause`, and `squish_fallback` decides what to return, as for `squish!`. Once the body has called `squish!`, the
+  declared rescues are off for the rest of that call: a declared error the body raises afterward propagates.
+- **The first declaration that matches is used, as in a `rescue` list.** Declare a narrow error before a broad one.
+  A subclass's declarations are tried before its parent's.
+- **Declare `StandardError` classes.** Anything else raises a `ConfigurationError` at declaration: `Exception`,
+  `SystemExit`, `Interrupt`, a module, or no class at all. `NotImplementedError` is rejected too, because it
+  already sends a call to the LLM.
+- **Squishling's own errors are never rescued.** A declared `StandardError` does not catch a `ConfigurationError`,
+  or an `InvalidOutputError` or `LLMError` from a squished call to another object. Declaring one of these classes
+  raises a `ConfigurationError`. The errors that `squishling/testing` raises are never rescued either, so an
+  unscripted request cannot pass a test.
+- **A `rescue` in the method body runs first.** A `squish!` call there works as before.
 
 ## Appending to the purpose
 
@@ -224,6 +296,25 @@ Source is read with Ruby's own parser (Prism) the first time it's needed and cac
   returned. The rejected output is model-generated and is truncated to 4,000 characters; set
   `forward_rejected: false` on a step to start it from the original input only, without the rejected output or
   its errors. Don't put data in those messages that you wouldn't send as an argument.
+
+Arguments and context are converted to JSON before they are sent. A `Struct`, `Data`, or `OpenStruct` goes as an
+object of its members (its `to_h`, which must return a Hash, is the hook: a `to_json` on these types is not consulted,
+and the class name is not sent), a `Set` as an array, and Hashes and Arrays are walked
+recursively. An exception goes as its class and message. A value that contains itself raises a `ConfigurationError`.
+All members are sent, so pass a Hash or define `to_h` to leave a field out.
+
+`nil`, booleans, Strings, Symbols, numbers, `Time`, `Date`, and `URI` go as they are, and a file (an upload, a blob, a
+`File`, a `Pathname`; see [Inputs](inputs.md)) is read. Any other object (a `Range`, a plain object, an ActiveRecord model) raises a `ConfigurationError` that names its class, before any
+request: serializing it with `as_json` or `to_json` would send every attribute, and an easy mistake would leak them.
+Pass a Hash instead, or define `to_squishling` on the class to return what the model should see; its return value (a
+Hash, a Struct, or anything else listed here) is converted the same way. `to_squishling` is for these other objects: a
+`Struct`, `Data`, `OpenStruct`, or Hash subclass is sent as its members, so use `to_h` to shape one.
+
+```ruby
+class Receipt
+  def to_squishling = { total: total, currency: currency } # leaves out customer_email
+end
+```
 
 `squish_context` names are read from a method of that name if there is one, otherwise from the instance
 variable. Only context you name is sent. Instance variables are never dumped wholesale, so API clients,

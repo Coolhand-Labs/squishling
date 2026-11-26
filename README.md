@@ -65,9 +65,7 @@ identity), cross-check it against another source or keep that path in Ruby.
 ### Rescue errors your code can't handle yet
 
 Keep the Ruby you have for the inputs it understands, and hand the rest to the LLM instead of failing. When the
-parser raises an error you named with `squish_rescue` (or returns something your `squish_validate` rejects, with
-`both_paths: true`), the call goes to the LLM with the error or the draft, and what was wrong with it, as context. The
-class's own source goes along because the class appends it.
+parser raises, `squish!` sends this call to the LLM with the error and the parser's own source as context.
 
 ```ruby
 class InvoiceParser
@@ -79,11 +77,13 @@ class InvoiceParser
     string :invoice_number
     number :total
   end
-  squish_rescue VendorFormats::ParseError   # when the parser can't read it, the LLM takes over
 
   def call(vendor:, document:)
     invoice = VendorFormats.fetch(vendor).parse(document)
-    { invoice_number: invoice.number, total: invoice.total }
+    result(invoice_number: invoice.number, total: invoice.total)
+  rescue VendorFormats::ParseError => e
+    squish!(append_to_purpose: "The parser failed on this document; the error is in the context.",
+            context: { parse_error: e })
   end
 end
 
@@ -92,9 +92,16 @@ InvoiceParser.call(vendor: "acme", document: scanned_text).squished? # => true  
 ```
 
 Both calls return the same result class. If the LLM can't deliver either, `squish_fallback` decides what to
-return, or the error is raised with the original `ParseError` as its cause. Hand off yourself, with your own
-context, using `squish!`. See [When the Ruby path fails](docs/failures.md#when-the-ruby-path-fails) and
+return, or the error is raised with the original `ParseError` as its cause. See
 [Handing off to the LLM](docs/routing.md#handing-off-to-the-llm-with-squish).
+
+To rescue every squished method of a class the same way, declare the error once with
+`squish_rescue VendorFormats::ParseError` instead of writing the `rescue`. See
+[Rescuing declared errors](docs/routing.md#rescuing-declared-errors-with-squish_rescue).
+
+To hold the Ruby path to the same rules as the LLM, add `squish_validate(both_paths: true) { ... }`: a Ruby return the
+schema or your check rejects goes to the LLM too, with the draft and the problems as context. See
+[When the Ruby path fails](docs/failures.md#when-the-ruby-path-fails).
 
 ### Retire code you no longer need
 
@@ -131,12 +138,17 @@ end
 gem "squishling"
 ```
 
-Requires Ruby 3.3+ and RubyLLM 2.1+. Configure your provider API keys in RubyLLM as usual, then optionally set a
-universal model, or an escalation of models to try in order:
+Requires Ruby 3.3+ and an [adapter](docs/adapters.md) to reach a model: the `ruby_llm` gem (2.1+; Squishling uses it
+automatically when it is in your bundle), or any OpenAI-compatible endpoint, which needs no extra gem. Squishling no
+longer installs or requires `ruby_llm` for you, so add `gem "ruby_llm"` next to it if you use RubyLLM (and
+`require "ruby_llm"` before `RubyLLM.configure` if your app doesn't load its Gemfile with `Bundler.require`). With RubyLLM,
+configure your provider API keys there as usual. Then choose an adapter, and optionally set a universal model, or an
+escalation of models to try in order:
 
 ```ruby
 Squishling.configure do |config|
-  config.default_model = "claude-sonnet-5-5" # falls back to RubyLLM's default when nil
+  config.adapter = :ruby_llm                 # or { type: :openai_compatible, base_url: "http://localhost:11434/v1" }
+  config.default_model = "claude-sonnet-5-5" # falls back to the adapter's default when nil
   # or: config.default_escalation = [{ model: "claude-haiku-4-5", attempts: 2 }, "claude-sonnet-5-5", "claude-opus-5-5"]
   # config.validate_both_paths = true   # squish_validate also judges the Ruby path's return (off by default)
 end
@@ -148,7 +160,7 @@ A squishling class needs a **purpose** (the system prompt) and an **output schem
 validated on both paths). A squished call goes to the LLM when:
 
 - its `squish_when` predicate is truthy for these inputs,
-- the method has no implementation (it isn't defined, or raises `NotImplementedError`), or
+- the method has no implementation (it isn't defined, or its own body raises `NotImplementedError`), or
 - the Ruby implementation calls `squish!`.
 
 Otherwise the Ruby runs, and whatever it returns is validated and typed like LLM output.
@@ -164,11 +176,14 @@ sees it right where the value goes, and the purpose stays short and about the go
   returned as the same typed `Data` objects. `squished?` tells you which path served a call.
 - **Your code as context**: `append_to_purpose` adds sections to the prompt, including a class's or method's
   own Ruby source.
-- **Any RubyLLM provider and model**: OpenAI, Anthropic Claude, Google Gemini, AWS Bedrock, OpenRouter, and more.
-  Set a universal, per-class, per-method, or per-call model, plus layered generation params (temperature,
-  reasoning effort, top_p, …).
+- **[Bring your own adapter](docs/adapters.md)**: Squishling doesn't depend on any one LLM client. Use the
+  [RubyLLM](https://rubyllm.com) adapter (OpenAI, Anthropic Claude, Google Gemini, AWS Bedrock, OpenRouter, and more),
+  the OpenAI-compatible adapter (OpenAI, Ollama, vLLM, LM Studio, Together, Groq, … over plain HTTP), or write your
+  own in one method.
+- **Any provider and model**: set a universal, per-class, per-method, or per-call model, plus layered generation params (temperature,
+  reasoning effort, top_p, …) and [prompt caching](docs/configuration.md#prompt-caching) (on by default, opt out per class, method, or call).
 - **Model escalation**: declare an `escalation:` instead of a `model:`, with per-step `attempts:`, `priority:` (models tied on priority take turns going first), provider,
-  params, and `forward_rejected:`. Invalid output (with its errors fed back) or a provider failure moves on to the next attempt. Steps can
+  params, `forward_rejected:`, `retry_temperature:`, and `include_when:` (leave a model out of calls where a Proc is falsy). Invalid output (with its errors fed back) or a provider failure moves on to the next attempt. Steps can
   cross providers, e.g. a local Qwen model on Ollama, then Anthropic Claude Haiku on AWS Bedrock, then Claude Opus:
 
   ```ruby
@@ -197,14 +212,18 @@ sees it right where the value goes, and the purpose stays short and about the go
   - [`:judged_squishsum`](docs/harnesses.md#the-judge): a chat or Jev judge picks between disagreeing samples
   - [Your own](docs/harnesses.md#custom-harnesses): `Squishling.register_harness` plugs a custom harness into the same
     machinery (samples, judges, `squawk`, `squish_fallback`)
+- **Cost caps**: `max_total_output_tokens:` and `max_total_input_tokens:` stop a call that keeps failing from
+  spending without limit (see [Capping a call's cost](docs/failures.md#capping-a-calls-cost-token-budgets)).
 - **Output contracts**: beyond the strict schema, conditional rules (`given`) and Ruby checks (`squish_validate`)
   reject bad output and trigger the next attempt. With `both_paths`, they hold the Ruby path to the same rules.
-- **Ruby as a draft**: when the Ruby path raises a named error or its return is rejected, the LLM gets the call with the
-  draft and the problems, and returns the same typed result ([`squish_rescue`](docs/failures.md#when-the-ruby-path-fails)).
+- **Ruby as a draft**: when the Ruby path raises a declared error ([`squish_rescue`](docs/routing.md#rescuing-declared-errors-with-squish_rescue))
+  or its return is rejected ([`both_paths`](docs/failures.md#when-the-ruby-path-fails)), the LLM gets the call with the error or
+  the draft and the problems, and returns the same typed result.
 - **Defined failure behavior**: provider errors become `Squishling::LLMError`, and `squish_fallback` lets you decide
   what to return when every attempt fails.
-- **Observability**: the opt-in [`squawk`](docs/failures.md#observing-every-attempt-squawk) hook sends every attempt's
-  raw output to your error tracker. Model output stays out of error messages and logs otherwise.
+- **Observability**: the opt-in [`squawk`](docs/failures.md#observing-every-attempt-squawk) hook sends each attempt's
+  raw output (or only the rejected and retried ones), and the end of a call that a token budget or a disagreement
+  stopped, to your error tracker. Model output stays out of error messages and logs otherwise.
 - **Opt-in context**: only method arguments, the instance state you name with `squish_context`, the `context:` you
   pass to `squish!`, and the source you choose to append are sent to the provider. The one addition: when
   [escalation](docs/configuration.md#models-and-escalation) moves to the next step, that step also sees the previous
@@ -215,23 +234,33 @@ sees it right where the value goes, and the purpose stays short and about the go
 - [Explainer site](https://coolhand-labs.github.io/squishling/): interactive walkthrough, spectrum slider, and
   token-cost calculator
 - [Configuration](docs/configuration.md): options, models and escalation, providers, generation params, inheritance
+- [Adapters](docs/adapters.md): the RubyLLM and OpenAI-compatible adapters, mixing them in one escalation, and your own
 - [Routing](docs/routing.md): when a call goes to the LLM, `squish!`, `append_to_purpose`, hardening a path,
   what the LLM sees
+- [Inputs](docs/inputs.md): pass files (PDFs, images, a fax), HL7, or FHIR as they are, and filter or rewrite
+  everything sent with `squish_sanitize`
+- [Images](docs/images.md): what the model sees of an image, and the `Squishling::Image` class
+- [Apprentice mode](docs/apprentice.md): return the Ruby result and run the LLM alongside it, on every call or a
+  sample, to measure the model against your mature code (with Coolhand Labs feedback)
 - [Output schemas](docs/schemas.md): schema forms, strict mode, typed results, optional vs. empty, contracts
 - [Failure handling](docs/failures.md): escalation, `squish_validate`, Ruby failures (`squish_rescue`), error classes, fallbacks
 - [Harnesses](docs/harnesses.md): escalation, squishsum, judges (chat or Jev), and custom harnesses
+- [Verifying squished classes](docs/verifying.md): `Squishling.verify!`, a rake task, and an RSpec matcher that check
+  every class ahead of runtime, without a request
 - [Naming and collisions](docs/naming.md): the methods `include Squishling` adds and what happens when a name is taken
 - [Measuring token spend](docs/measuring-tokens.md): see what each squished path costs, with Coolhand Labs,
   the `squawk` hook, your own observer, or OpenTelemetry
 - [Observers](docs/observers.md): wrap every provider request, and the built-in [Coolhand Labs](docs/coolhand.md) observer
   that files each call under its workload and template
+- [Testing](docs/testing.md): `require "squishling/testing"`: a scripted adapter, call assertions, result and error
+  stubs, and schema-driven fixtures, for Minitest and RSpec
 - [Live examples](examples/README.md): end-to-end tests against Anthropic Claude Haiku and OpenAI GPT-6 Luna
 
 ## Development
 
 ```sh
 bin/setup
-bundle exec rake        # RSpec (offline; RubyLLM is stubbed) + RuboCop
+bundle exec rake        # RSpec (offline; adapters are faked or stubbed) + RuboCop
 ```
 
 See [AGENTS.md](AGENTS.md) for repo conventions, and [SECURITY.md](SECURITY.md) for reporting vulnerabilities.

@@ -7,11 +7,14 @@ gemspec
 
 group :development, :test do
   gem "bundler-audit", "~> 0.9", require: false
-  gem "coolhand", "~> 0.9", require: false # examples/coolhand_example.rb only
+  gem "coolhand", "~> 0.12", require: false # examples/coolhand_example.rb only
   gem "exhale", "~> 0.2", require: false
+  gem "ostruct", "~> 0.6", require: false # the OpenStruct argument spec; no longer a default gem on Ruby 4.0
   gem "simplecov", require: false
   gem "rake", "~> 13.0"
   gem "rspec", "~> 3.13"
+  gem "ruby_llm", "~> 2.2" # the RubyLLM adapter's specs and the live examples; not a runtime dependency
+  gem "webmock", "~> 3.36" # the OpenAI-compatible adapter's specs
   gem "rubocop", "~> 1.92"
   gem "rubocop-performance", "~> 1.23", require: false
   gem "rubocop-rspec", "~> 3.4", require: false

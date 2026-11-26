@@ -5,8 +5,12 @@ module Squishling
   module Router
     # One squished call in progress. `phase` is :routing (deciding, e.g. running squish_when), :ruby (running
     # the implementation), or :llm (on the LLM path, including any fallback); `handed_off` records that squish!
-    # already sent it to the LLM.
-    Frame = Struct.new(:receiver, :definition, :wrapper, :inputs, :phase, :handed_off, :rejected)
+    # already sent it to the LLM. supplied is the CallId::Handle that gave this call its id (see CallId), or nil.
+    # rejected is the InvalidOutputError an inner call (a parent's implementation, reached through super) raised for a
+    # Hash the schema rejected, which is this call's own rejected return when it comes out of the Ruby (see RubyPath).
+    Frame = Struct.new(:receiver, :definition, :wrapper, :inputs, :phase, :handed_off, :supplied, :rejected) do
+      def call_id = supplied&.call_id
+    end
 
     FRAMES_KEY = :__squishling_frames__
 
@@ -17,15 +21,25 @@ module Squishling
         end
 
         definition = receiver.class.squishling_definition(name)
-        frame = Frame.new(receiver, definition, wrapper, definition.bind_arguments(args, kwargs), :routing, false, nil)
+        frame = Frame.new(receiver, definition, wrapper, definition.bind_arguments(args, kwargs), :routing, false,
+          CallId.claim)
         frames.push(frame)
         begin
           return route_to_llm(frame, definition, "predicate") if definition.squish?(receiver, frame.inputs)
 
-          run_ruby(frame, definition, impl)
+          run_ruby(frame, definition, receiver, impl)
         ensure
           frames.pop
         end
+      end
+
+      # Runs the block as the LLM path of a call on this thread (an apprentice's shadow run, which may run on another
+      # thread than the call): calls back into the method run its Ruby, and squish! is refused, as on the LLM path.
+      def within(receiver, definition, inputs)
+        frames.push(Frame.new(receiver, definition, nil, inputs, :llm, false))
+        yield
+      ensure
+        frames.pop
       end
 
       def current_frame(receiver)
@@ -33,7 +47,7 @@ module Squishling
       end
 
       # squish!: hand the call in progress on this receiver to the LLM, with this call's overrides.
-      def hand_off(receiver, overrides)
+      def hand_off(receiver, overrides, reason = "squish!")
         frame = current_frame(receiver)
         raise Error, "#{receiver.class}#squish! called outside a squished method" unless frame
         unless frame.phase == :ruby
@@ -41,33 +55,66 @@ module Squishling
                        "not from squish_when or while already on the LLM path (e.g. from squish_fallback)"
         end
 
-        hand_off_frame(frame, overrides, "squish!")
-      end
-
-      private
-
-      # The Ruby implementation, held to the contract (see RubyPath); a failure that hands off goes to the LLM.
-      def run_ruby(frame, definition, impl)
-        frame.phase = :ruby
-        ruby_path = RubyPath.new(frame, definition)
-        ruby_path.call(impl) { |overrides, reason| hand_off_frame(frame, overrides, reason) }
-      rescue NotImplementedError => e
-        # After a hand-off, the error came from the LLM path (a fallback, a proc), not a missing implementation;
-        # and one from the developer's own squish_validate is theirs to see.
-        raise if frame.handed_off || ruby_path&.own?(e)
-
-        route_to_llm(frame, definition, "not implemented")
-      end
-
-      def hand_off_frame(frame, overrides, reason)
         frame.handed_off = true
         route_to_llm(frame, frame.definition.for_call(**overrides), reason)
       end
 
+      private
+
+      # The first squish_rescue declaration that matches the error gives the options of the hand-off.
+      def rescue_overrides(definition, error)
+        definition.klass.squishling_rescues.find { |declared| declared.match?(error) }.overrides_for(error)
+      end
+
+      # The coerce is in `else`, so the rescues never see its errors.
+      def run_ruby(frame, definition, receiver, impl)
+        frame.phase = :ruby
+        started = Apprentice.clock
+        value = impl.call
+      rescue NotImplementedError => e
+        stubbed(frame, definition, e)
+      rescue InvalidOutputError => e
+        rejected(frame, definition, receiver, e)
+      rescue *definition.klass.squishling_rescues.flat_map(&:errors) => e
+        rescued(frame, definition, receiver, e)
+      else
+        ruby_seconds = Apprentice.clock - started
+        accepted(frame, definition, receiver, value).tap do |result|
+          # The Ruby path answered (not squish!, not a rescue), so an apprentice may run the LLM alongside it: once, for
+          # the outermost call, not again for each call the method makes to itself.
+          shadow(frame, definition, result, ruby_seconds)
+        end
+      end
+
+      # After squish!, the error came from the LLM path (a fallback, a proc), not a missing implementation. Otherwise it
+      # propagates unless it is the method's own stub (see Wrapper.stub?).
+      def stubbed(frame, definition, error)
+        raise error if frame.handed_off || !Wrapper.stub?(error)
+
+        route_to_llm(frame, definition, "not implemented")
+      end
+
+      # Squishling's own errors are never rescued, but a parent's rejected return is this call's own (see RubyPath).
+      def rejected(frame, definition, receiver, error)
+        raise error unless frame.rejected.equal?(error)
+
+        RubyPath.new(frame, definition).reject(error) { |overrides, reason| hand_off(receiver, overrides, reason) }
+      end
+
+      def rescued(frame, definition, receiver, error)
+        raise error if frame.handed_off || unrescuable?(error)
+
+        hand_off(receiver, rescue_overrides(definition, error), "squish_rescue #{error.class}")
+      end
+
+      # A declared StandardError also matches Squishling's own errors and the test helpers' (Testing::Error is not a
+      # Squishling::Error, so no fallback can hide a test setup mistake); neither goes to the LLM.
+      def unrescuable?(error)
+        error.is_a?(Error) || (defined?(Testing::Error) && error.is_a?(Testing::Error))
+      end
+
       # An inner call (`super`, or the method called from squish_when or a fallback) hands its value to user code
       # that may reshape it, so only a Hash is typed (for accessor access); the outermost return is validated in full.
-      # A Hash an inner call returns that the schema rejects is the outer call's rejected return when it gets out of
-      # the Ruby implementation (e.g. a parent's, reached through super), so it is recorded for RubyPath.
       def coerce_inner(frame, value)
         value.is_a?(Hash) ? frame.definition.coerce(value) : value
       rescue InvalidOutputError => e
@@ -75,13 +122,36 @@ module Squishling
         raise
       end
 
+      # The Ruby path's return, typed and (under both_paths) checked by squish_validate too. A call squish! already
+      # answered has been through both. A rejected return is handed to the LLM, or raised, as RubyPath decides.
+      def accepted(frame, definition, receiver, value)
+        return definition.coerce(value) if frame.handed_off
+
+        RubyPath.new(frame, definition).accept(value) { |overrides, reason| hand_off(receiver, overrides, reason) }
+      end
+
       def route_to_llm(frame, definition, reason)
         log(definition, reason)
         previous = frame.phase
         frame.phase = :llm
-        definition.invoke_llm(frame.receiver, frame.inputs)
+        definition.invoke_llm(frame.receiver, frame.inputs, call_id: frame.call_id, supplied: frame.supplied)
       ensure
         frame.phase = previous
+      end
+
+      # Hands a call the Ruby path answered to its apprentice (see Apprentice), unless squish! answered it, or it is
+      # nested in another call of the same method.
+      def shadow(frame, definition, result, ruby_seconds)
+        return if frame.handed_off || nested?(frame)
+
+        Apprentice.shadow(frame, definition, result, ruby_seconds)
+      end
+
+      # Whether the call runs inside another call of the same method (recursion, on this instance or another).
+      def nested?(frame)
+        frames.any? do |outer|
+          !outer.equal?(frame) && outer.definition.label == frame.definition.label
+        end
       end
 
       # Thread#[] is fiber-local, so concurrent fibers don't share frames.

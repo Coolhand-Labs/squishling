@@ -4,27 +4,43 @@ module Squishling
   # Class-level DSL available to every squishling class.
   module ClassMethods
     DEFAULT_METHOD = :call
-    MODEL_OVERRIDES = %i[model escalation provider].freeze
 
     # Set class-wide options in one call:
     #   squishling model: "claude-sonnet-5-5", purpose: "...", output_schema: MySchema
     # model: is a single attempt; escalation: is a list of models tried in order (see ModelPath):
     #   squishling escalation: [{ model: "claude-haiku-4-5", attempts: 2 }, "claude-sonnet-5-5", "claude-opus-5-5"]
-    # Pass provider: alongside model: for models missing from RubyLLM's registry, e.g.
+    # Pass provider: alongside model: for models missing from RubyLLM's registry (the RubyLLM adapter), e.g.
     #   squishling model: "gpt-7-preview", provider: :openai
     # provider: needs a model: or escalation: (declared on the class), and a subclass's model never inherits its
     # parent's provider.
     # params: are generation params merged over the configured defaults (see Configuration#default_params):
     #   squishling params: { temperature: 0.1, top_p: 0.9 }
+    # cache: asks the provider to cache the stable prompt (true by default, see Cache); false opts the class out, and
+    # a Hash such as { ttl: "1h" } passes options through:
+    #   squishling cache: false
     # append_to_purpose: adds sections after the purpose (see #append_to_purpose):
     #   squishling append_to_purpose: ["The Ruby that handles well-formed input:", self]
     # harness: chooses how the escalation is used (see Harness):
     #   squishling harness: :judged_squishsum
-    # squawk: is called after every LLM attempt with the raw output (see Configuration#squawk); false silences
+    # max_total_output_tokens:/max_total_input_tokens: cap the tokens one call may use across all its requests
+    # (see Budget); false lifts a cap inherited from the parent class or the configuration:
+    #   squishling max_total_output_tokens: 25_000
+    # squawk: is called after each LLM attempt (narrowed by squawk_on:), and once more when a token budget or a
+    # disagreement stops the call, with the raw output (see Configuration#squawk); false silences
     # an inherited one:
     #   squishling squawk: ->(output:, metadata:, error:) { Tracer.record(output, metadata, error) }
-    def squishling(model: nil, escalation: nil, provider: nil, params: nil, harness: nil, purpose: nil,
-      append_to_purpose: nil, output_schema: nil, squawk: nil)
+    # squawk_on: limits which attempts reach the hook: :all (the default), :rejections, :retries, :final, or a
+    # list of them (any one holding runs the hook):
+    #   squishling squawk: hook, squawk_on: %i[rejections final]
+    # apprentice_mode: returns the Ruby result and runs the LLM alongside it, to compare the two (see Apprentice); true,
+    # or a Hash of when:, compare: and report:, and false turns off an inherited one:
+    #   squishling apprentice_mode: { when: ->(**) { rand < 0.05 }, report: ->(match:, metadata:, **) { ... } }
+    # call_id: names an input whose value is each call's id (see Squishling.with_call_id, which wins for the call it
+    # names), or is a Proc that gets the inputs as keywords and returns it; false turns off an inherited one:
+    #   squishling call_id: :record_id
+    def squishling(model: nil, escalation: nil, provider: nil, params: nil, cache: nil, harness: nil, purpose: nil,
+      append_to_purpose: nil, output_schema: nil, squawk: nil, squawk_on: nil, max_total_output_tokens: nil,
+      max_total_input_tokens: nil, apprentice_mode: nil, call_id: nil)
       path = ModelPath.declare(model, escalation, to_s)
       # A provider belongs to the model declared at the same level. Without a model here it would apply to
       # nothing (the model comes from the config or a parent class), so it is an error unless this class already
@@ -37,17 +53,38 @@ module Squishling
       # provider meant for its parent's.
       @squishling_model_path = path if path
       @squishling_provider = provider if provider || path
-      @squishling_params = Params.normalize(params, "#{self} params") if params
-      @squishling_harness = Harness.normalize(harness, to_s) unless harness.nil?
+      declare_generation(params, cache, harness)
       self.purpose(purpose) if purpose
       self.append_to_purpose(append_to_purpose) unless append_to_purpose.nil?
       self.output_schema(output_schema) if output_schema
-      @squishling_squawk = Squawk.validate(squawk, to_s) unless squawk.nil?
+      declare_squawk(squawk, squawk_on)
+      declare_budget(max_total_output_tokens, max_total_input_tokens)
+      declare_apprentice(apprentice_mode)
+      declare_call_id(call_id)
       self
+    end
+
+    # The class's (or nearest ancestor's) call_id: declaration (see CallId), nil when none declared it.
+    def squishling_call_id
+      squishling_lookup(:@squishling_call_id)
+    end
+
+    # The class's (or nearest ancestor's) apprentice setting (see Apprentice), nil when none declared it.
+    def squishling_apprentice
+      squishling_lookup(:@squishling_apprentice)
+    end
+
+    # The token limits declared on this class and its ancestors, limit by limit (see Budget).
+    def squishling_budget
+      squishling_inherited(:squishling_budget, {}).merge(@squishling_budget || {})
     end
 
     def squishling_squawk
       squishling_lookup(:@squishling_squawk)
+    end
+
+    def squishling_squawk_on
+      squishling_lookup(:@squishling_squawk_on)
     end
 
     # The class's (or nearest ancestor's) model or escalation, as normalized steps.
@@ -57,6 +94,11 @@ module Squishling
 
     def squishling_provider
       squishling_lookup(:@squishling_provider)
+    end
+
+    # The class's (or nearest ancestor's) cache setting (see Cache), nil when none declared it.
+    def squishling_cache
+      squishling_lookup(:@squishling_cache)
     end
 
     def squishling_harness
@@ -150,40 +192,29 @@ module Squishling
       squishling_lookup(:@squishling_both_paths)
     end
 
-    # Names the errors the Ruby implementation may raise that the LLM should take over from, like a rescue clause.
-    # Names add up across calls and down the chain.
-    # The LLM gets the call with the error in its context and answers in the same result type:
-    #   squish_rescue AcmeParser::ParseError, Timeout::Error
-    # Nothing is rescued unless named. A return rejected under `squish_validate both_paths: true` is handed off too.
-    # The options are squish!'s, minus context:, and apply to every such hand-off. append_to_purpose adds sections
-    # after the built-in note (`false` drops what is above it):
-    #   squish_rescue append_to_purpose: ["The Ruby that drafted the answer:", self], model: "claude-opus-5-5"
-    def squish_rescue(*classes, append_to_purpose: nil, purpose: nil, model: nil, escalation: nil, provider: nil,
-      params: nil, harness: nil)
-      overrides = { append_to_purpose:, purpose:, model:, escalation:, provider:, params:, harness: }.compact
-      label = "#{self} squish_rescue"
-      raise ConfigurationError, "#{label} needs error classes or options" if classes.empty? && overrides.empty?
+    # Filters or rewrites everything a call would send (the arguments, squish_context values, and a squish! call's
+    # context:) before any request, evaluated against the instance: a de-identifier for health data, a converter for a
+    # fax's TIFF, a scan for malware. It is offered every node of the input, parents first, and returns what the model
+    # gets instead. The block takes the keywords it needs: value (a Hash, Array, String, number, nil, or a
+    # Squishling::Image or Document), path ("arguments.pages[1]"), and reject (call it with a message to refuse the
+    # call, listing every problem at once). The return value always replaces the node, so return value to keep it. A
+    # rejected call raises InputRejectedError, and runs neither the model nor squish_fallback. The Ruby path,
+    # squish_when, and squish_fallback still get the input as it was passed. The sanitizers of the configuration,
+    # each class in the chain, and the method all run, in that order: none can switch another off.
+    #   squish_sanitize do |value:, **|
+    #     value.is_a?(String) ? value.gsub(/\b\d{3}-\d{2}-\d{4}\b/, "[SSN]") : value
+    #   end
+    def squish_sanitize(hook = nil, &block)
+      hook = block if hook.nil?
+      raise ConfigurationError, "#{self} squish_sanitize needs a block or a callable" if hook.nil?
 
-      list = RubyPath.normalize_rescue(classes, label) unless classes.empty?
-      Definition.new(klass: self, name: DEFAULT_METHOD).for_call(**overrides, via: "squish_rescue") # fails now
-      if append_to_purpose
-        overrides[:append_to_purpose] = Appendices.normalize(append_to_purpose, "#{self} squish_rescue")
-      end
-      @squishling_rescue = [*@squishling_rescue, *list].uniq.freeze if list
-      @squishling_rescue_overrides = merge_rescue_overrides(@squishling_rescue_overrides || {}, overrides)
+      (@squishling_sanitizers ||= []) << Sanitizer.validate(hook, to_s)
       self
     end
 
-    # Every class named by this class, its ancestors, and each squish_rescue call: they add up, like rescue clauses.
-    def squishling_rescue
-      [*squishling_inherited(:squishling_rescue, []), *@squishling_rescue].uniq
-    end
-
-    # The options every hand-off carries, merged down the chain: a subclass's append_to_purpose adds to its
-    # parent's, and a model or escalation of its own replaces the parent's.
-    def squishling_rescue_overrides
-      own = @squishling_rescue_overrides || {}
-      merge_rescue_overrides(squishling_inherited(:squishling_rescue_overrides, {}), own)
+    # The class chain's sanitizers, a superclass's first.
+    def squishling_sanitizers
+      squishling_inherited(:squishling_sanitizers, []) + (@squishling_sanitizers || [])
     end
 
     # Instance state (attributes or instance variables) to send to the LLM alongside the arguments.
@@ -199,28 +230,55 @@ module Squishling
     #   squish :triage, purpose: "...", escalation: %w[claude-haiku-4-5 claude-sonnet-5-5], when: ->(**) { true },
     #                   fallback: ->(error, **) { { priority: "medium" } }, append_to_purpose: [...],
     #                   validate: ->(result, **) { "team is required" if result.team.empty? },
-    #                   harness: :squishsum, squawk: ->(output:, error:, **) { Tracer.record(output, error) } do
+    #                   sanitize: ->(value:, **) { value.is_a?(String) ? value.strip : value },
+    #                   harness: :squishsum, max_total_output_tokens: 25_000,
+    #                   squawk: ->(output:, error:, **) { Tracer.record(output, error) },
+    #                   squawk_on: :retries, apprentice_mode: { report: ->(match:, **) { ... } }, call_id: :ticket_id do
     #     string :priority
     #   end
     def squish(*names, purpose: nil, append_to_purpose: nil, output_schema: nil, model: nil, escalation: nil,
-      provider: nil, params: nil, harness: nil, when: nil, fallback: nil, validate: nil, squawk: nil, &schema_block)
+      provider: nil, params: nil, cache: nil, harness: nil, when: nil, fallback: nil, validate: nil,
+      sanitize: nil, squawk: nil, squawk_on: nil, max_total_output_tokens: nil, max_total_input_tokens: nil,
+      apprentice_mode: nil, call_id: nil, &schema_block)
       schema = schema_block ? Schematist::Schema.create(&schema_block) : output_schema
       model = ModelPath.declare(model, escalation, "#{self} squish")
       raise ConfigurationError, "#{self} squish: provider: needs a model: or escalation:" if provider && !model
 
       params &&= Params.normalize(params, "#{self} squish params")
+      cache = Cache.normalize(cache, "#{self} squish cache")
       harness = Harness.normalize(harness, "#{self} squish") unless harness.nil?
       unless append_to_purpose.nil?
         append_to_purpose = Appendices.normalize(append_to_purpose, "#{self} squish append_to_purpose")
       end
+      sanitize = Sanitizer.validate(sanitize, "#{self} squish")
       squawk = Squawk.validate(squawk, "#{self} squish")
-      options = { purpose:, append_to_purpose:, output_schema: schema, model:, provider:, params:, harness:,
-                  predicate: binding.local_variable_get(:when), fallback:, validator: validate, squawk: }.compact
+      squawk_on = Squawk.validate_on(squawk_on, "#{self} squish")
+      budget = Budget.build("#{self} squish", output: max_total_output_tokens, input: max_total_input_tokens)
+      apprentice = Apprentice.normalize(apprentice_mode, "#{self} squish")
+      call_id = CallId.normalize_source(call_id, "#{self} squish")
+      options = { purpose:, append_to_purpose:, output_schema: schema, model:, provider:, params:, cache:, harness:,
+                  predicate: binding.local_variable_get(:when), fallback:, validator: validate,
+                  sanitizer: sanitize, squawk:, squawk_on:, budget:, apprentice:, call_id: }.compact
 
       names.map(&:to_sym).each do |name|
         (@squishling_methods ||= {})[name] = options
         @squishling_wrapper.wrap(name)
       end
+    end
+
+    # Hand a call to the LLM when a squished method's Ruby raises one of the errors, as if its body ended in
+    #   rescue ParseError => e
+    #     squish!(append_to_purpose: "...", context: { error: e })
+    # The error is sent as context under the as: name. The other options are those of `squish!`. A class can declare
+    # it more than once; the first match is used, and a subclass's declarations are tried before its parent's:
+    #   squish_rescue VendorFormats::ParseError, append_to_purpose: "The parser failed; the error is in the context."
+    def squish_rescue(*errors, as: :error, **overrides)
+      (@squishling_rescues ||= []) << Rescue.build(self, errors, as:, overrides:)
+      self
+    end
+
+    def squishling_rescues
+      (@squishling_rescues || []) + squishling_inherited(:squishling_rescues, [])
     end
 
     def squished_methods
@@ -244,14 +302,37 @@ module Squishling
 
     private
 
-    # A model or escalation declared lower replaces the one above it (with its provider), never joins it.
-    def merge_rescue_overrides(above, below)
-      above = above.except(*MODEL_OVERRIDES) if below.keys.intersect?(%i[model escalation])
-      above.merge(below) { |key, earlier, later| key == :append_to_purpose ? [*earlier, *later] : later }
+    # nil leaves a level unset (so the parent's applies); false for cache: is stored, to opt the class out.
+    def declare_generation(params, cache, harness)
+      @squishling_params = Params.normalize(params, "#{self} params") if params
+      @squishling_cache = Cache.normalize(cache, "#{self} cache") unless cache.nil?
+      @squishling_harness = Harness.normalize(harness, to_s) unless harness.nil?
+    end
+
+    # nil leaves a level unset (so the parent's applies); false for squawk: is stored, to silence it.
+    def declare_squawk(squawk, squawk_on)
+      @squishling_squawk = Squawk.validate(squawk, to_s) unless squawk.nil?
+      @squishling_squawk_on = Squawk.validate_on(squawk_on, "#{self} squishling") unless squawk_on.nil?
+    end
+
+    # nil leaves the level unset (so the parent's applies); false is stored, to turn an inherited one off.
+    def declare_apprentice(apprentice)
+      @squishling_apprentice = Apprentice.normalize(apprentice, to_s) unless apprentice.nil?
+    end
+
+    # nil leaves the level unset (so the parent's applies); false is stored, to turn an inherited one off.
+    def declare_call_id(call_id)
+      @squishling_call_id = CallId.normalize_source(call_id, to_s) unless call_id.nil?
+    end
+
+    # Adds the class's own token limits to those it declared before.
+    def declare_budget(output, input)
+      @squishling_budget = (@squishling_budget || {}).merge(Budget.build(to_s, output:, input:)).freeze
     end
 
     # Each class gets its own prepended wrapper so overrides in subclasses are routed too.
     def squishling_install_wrapper
+      ClassRegistry.register(self)
       @squishling_wrapper = Wrapper.new
       prepend(@squishling_wrapper)
 

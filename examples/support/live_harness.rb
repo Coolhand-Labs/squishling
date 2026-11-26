@@ -1,9 +1,10 @@
 # frozen_string_literal: true
 
-# Shared harness for the live examples: resolves the provider API key, configures RubyLLM and
-# Squishling for one small model, and runs a set of scenarios that exercise the gem end to end.
+# Shared harness for the live examples: resolves the provider API key, configures an adapter (RubyLLM's by
+# default) and Squishling for one small model, and runs a set of scenarios that exercise the gem end to end.
 
 require "optparse"
+require "zlib"
 require "bundler/setup"
 require "squishling"
 
@@ -17,7 +18,10 @@ module LiveHarness
   # rejected_params: params the model is known to reject, which must fail loudly (used by the shared scenarios).
   # scenarios: the Scenarios to run (the shared ones by default). around: a callable that runs the block it is
   # given inside whatever a script needs set up and torn down for its scenarios (a local server, say).
-  def run(script:, provider:, env_var:, default_model:, params:, rejected_params: {}, scenarios: SCENARIOS, around: nil)
+  # adapter: :ruby_llm (the default; the key is given to RubyLLM) or a callable that takes the API key and returns a
+  # value for config.adapter.
+  def run(script:, provider:, env_var:, default_model:, params:, rejected_params: {}, scenarios: SCENARIOS, around: nil,
+    adapter: :ruby_llm)
     options = parse_options(script, default_model)
     api_key = options[:api_key] || ENV.fetch(env_var, nil)
     if api_key.nil? || api_key.strip.empty?
@@ -25,8 +29,8 @@ module LiveHarness
       exit 1
     end
 
-    RubyLLM.configure { |config| config.public_send(:"#{provider}_api_key=", api_key) }
     Squishling.configure do |config|
+      config.adapter = configure_adapter(adapter, provider, api_key)
       config.default_escalation = [{ model: options[:model], attempts: 2 }]
       config.default_provider = provider
       config.default_params = params
@@ -41,6 +45,14 @@ module LiveHarness
     failures = around ? around.call(&count_failures) : count_failures.call
     puts "\n#{scenarios.size - failures}/#{scenarios.size} passed"
     exit(failures.zero? ? 0 : 1)
+  end
+
+  def configure_adapter(adapter, provider, api_key)
+    return adapter.call(api_key) unless adapter == :ruby_llm
+
+    require "ruby_llm"
+    RubyLLM.configure { |config| config.public_send(:"#{provider}_api_key=", api_key) }
+    :ruby_llm
   end
 
   def parse_options(script, default_model)
@@ -181,7 +193,7 @@ module LiveHarness
 
   # Nothing to rescue by hand: Ruby's draft is capitalized wrongly for squish_validate (held to it by
   # config.validate_both_paths), so the LLM gets the draft and the problems and corrects it. squish_rescue names an
-  # error that hands off too.
+  # error that hands off too (the error is in the context as `error`).
   class CapitalizedName
     include Squishling
 
@@ -198,6 +210,25 @@ module LiveHarness
 
       { name: text.strip }
     end
+  end
+
+  # Images: two images in one call, so the answer depends on each reaching the model, in order.
+  class ColorReader
+    include Squishling
+
+    purpose "Name the single dominant colour of each attached image: front_color for `front`, back_color for `back`."
+    output_schema do
+      string :front_color, enum: %w[red green blue]
+      string :back_color, enum: %w[red green blue]
+    end
+  end
+
+  # A solid-colour PNG, built in memory (large enough that the provider's vision model reads it reliably).
+  def solid_png(red, green, blue, size = 256)
+    chunk = ->(type, data) { [data.bytesize].pack("N") + type + data + [Zlib.crc32(type + data)].pack("N") }
+    rows = Array.new(size) { "\x00".b + ([red, green, blue].pack("C3") * size) }.join
+    "\x89PNG\r\n\x1A\n".b + chunk.call("IHDR", [size, size, 8, 2, 0, 0, 0].pack("NNCCCCC")) +
+      chunk.call("IDAT", Zlib::Deflate.deflate(rows)) + chunk.call("IEND", "")
   end
 
   # Fallback that must never run for a setup mistake.
@@ -347,7 +378,7 @@ module LiveHarness
       check(result.squished?, "expected an LLM result")
       check(result.sentiment == "positive", "sentiment was #{result.sentiment.inspect}")
       check(calls.size == 2, "expected 2 squawk calls (one per sample), got #{calls.size}")
-      # output is what RubyLLM returned: the JSON String (or a Hash, for providers that parse it themselves).
+      # output is what the adapter returned: the JSON String (or a Hash, for an adapter that parses it itself).
       check(calls.all? { |call| call[:error].nil? && [String, Hash].include?(call[:output].class) },
         "unexpected squawk calls: #{calls.map { |call| call.values_at(:error, :output).map(&:class) }.inspect}")
       metadata = calls.map { |call| call[:metadata].slice(:model, :usage) }
@@ -367,6 +398,14 @@ module LiveHarness
       check(result.squished?, "expected an LLM result")
       check(result.sentiment == "positive", "sentiment was #{result.sentiment.inspect}")
       "judge picked #{result.sentiment} (#{result.confidence})"
+    }),
+    Scenario.new("the model reads two images sent with the call, in order", lambda {
+      red = Squishling::Image.new(data: solid_png(220, 20, 20))
+      blue = Squishling::Image.new(data: solid_png(20, 20, 220))
+      result = ColorReader.call(front: red, back: blue)
+      check(result.front_color == "red", "front_color was #{result.front_color.inspect}")
+      check(result.back_color == "blue", "back_color was #{result.back_color.inspect}")
+      "front #{result.front_color}, back #{result.back_color}"
     }),
     Scenario.new("params the model rejects raise ConfigurationError, not the fallback", lambda {
       klass = Class.new(Echo) { squishling params: LiveHarness.rejected_params }

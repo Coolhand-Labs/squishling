@@ -1,0 +1,108 @@
+# frozen_string_literal: true
+
+module Squishling
+  module Testing
+    # Run's follow-up messages (a private constant of Run): the helpers read what was sent through their parsers.
+    MESSAGES = Run.const_get(:Messages)
+    private_constant :MESSAGES
+
+    # One provider request as the test adapter saw it: what left the process, and what came back.
+    #
+    # arguments and context are the method's arguments and the squish_context / squish! context values the model was
+    # sent. For a judge they are those of the call being judged, and candidates holds the two samples. messages is
+    # the conversation as sent (empty for a System One judgment, whose payload is the input). conversation is the
+    # index of the chat in Adapter#conversations (nil for a judgment): a retry is the same conversation, an
+    # escalation a new one. adapter is the name the step picked (nil for the default adapter). reply is the
+    # Adapter::Response, or the error raised instead. cache is the prompt caching
+    # asked for: false, or a Hash of options. apprentice is true for the requests of an apprentice's shadow run.
+    Request = Data.define(:label, :type, :role, :sample, :attempt, :attempts, :model, :provider, :params,
+      :system_prompt, :output_schema, :messages, :conversation, :payload, :reply, :cache, :adapter, :apprentice) do
+      def initialize(reply:, cache: false, adapter: nil, apprentice: false, **attributes)
+        super
+      end
+
+      def apprentice?
+        apprentice
+      end
+
+      def arguments
+        input["arguments"]
+      end
+
+      def context
+        input["context"]
+      end
+
+      def candidates
+        payload["candidates"]
+      end
+
+      # The validation messages this request carried back to the model: a retry in the same conversation, or an
+      # escalation to the next step. Empty for a first attempt.
+      def errors
+        (retry_errors || escalation&.errors) || []
+      end
+
+      # The rejected output forwarded from the previous step (text, capped), or nil when none was.
+      def forwarded_rejected
+        escalation&.rejected
+      end
+
+      def failed?
+        reply.is_a?(Exception)
+      end
+
+      def judge?
+        role == :judge
+      end
+
+      # The Squishling::Images sent with the conversation's first message (empty when none were).
+      def images
+        parts.filter_map { |part| part[:image] if part[:type] == :image }
+      end
+
+      # The Squishling::Documents sent with the conversation's first message (empty when none were).
+      def documents
+        parts.filter_map { |part| part[:file] if part[:type] == :file }
+      end
+
+      # The content parts of the conversation's first message (none when it is plain text).
+      def parts
+        content = messages.first&.fetch(:content, nil)
+        content.is_a?(Array) ? content : []
+      end
+
+      # The JSON payload of the first user message, parsed (an escalation message wraps it in its own text).
+      def self.payload_of(messages)
+        text = text_of(messages.first.fetch(:content))
+        JSON.parse(MESSAGES.parse_escalation(text)&.input || text)
+      rescue JSON::ParserError
+        {}
+      end
+
+      # A message's text: the content itself, or its text part when it carries files.
+      def self.text_of(content)
+        return content unless content.is_a?(Array)
+
+        content.filter_map { |part| part[:text] if part[:type] == :text }.join
+      end
+
+      private
+
+      # The method's arguments and context: the payload itself, or inside a judge's "input".
+      def input
+        judge? ? payload.fetch("input", {}) : payload
+      end
+
+      def retry_errors
+        text = messages.last&.fetch(:content, nil)
+        messages.size > 1 && text ? MESSAGES.parse_retry(text) : nil
+      end
+
+      def escalation
+        text = messages.first&.fetch(:content, nil)
+        text && MESSAGES.parse_escalation(self.class.text_of(text))
+      end
+    end
+  end
+end

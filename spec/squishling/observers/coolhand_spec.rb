@@ -1,6 +1,12 @@
 # frozen_string_literal: true
 
 RSpec.describe Squishling::Observers::Coolhand do
+  # The one item of a list that should hold exactly one.
+  def sole(list)
+    expect(list.size).to eq(1)
+    list.first
+  end
+
   let(:klass) do
     Class.new do
       include Squishling
@@ -210,6 +216,107 @@ RSpec.describe Squishling::Observers::Coolhand do
 
       expect { Squishling.configure { |c| c.observer = :coolhand } }
         .to raise_error(Squishling::ConfigurationError, /Coolhand\.with_context/)
+    end
+  end
+
+  describe "apprentice mode" do
+    let(:feedback) { [] }
+    let(:flushed) { [] }
+
+    # The coolhand gem with client ids: with_context takes client_unique_id:, and feedback is recorded.
+    let(:coolhand_with_ids) do
+      log = declared
+      sent = feedback
+      config = settings
+      service = Object.new.tap { |object| object.define_singleton_method(:create_feedback) { |hash| sent << hash } }
+      flushes = flushed
+      Module.new do
+        define_singleton_method(:flush) do |**|
+          flushes << :called
+          true
+        end
+        define_singleton_method(:with_context) do |reporter: nil, workload: nil, template: nil, client_unique_id: nil,
+                                                   &block|
+          log << [{ reporter:, workload:, template:, client_unique_id: }.compact, Thread.current]
+          block.call
+        end
+        define_singleton_method(:configuration) { config }
+        define_singleton_method(:feedback_service) { service }
+      end
+    end
+
+    before do
+      klass.class_eval { def call(text:) = { priority: text.include?("down") ? "high" : "low", team: "api" } }
+      klass.squishling(apprentice_mode: true)
+    end
+
+    it "tags each request with its id, marks the workload, and sends the Ruby result as feedback on a mismatch" do
+      stub_const("Coolhand", coolhand_with_ids)
+      stub_llm(low)
+
+      expect(klass.call(text: "site down").priority).to eq("high")
+
+      context = sole(contexts)
+      expect(context[:client_unique_id]).to match(/\A\h{8}-\h{4}-\h{4}-\h{4}-\h{12}\.1\z/)
+      expect(context.dig(:workload, :description)).to eq("TicketTriage#call (apprentice)")
+      expect(context.dig(:workload, :key)).to eq("TicketTriage#call")
+      expect(feedback).to eq([{
+        client_unique_id: context[:client_unique_id], sentiment: "dislike",
+        explanation: "TicketTriage#call's Ruby implementation returned the revised output (Squishling apprentice)",
+        creator_unique_id: "squishling", revised_output: '{"priority":"high","team":"api"}'
+      }])
+    end
+
+    it "tags the request with the caller's own call id, and sends the feedback against it" do
+      stub_const("Coolhand", coolhand_with_ids)
+      stub_llm(low)
+
+      Squishling.with_call_id("ticket-123") { klass.call(text: "site down") }
+
+      expect(sole(contexts)[:client_unique_id]).to eq("ticket-123.1")
+      expect(sole(feedback)).to include(client_unique_id: "ticket-123.1", sentiment: "dislike")
+    end
+
+    it "sends the feedback right away, without waiting on Coolhand's log queue" do
+      stub_const("Coolhand", coolhand_with_ids)
+      stub_llm(high)
+
+      klass.call(text: "site down")
+
+      expect(flushed).to be_empty
+      expect(feedback.size).to eq(1)
+    end
+
+    it "likes a match, without a revised output" do
+      stub_const("Coolhand", coolhand_with_ids)
+      stub_llm(high)
+
+      klass.call(text: "site down")
+
+      expect(sole(feedback)).to include(sentiment: "like", client_unique_id: sole(contexts)[:client_unique_id])
+      expect(sole(feedback)).not_to have_key(:revised_output)
+    end
+
+    it "sends nothing when the shadow run failed" do
+      stub_const("Coolhand", coolhand_with_ids)
+      stub_llm(Squishling::LLMError.new("rate limited"))
+
+      klass.call(text: "site down")
+
+      expect(feedback).to be_empty
+    end
+
+    it "sends no client id and no feedback with a gem that can't tag logs with one" do
+      sent = feedback
+      service = Object.new.tap { |object| object.define_singleton_method(:create_feedback) { |hash| sent << hash } }
+      coolhand.define_singleton_method(:feedback_service) { service }
+      stub_const("Coolhand", coolhand)
+      stub_llm(low)
+
+      klass.call(text: "site down")
+
+      expect(sole(contexts)).not_to have_key(:client_unique_id)
+      expect(feedback).to be_empty
     end
   end
 end

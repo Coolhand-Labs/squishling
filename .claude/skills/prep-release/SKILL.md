@@ -4,14 +4,16 @@ description: |
   Runs an entire release event for this gem: triages every open PR into a
   quality/risk-rated merge recommendation, waits for the user's sign-off,
   squash-merges the chosen PRs, writes the release's changelog and version
-  bump plus a whole-package security red-team on its own release branch,
-  validates that branch with the full test suite and live-key example
-  apps, then opens a single release-prep PR for the user's final review.
-  Never merges that PR, tags, or publishes. Use when the user types
+  bump, a refreshed "latest release" callout on the site's index page, and a
+  whole-package security red-team on its own release branch, drafts
+  LinkedIn and Twitter/X posts for the release, validates that branch with
+  the full test suite and live-key example apps, then opens a single
+  release-prep PR for the user's final review. Never merges that PR, tags,
+  or publishes. Use when the user types
   /prep-release, asks to "prep a release", "cut a release", "release
   checklist", or wants the open PRs triaged and merged into a release.
 user_invocable: true
-version: 1.0.0
+version: 1.1.0
 ---
 
 # Prep Release
@@ -31,7 +33,7 @@ what an individual PR's diff already contains.
 
 ## Phase 1: Survey open PRs, recommend a release set
 
-1. `gh pr list --state open --json number,title,author,isDraft,mergeable,mergeStateStatus,statusCheckRollup,additions,deletions,changedFiles,body,headRefName`.
+1. `gh pr list --state open --json number,title,author,isDraft,mergeable,mergeStateStatus,statusCheckRollup,authorAssociation,isCrossRepository,additions,deletions,changedFiles,body,headRefName`.
 2. For each PR, pull `gh pr diff <n>` and `gh pr checks <n>` and rate two
    independent axes:
    - **Quality** (High/Medium/Low): does the diff include spec coverage
@@ -47,13 +49,29 @@ what an individual PR's diff already contains.
      paths keep returning the same validated type; failing CI checks or a
      non-clean `mergeable` state also push risk up; an isolated additive
      feature or docs-only change is lower risk.
-3. Present one table: PR number, title, quality, risk, CI status,
+3. **Classify each PR's author** and keep a running contributor list that
+   Phase 3 and Phase 5 reuse:
+   - **bot**: `author.is_bot` (Dependabot and the like). Never thanked.
+   - **team**: `authorAssociation` is `MEMBER`, `OWNER` or `COLLABORATOR`.
+   - **outside contributor**: anyone else; `isCrossRepository` means a fork PR.
+   - **first-time contributor** (a subset of outside): the login has no
+     commit on `main` at or before the last tag
+     (`gh api "repos/Coolhand-Labs/squishling/commits?author=<login>&until=<last-tag-date>"`
+     returns `[]`, the date from `git log -1 --format=%cI <last-tag>`) and
+     `gh pr list --state merged --author <login>` is empty. Decide this now,
+     before Phase 2 merges anything: once their PR lands they stop looking new.
+     Record the GitHub `login` and the PR number(s).
+4. Present one table: PR number, title, **author** (login plus `team`, `bot`,
+   `outside contributor` or `first-time contributor`), quality, risk, CI status,
    mergeable state, and a one-line recommendation (include / exclude /
-   needs work before it can be considered). Call out anything that looks
+   needs work before it can be considered). Below the table, list every
+   outside and first-time contributor by `@login` with the PR they sent. An
+   outside PR has no CI run until a maintainer approves its workflows, so say
+   that instead of rating CI as passing. Call out anything that looks
    unfinished — draft, a WIP-sounding title, failing checks, an empty or
    placeholder description, visible `TODO`/`FIXME` in the diff — as
    "exclude, not ready" rather than rating it neutrally.
-4. Stop here and ask the user which PRs to include in this release. This
+5. Stop here and ask the user which PRs to include in this release. This
    is the one planned decision point in the whole skill — do not merge,
    write changelog entries, or touch `version.rb` until the user answers.
    (Phase 2 step 3 below has its own unplanned-error stop for an unclean
@@ -70,13 +88,24 @@ Process the user's chosen PRs one at a time, not as a batch:
    conflicts, skip it, note it in the running list as "skipped — needs
    rebase," and continue with the rest. Don't resolve conflicts on someone
    else's branch unilaterally.
-2. `gh pr merge <n> --squash --delete-branch` for each surviving PR.
-3. After each merge, sync local `main` before evaluating the next PR.
-   First check `git status --porcelain` — if it's not empty, stop and
-   surface it to the user rather than discarding unknown local state;
-   otherwise `git fetch origin main && git checkout main && git reset
-   --hard origin/main` is safe, since it only overwrites a working tree
-   already confirmed clean with the just-fetched remote `main`.
+2. `gh pr merge <n> --squash --delete-branch --admin` for each surviving PR.
+   The repo's "only maintainers can merge" ruleset blocks a plain merge
+   (`the base branch policy prohibits the merge`) even when every check is
+   green, so `--admin` is the standing, user-approved way to merge here. It
+   covers only the PRs chosen in Phase 1 that are `MERGEABLE`; it never
+   covers a conflicting PR, a draft the user didn't explicitly include (a
+   draft must also be made ready with `gh pr ready <n>`, which is only done
+   when the user named it), or the Phase 5 release PR. A dependabot PR can
+   read `UNKNOWN` mergeability for a few seconds right after an earlier
+   merge, so poll until it resolves before deciding to skip it.
+3. After each merge, sync before evaluating the next PR. First check
+   `git status --porcelain` — if it's not empty, stop and surface it to the
+   user rather than discarding unknown local state. Then `git fetch origin
+   main --tags`. In a Conductor workspace `main` is checked out in the primary
+   worktree, so `git checkout main` fails; don't force it. Branch the release
+   off `origin/main` instead (`git checkout -b release/vX.Y.Z origin/main`).
+   Where `main` can be checked out, `git checkout main && git reset --hard
+   origin/main` is safe once the tree is confirmed clean.
 
 Keep a running list of what actually merged vs. what got skipped — Phase 5
 reports both.
@@ -113,6 +142,20 @@ never on `main` directly.
      number in its title) for anything not merged in this run. If a
      change genuinely has no discoverable PR (a direct commit to `main`),
      write the entry without one rather than skipping it.
+     **Credit outside contributors.** For every change from an outside
+     contributor (the Phase 1 list; for changes not merged in this run, look
+     the author up with `gh pr view <n> --json author,authorAssociation` and
+     classify as in Phase 1 step 3), put `thanks @login` next to the PR
+     number, e.g. `(#79, thanks @login)`. Then end the version's section with
+     a `### Thanks` heading (after any `### Internal`) that names each
+     outside contributor and what they sent. For a first-time contributor,
+     add a shout-out saying it is their first contribution to Squishling and
+     welcoming them, e.g. "Welcome and thank you to @login, whose first
+     contribution to Squishling, #79, adds prompt caching." Contributors who
+     have landed before get the thanks without the first-time line. Skip bots
+     and team members, and omit `### Thanks` when there is nothing to put in
+     it. `/finish-release` carries this credit into the GitHub release notes,
+     which are written separately from the changelog.
    - `README.md` / `docs/*.md` — any new config option, DSL method, or
      behavior change needs the relevant section updated. Follow this
      repo's docs philosophy from `AGENTS.md`: the README stays a scannable
@@ -132,6 +175,41 @@ never on `main` directly.
    `[Unreleased]` CHANGELOG heading into `## [X.Y.Z] - <today's date>`
    (keeping an empty `## [Unreleased]` above it), and run `bundle install`
    so `Gemfile.lock`'s `squishling (X.Y.Z)` line matches.
+6. **Update the site's latest-release callout.** `site/index.html` opens with
+   an `<aside id="latest-release">` under the hero. *Replace its contents*
+   (never stack a second callout) with, in order:
+   - the kicker line: `Latest release · vX.Y.Z · <time datetime="YYYY-MM-DD">Month D, YYYY</time>`,
+     using the same date as the CHANGELOG heading;
+   - 1-2 sentences on the release's theme: the through-line of the
+     `## [X.Y.Z]` entries, not a list of features;
+   - an emoji bullet list, one bullet per user-facing change group (about 5
+     at most, one emoji each, the benefit in plain English first, drawn from
+     the CHANGELOG section; internal and docs-only changes don't get one).
+     A breaking change always gets its bullet (or a clause in one) saying what
+     the user must do, even past the cap; other behavior changes only if
+     they need action. If there are no user-facing changes, omit the `<ul>`;
+   - the "Release notes" link to `https://github.com/Coolhand-Labs/squishling/releases/tag/vX.Y.Z`
+     (it resolves once `/finish-release` publishes) and the Changelog link.
+
+   Keep the existing element structure and classes and change only the text
+   (wrap method names in `<code>`, escape HTML).
+
+   Commit it on `release/vX.Y.Z`: Pages (`pages.yml`) deploys `site/**` when
+   the release PR merges to `main`.
+7. **Draft the social posts** from that same theme and bullets, and keep them
+   in `$TMPDIR/squishling-release-posts-vX.Y.Z.md` (scratch outside the repo;
+   never commit it), starting with a `## Social posts` heading. Phase 5 posts
+   the file as a PR comment. Every fact comes from the CHANGELOG or the diff.
+   No AI attribution (`AGENTS.md`).
+   - **LinkedIn**: opens "Squishling vX.Y.Z is here...", then a short
+     paragraph on what Squishling is (a Ruby class that is a hybrid of code
+     and LLM inference) and the release's theme, the emoji bullets (one line
+     each, with a clause of detail), a closing line on anything strategic
+     (e.g. a direction the release opens up), and the release URL.
+   - **Twitter/X**: at most 280 characters (count them; a URL counts as 23 and
+     an emoji as 2): a one-line theme, the 3-4 shortest bullets, the release
+     URL. If the release doesn't fit, write a 2-3 post thread rather than
+     cutting a thought in half.
 
 ### Red-team
 
@@ -149,8 +227,9 @@ act on, so hunt specifically for:
 - **Credential/secret leakage**: can an API key, or sensitive input data,
   end up in an exception message (`LLMError`, `ConfigurationError`,
   `InvalidOutputError#message`/`#raw`) or a `config.logger` line? Provider
-  error messages are interpolated into ours — check what RubyLLM puts in
-  them.
+  error messages must never be interpolated into ours — check what each adapter
+  puts in them (the RubyLLM adapter's `describe_failure`, the OpenAI-compatible
+  adapter's status/class-only messages, and that its API key never appears).
 - **Untrusted model output**: LLM output is attacker-influenceable (prompt
   injection through user-supplied inputs). Confirm it is only ever
   `JSON.parse`d (no `Marshal`, `YAML.load`, `create_additions`, `eval`,
@@ -164,9 +243,10 @@ act on, so hunt specifically for:
   non-object root schema, `anyOf` unions left untyped? Does a
   `strict: false` schema slip through any accepted schema form?
 - **Params passthrough**: params other than `temperature`,
-  `max_output_tokens`, and `thinking` go to RubyLLM's
-  `with_provider_options`, which merges them into the request last.
-  Confirm `Params::RESERVED_KEYS` still covers every top-level key
+  `max_output_tokens`, and `thinking` go to the adapter: RubyLLM's
+  `with_provider_options` merges them into the request last, and the
+  OpenAI-compatible adapter builds its body from params first and
+  Squishling's own keys last. Confirm `Params::RESERVED_KEYS` still covers every top-level key
   Squishling/RubyLLM set for each protocol in the installed `ruby_llm`
   version (check each protocol's `render_payload` under
   `lib/ruby_llm/protocols/`),
@@ -181,7 +261,7 @@ act on, so hunt specifically for:
   unsynchronized shared mutable state a concurrent request could race on,
   and for memoization (`@result_class`, `@squishling_fields`) that could
   publish a half-built object.
-- **Model/provider resolution**: `assume_model_exists` is set only when a
+- **Model/provider resolution**: in the RubyLLM adapter, `assume_model_exists` is set only when a
   provider is named and the model is missing from RubyLLM's registry —
   can a config combination route a request to an unintended provider or
   model (e.g. a per-method model inheriting a class-level provider)?
@@ -214,8 +294,9 @@ rule `/loop-review` uses for stuck findings.
    purely to move the percentage.
 
 2. If Phase 4.1 is green, run every `*_example.rb` script in `examples/`
-   against live provider keys: `bundle exec ruby examples/<name>.rb` for
-   each (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`). Unlike some Coolhand
+   against live provider keys. Prefer `bin/live-examples`: it runs them all and re-runs itself under `zsh -ic`, so
+   keys exported in `~/.zshrc` reach an agent's non-interactive shell (or `bundle exec ruby examples/<name>.rb` for
+   each; `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`). Unlike some Coolhand
    repos, these scripts **exit 1** when their key is missing (message
    `no API key. Pass --api-key KEY or set …`) rather than skipping —
    record that case as "not run (no key)" and tell the user, since this
@@ -227,17 +308,29 @@ rule `/loop-review` uses for stuck findings.
 
 ## Phase 5: Open the release-prep PR, report everything
 
+0. If the red-team or Phase 4 changed behavior or the changelog (a fix
+   landed, a feature was reverted), re-check the site callout and the social
+   drafts against the final `## [X.Y.Z]` section before opening the PR.
 1. Push `release/vX.Y.Z` and `gh pr create` (e.g. "chore: release
-   vX.Y.Z") targeting `main`. This PR is the user's final checkpoint
-   before the changelog/version/red-team commit lands — never merge it,
-   tag it, or run `rake release`/`gem push` yourself.
+   vX.Y.Z") targeting `main`. Then `gh pr comment <n> --body-file
+   "$TMPDIR/squishling-release-posts-vX.Y.Z.md"` so the social drafts are
+   reviewed alongside the callout diff. A comment, not the PR body:
+   `/finish-release` copies the body into the permanent squash-commit message.
+   This PR is the user's final checkpoint before the changelog/version/
+   red-team commit lands — never merge it, tag it, or run
+   `rake release`/`gem push` yourself.
 2. Report one consolidated summary covering the whole run:
    - Phase 1's PR table and which PRs the user chose.
+   - Outside and first-time contributors in this release, by `@login` and PR,
+     and where their credit landed in `CHANGELOG.md` (the `thanks @login`
+     entry and the `### Thanks` section).
    - Phase 2's outcome: which PRs merged, which were skipped for new
      conflicts (and need a rebase before the next release).
    - The release-prep PR link, the version bump and why.
    - Coverage-quality gaps plus recommended specs.
-   - Docs updated.
+   - Docs updated, and the site callout's new version, date, and theme.
+   - The LinkedIn and Twitter/X drafts, printed in full (the user posts them
+     once `/finish-release` has published the release).
    - Red-team findings split into fixed vs. flagged-for-decision.
    - Phase 4's regression test/lint result and the example-app run
      results (pass/skip/fail per script).
@@ -248,15 +341,20 @@ rule `/loop-review` uses for stuck findings.
   running `bundle install` for the lockfile are all in scope and don't
   need a stop-and-ask — they're mechanical, reversible, and gated on Phase
   4 already being green before the PR opens.
-- Squash-merging PRs the user explicitly chose in Phase 1, and pushing the
-  `release/vX.Y.Z` branch to open its own PR, are both in scope.
+- Squash-merging PRs the user explicitly chose in Phase 1 (with `--admin`, to
+  get past the repo's merge ruleset; see Phase 2 step 2), and pushing the
+  `release/vX.Y.Z` branch to open its own PR and comment the social drafts on
+  it, are all in scope. Posting them to LinkedIn or Twitter/X is not: the
+  user does that.
 - Never push a commit directly to `main`. All release-branch work lands on
   `main` only via the Phase 5 PR, which the user reviews and merges
   themselves.
 - Never create or push a git tag, never run `rake release` or `gem push`,
-  and never merge the Phase 5 PR yourself. Tagging and publishing are the
-  user's action once they've reviewed and merged this skill's PR, not
-  something this skill does.
+  and never merge the Phase 5 PR yourself. Merging, tagging and publishing are
+  the user's action once they've reviewed this skill's PR, not something this
+  skill does. `/finish-release` is that follow-up: the user invokes it after
+  reviewing the release PR, and it then merges the PR, tags, and publishes the
+  GitHub release.
 
 ## Rationalizations to resist
 
@@ -270,12 +368,15 @@ rule `/loop-review` uses for stuck findings.
 - *"Tests pass, so coverage is fine."* Passing tests and meaningful
   coverage are different questions. A red build blocks release; a green
   build with hollow tests doesn't guarantee anything.
+- *"The callout still reads fine from the last release."* It is rewritten every
+  release. A landing page with last release's version and date is a bug, and
+  the social drafts are built from it.
 - *"Docs are close enough, I'll skip the cleanup pass."* Accumulated
   changes since the last tag are exactly when docs drift from behavior —
   this phase exists because per-PR doc updates miss the cross-cutting
   view.
 - *"The example apps are just smoke tests, I'll skip them since specs
-  passed."* Specs stub `RubyLLM.chat`; the example apps are the only step
+  passed."* Specs fake or stub the adapters; the example apps (including the OpenAI-compatible one) are the only step
   in this skill that sends a real strict schema to a real provider and
   parses what comes back — whether a provider accepts a schema shape, or
   returns `null` vs `[]` correctly, is a different failure mode than a

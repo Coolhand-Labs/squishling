@@ -1,25 +1,64 @@
 # frozen_string_literal: true
 
 module Squishling
-  # RubyLLM requests for one squished method, with RubyLLM's errors mapped onto Squishling's taxonomy.
+  # The requests for one squished method, made through the adapter each step names (see Adapter; the default one
+  # when it names none). Squishling owns the conversation: each Conversation holds the system prompt, the output
+  # schema, and the messages so far, and every request sends all of it to the adapter.
   class LLMClient
-    # Where RubyLLM's own code lives, to tell its ArgumentErrors from the developer's (see #judge).
-    RUBY_LLM_LIB = File.dirname(RubyLLM.method(:judge).source_location.first)
-    private_constant :RUBY_LLM_LIB
+    # One chat on one escalation step. messages are { role:, content: } Hashes, grown by #ask. files go with the
+    # chat's first message.
+    Conversation = Struct.new(:step, :instructions, :schema, :messages, :files)
 
-    # Runs each job on its own thread and returns, in order, each job's [value, exception]. Only provider
-    # requests run here: parsing, validation, and the developer's callbacks stay on the caller's thread. Fiber
-    # storage (RubyLLM's usage owner) is inherited by the threads, and RubyLLM's instrumentation context is
-    # carried over the way RubyLLM's own concurrent tool calls do it. Unlike those, the threads don't enter the
-    # Rails executor: the caller already holds it, and a second share can deadlock against a pending code reload.
-    # If the caller is interrupted while waiting (a timeout, Thread#raise), the requests still running are
-    # stopped rather than left running unobserved.
-    def self.concurrently(jobs)
+    # Where a response came from: the request that got it (see Observer::Call#request_id) and the model that answered.
+    Origin = Data.define(:request_id, :model)
+
+    # purpose, harness (the harness type), handed_off (squish! sent the call here), and apprentice (an apprentice's
+    # shadow run) are only told to the observer. call_id names the call; each request gets its own id under it (see
+    # Observer::Call). budget (see Budget) caps the tokens the requests of this client may use between them.
+    def initialize(label, purpose:, harness:, handed_off:, budget: {}, call_id: nil, apprentice: false)
+      @label = label
+      @purpose = purpose
+      @harness = harness
+      @handed_off = handed_off
+      @call_id = call_id
+      @apprentice = apprentice
+      @requests = 0
+      @request_ids = {}.compare_by_identity
+      @requests_lock = Mutex.new
+      @config = Squishling.config
+      @adapters = {}
+      @adapters_lock = Mutex.new
+      @tally = Budget::Tally.new(budget, cache_reads: @config.budget_counts_cache_reads)
+    end
+
+    # Raises ConfigurationError if any of the steps names an adapter that isn't configured, or (given images) names one
+    # that doesn't take them, so a mistake ends the call before it has made a request.
+    def check_adapters!(steps, files = [])
+      steps.each do |step|
+        adapter_for(step)
+        check_files!(step, files)
+      end
+    end
+
+    # The budget limit this client's requests have reached ({ limit:, max:, used: }), or nil. Checked before each
+    # request, so one already in flight is never cut short.
+    def exhausted_budget
+      @tally.exhausted
+    end
+
+    # Runs each job on its own thread and returns, in order, each job's [value, exception]. steps are the
+    # escalation steps the jobs ask on, in the same order. Only provider requests run here: parsing, validation, and
+    # the developer's callbacks stay on the caller's thread. Fiber storage is inherited by the threads, and each
+    # job's adapter carries over whatever request context it keeps (see Adapter::Base#capture_context). If the
+    # caller is interrupted while waiting (a timeout, Thread#raise), the requests still running are stopped rather
+    # than left running unobserved.
+    def concurrently(jobs, steps)
       return jobs.map { |job| capture(job) } if jobs.size < 2
 
-      context = instrumentation_context
-      threads = jobs.map do |job|
-        thread = Thread.new { with_instrumentation_context(context) { capture(job) } }
+      adapters = steps.map { |step| adapter_for(step) }
+      contexts = captured_contexts(adapters)
+      threads = jobs.zip(adapters).map do |job, adapter|
+        thread = Thread.new { with_context(adapter, contexts.fetch(adapter)) { capture(job) } }
         thread.report_on_exception = false
         thread
       end
@@ -28,76 +67,44 @@ module Squishling
       threads&.each { |thread| thread.kill.join if thread.alive? }
     end
 
-    def self.capture(job)
-      [job.call, nil]
-    rescue Exception => e # rubocop:disable Lint/RescueException -- re-raised on the caller's thread
-      [nil, e]
+    # A fresh conversation on one escalation step, with the system prompt, the strict output schema, and the files
+    # (Images and Documents) its first message carries. Raises ConfigurationError for files when the step's adapter
+    # doesn't take them.
+    def chat(step, instructions:, schema:, files: [])
+      check_files!(step, files)
+      Conversation.new(step, instructions, schema, [], files)
     end
 
-    def self.instrumentation_context
-      instrumentation = defined?(RubyLLM::Support::Instrumentation) && RubyLLM::Support::Instrumentation
-      return unless instrumentation.respond_to?(:current_workflow) && instrumentation.respond_to?(:capture_context)
-
-      [instrumentation.current_workflow, instrumentation.capture_context]
-    end
-
-    def self.with_instrumentation_context(context, &)
-      return yield unless context
-
-      instrumentation = RubyLLM::Support::Instrumentation
-      instrumentation.with_workflow(context.first) { instrumentation.with_context(context.last, &) }
-    end
-
-    private_class_method :capture, :instrumentation_context, :with_instrumentation_context
-
-    # purpose, harness (the harness type), and handed_off (squish! sent the call here) are only told to the observer.
-    def initialize(label, purpose:, harness:, handed_off:)
-      @label = label
-      @purpose = purpose
-      @harness = harness
-      @handed_off = handed_off
-    end
-
-    # A fresh chat on one escalation step, with the system prompt, the strict output schema, and its params.
-    def chat(step, instructions:, schema:)
-      chat = build_chat(step)
-      chat.with_instructions(instructions)
-      chat.with_schema(schema)
-      apply_params(chat, step.params)
-      chat
-    end
-
-    # Transient HTTP failures are already retried by RubyLLM (RubyLLM.config.max_retries); anything
-    # that still fails is surfaced as an LLMError, which moves on to the next attempt of the
-    # escalation (or propagates from the last one). A 400 means the request we built is invalid (an
-    # unsupported param, a schema the provider rejects), so it's a setup mistake: escalating or a
-    # fallback would otherwise hide it on every call.
+    # One request in the conversation: the message goes in, and the adapter's answer is kept in it so the next
+    # message continues from there. A request that fails leaves the conversation as it was.
+    # The adapter raises ConfigurationError for setup mistakes (never retried) and LLMError for failures worth another
+    # attempt, which moves on to the next attempt of the escalation (or propagates from the last one).
     # The request runs inside the configured observer (see Observer), on this thread: for samples, the worker's.
     # role is nil for an escalation attempt, :sample (with its name) or :judge; attempt counts in attempts.
-    def ask(chat, message, step, attempt:, attempts:, role: nil, sample: nil)
+    # reask is whether this message is a retry in the same chat (see ModelPath::Step#request_params).
+    def ask(chat, message, step, attempt:, attempts:, role: nil, sample: nil, reask: false)
       call = call_info(step, :chat, role:, sample:, attempt:, attempts:)
-      Observer.around(call) { request(step) { chat.ask(message) } }
+      response = Observer.around(call) { complete(chat, message, step, reask) }
+      @requests_lock.synchronize { @request_ids[response] = call.request_id }
+      response
     end
 
-    # A System One judgment (RubyLLM.judge) on one step. The step's params are sent as provider options.
-    # RubyLLM raises ArgumentError for a judgment it can't build (e.g. a model on a provider that takes none, or
-    # a provider option its protocol reserves), and a bare RubyLLM::Error without an HTTP response for a provider
-    # that doesn't support judgments at all. An ArgumentError from anywhere else (an instrumentation subscriber
-    # runs inside the call) is the developer's own and propagates as-is.
+    # The Origin of a response #ask returned.
+    def origin_of(response)
+      request_id = @requests_lock.synchronize { @request_ids[response] }
+      Origin.new(request_id:, model: Observer.usage(response).model)
+    end
+
+    # Whether the step's adapter can make System One judgments (judges with type: :judgment).
+    def judgments?(step)
+      adapter = adapter_for(step)
+      adapter.respond_to?(:judgments?) && adapter.respond_to?(:judge) && adapter.judgments?
+    end
+
+    # A System One judgment on one step, through the step's adapter.
+    # Judge#check_judgments! has already refused an adapter that can't.
     def judge(input, questions:, step:)
-      request(step) do
-        RubyLLM.judge(input, questions:, provider_options: step.params, **model_options(step))
-      rescue RubyLLM::ModelNotFoundError => e
-        raise ConfigurationError, "#{@label}: #{e.message}"
-      rescue ArgumentError => e
-        raise unless raised_by_ruby_llm?(e)
-
-        raise ConfigurationError, "#{@label}: #{e.message}"
-      rescue RubyLLM::Error => e
-        raise unless e.instance_of?(RubyLLM::Error) && e.response.nil?
-
-        raise ConfigurationError, "#{@label}: #{e.message}"
-      end
+      @tally.add(adapter_for(step).judge(input, questions:, step:, label: @label))
     end
 
     # #judge inside the configured observer (see Observer), attempt counting in attempts.
@@ -108,73 +115,107 @@ module Squishling
 
     private
 
+    def check_files!(step, files)
+      return if files.empty?
+
+      adapter = adapter_for(step)
+      accepted = accepted_media_types(adapter, step)
+      raise ConfigurationError, no_files_message(adapter, step, files) if accepted.empty?
+
+      missing = files.reject { |file| accepted?(file, accepted) }.map { |file| file.media_type || "an image URL" }.uniq
+      return if missing.empty?
+
+      raise ConfigurationError, "#{@label}: the call has #{missing.join(', ')} files, but the " \
+                                "#{adapter.class} adapter takes #{accepted.join(', ')} (see Adapter::Base#media_types)"
+    end
+
+    # An image given by URL has no type of its own, so an adapter that takes any image takes it.
+    def accepted?(file, accepted)
+      file.media_type ? accepted.include?(file.media_type) : accepted.any? { |type| type.start_with?("image/") }
+    end
+
+    # An adapter written before media_types is asked images? instead (and takes no documents).
+    def accepted_media_types(adapter, step)
+      return adapter.media_types(step) if adapter.respond_to?(:media_types)
+
+      adapter.respond_to?(:images?) && adapter.images? ? Image::MEDIA_TYPES.keys : []
+    end
+
+    def no_files_message(adapter, step, files)
+      model = step.model ? " for #{step.model}" : ""
+      kind = files.all?(Image) ? "images" : "files"
+      "#{@label}: the call has #{kind}, but the #{adapter.class} adapter doesn't take them#{model} " \
+        "(see Adapter::Base#media_types)"
+    end
+
+    # The step's adapter, looked up once per call: the adapter a job's context was captured from is the one that
+    # makes its request, even if the configuration changes meanwhile.
+    def adapter_for(step)
+      @adapters_lock.synchronize { @adapters[step.adapter] ||= @config.adapter_for(step.adapter) }
+    end
+
+    def capture(job)
+      [job.call, nil]
+    rescue Exception => e # rubocop:disable Lint/RescueException -- re-raised on the caller's thread
+      [nil, e]
+    end
+
+    def complete(chat, message, step, reask)
+      messages = chat.messages + [{ role: :user, content: content(chat, message) }]
+      request = Adapter::Request.new(label: @label, model: step.model, provider: step.provider,
+        instructions: chat.instructions, messages:, schema: chat.schema, params: step.request_params(reask),
+        cache: step.cache, adapter: step.adapter)
+      adapter = adapter_for(step)
+      response = adapter.complete(request)
+      unless response.is_a?(Adapter::Response)
+        raise ConfigurationError, "#{@label}: the #{adapter.class} adapter must return a " \
+                                  "Squishling::Adapter::Response from #complete, got #{response.class}"
+      end
+
+      chat.messages = messages + [{ role: :assistant, content: response.text }]
+      @tally.add(response)
+    end
+
+    # Each distinct adapter's request context, taken once on the caller's thread.
+    def captured_contexts(adapters)
+      adapters.each_with_object({}.compare_by_identity) do |adapter, contexts|
+        contexts[adapter] = capture_context(adapter) unless contexts.key?(adapter)
+      end
+    end
+
+    def capture_context(adapter)
+      adapter.capture_context if adapter.respond_to?(:capture_context)
+    end
+
+    # A chat's first message carries its files, after the text, as content parts (see Adapter::Request); every other
+    # message is the text alone.
+    def content(chat, message)
+      return message unless chat.messages.empty? && chat.files&.any?
+
+      [{ type: :text, text: message }, *chat.files.map { |file| file_part(file) }]
+    end
+
+    def file_part(file)
+      file.is_a?(Image) ? { type: :image, image: file } : { type: :file, file: }
+    end
+
+    def with_context(adapter, context, &)
+      return yield unless adapter.respond_to?(:with_context)
+
+      adapter.with_context(context, &)
+    end
+
     def call_info(step, request, attempt:, attempts:, role: nil, sample: nil)
       Observer::Call.new(label: @label, purpose: @purpose, harness: @harness, handed_off: @handed_off, role:, sample:,
-        attempt:, attempts:, model: step.model, provider: step.provider, request:)
+        attempt:, attempts:, model: step.model, provider: step.provider, adapter: step.adapter, request:,
+        call_id: @call_id, request_id: next_request_id, apprentice: @apprentice)
     end
 
-    def raised_by_ruby_llm?(error)
-      error.backtrace&.first&.start_with?("#{RUBY_LLM_LIB}/") || false
-    end
+    # "<call_id>.<n>", numbered in the order requests start (samples start theirs on worker threads).
+    def next_request_id
+      return unless @call_id
 
-    def build_chat(step)
-      RubyLLM.chat(**model_options(step))
-    rescue RubyLLM::ModelNotFoundError, RubyLLM::ConfigurationError => e
-      raise ConfigurationError, "#{@label}: #{e.message}"
-    end
-
-    # RubyLLM validates some settings locally (e.g. an impossible thinking budget for the model)
-    # and raises ArgumentError before any request is sent.
-    def apply_params(chat, params)
-      Params.apply(chat, params)
-    rescue ArgumentError => e
-      raise ConfigurationError, "#{@label}: invalid params #{params.inspect} (#{e.message})"
-    end
-
-    # A provider's or transport's own message never goes into ours: a provider can echo request content or part of
-    # an API key in it, and ours reach logs and error trackers. The original stays as #cause for whoever
-    # chooses to read it. RubyLLM's own ConfigurationError is local (it names a missing setting), so it is kept.
-    def request(step)
-      yield
-    rescue RubyLLM::ConfigurationError => e
-      raise ConfigurationError, "#{@label}: #{e.class}: #{e.message}"
-    rescue RubyLLM::UnauthorizedError, RubyLLM::ForbiddenError => e
-      raise ConfigurationError, "#{@label}: #{describe_failure(e)}"
-    rescue RubyLLM::BadRequestError => e
-      raise ConfigurationError,
-        "#{@label}: the provider rejected the request (#{describe_failure(e)})#{params_hint(step.params)}"
-    rescue RubyLLM::Error, Faraday::Error => e
-      raise LLMError, "#{@label}: #{describe_failure(e)}"
-    end
-
-    # The error's class and HTTP status, when it has one, which is all of it that is ours to repeat.
-    def describe_failure(error)
-      response = error.response
-      status = response.is_a?(Hash) ? response[:status] : (response.status if response.respond_to?(:status))
-      status ? "#{error.class}, HTTP #{status}" : error.class.to_s
-    end
-
-    # Models missing from RubyLLM's registry (e.g. newly released ones) are only usable when a
-    # provider is named, so RubyLLM is told to assume they exist.
-    def model_options(step)
-      model = step.model
-      provider = step.provider
-      options = { model:, provider: }.compact
-      options[:assume_model_exists] = true if model && provider && !known_model?(model, provider)
-      options
-    end
-
-    def known_model?(model, provider)
-      RubyLLM.models.find(model, provider:)
-      true
-    rescue RubyLLM::ModelNotFoundError
-      false
-    end
-
-    def params_hint(params)
-      return "" if params.empty?
-
-      ". Check params #{params.inspect}; reasoning models often reject sampling params such as temperature and top_p"
+      "#{@call_id}.#{@requests_lock.synchronize { @requests += 1 }}"
     end
   end
 end

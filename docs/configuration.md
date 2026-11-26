@@ -1,7 +1,9 @@
 # Configuration
 
-Squishling sends requests through [RubyLLM](https://rubyllm.com), so configure provider API keys there first
-(OpenAI, Anthropic Claude, Google Gemini, AWS Bedrock, OpenRouter, and any other provider RubyLLM supports):
+Squishling sends requests through an [adapter](adapters.md): [RubyLLM](https://rubyllm.com) (OpenAI, Anthropic
+Claude, Google Gemini, AWS Bedrock, OpenRouter, and any other provider RubyLLM supports), any OpenAI-compatible
+endpoint, or your own. With none configured it uses RubyLLM when the `ruby_llm` gem is in your bundle. For RubyLLM,
+configure provider API keys there first (`require "ruby_llm"` first if your app doesn't use `Bundler.require`):
 
 ```ruby
 RubyLLM.configure do |config|
@@ -14,6 +16,7 @@ Then configure Squishling:
 
 ```ruby
 Squishling.configure do |config|
+  config.adapter = :ruby_llm                   # or :openai_compatible, or your own: see Adapters
   config.default_model = "claude-sonnet-5-5"   # or default_escalation, below
   config.default_provider = nil
   config.default_params = { temperature: 0 }
@@ -25,18 +28,29 @@ end
 
 | Option | Default | Description |
 |---|---|---|
-| `default_model` | `nil` | The universal model (a single attempt) for every squishling class that doesn't declare one. `nil` uses RubyLLM's `default_model`. |
+| `adapter` | `nil` (RubyLLM, when its gem is available) | How requests reach a model: `:ruby_llm`, `:openai_compatible`, a [registered](adapters.md#writing-your-own) name, a Hash with `type:` and that adapter's options, or an adapter instance. See [Adapters](adapters.md). |
+| `adapters` | `{}` | More adapters by name, for escalation steps that pick one with `adapter:`. Each value takes what `adapter` does. See [Mixing adapters](adapters.md#mixing-adapters-in-one-escalation). |
+| `default_model` | `nil` | The universal model (a single attempt) for every squishling class that doesn't declare one. `nil` uses the adapter's own default (RubyLLM's `default_model`; the OpenAI-compatible adapter's `default_model:` option). |
 | `default_escalation` | `nil` | The universal [escalation](#models-and-escalation): models tried in order. Assigning it clears `default_model`, and vice versa. |
-| `default_provider` | `nil` | The provider for `default_model`/`default_escalation` steps that don't name one. Only needed for models missing from RubyLLM's registry (see below). |
+| `default_provider` | `nil` | The provider for `default_model`/`default_escalation` steps that don't name one. What it means depends on the adapter: RubyLLM needs it only for models missing from its registry (see below); the OpenAI-compatible adapter ignores it. |
 | `default_params` | `{}` | Generation params for every call (temperature, reasoning effort, top_p, …), overridable per class, per method, and per escalation step. See [Generation params](#generation-params). |
-| `squawk` | `nil` | A callable run after every LLM attempt with the raw output, for sending it to an error tracker or tracing tool. Also settable per class and per method. See [Observing every attempt](failures.md#observing-every-attempt-squawk). |
+| `default_cache` | `true` | Asks the provider to cache the stable prompt on every request: `true`, `false`, or a Hash of options such as `{ ttl: "1h" }`. Overridable per class, per method, per escalation step, and per `squish!` call. See [Prompt caching](#prompt-caching). |
+| `default_max_total_output_tokens`, `default_max_total_input_tokens` | `nil` (no limit) | The most output (or input) tokens one call may use across all its requests; once reached, the call raises `BudgetExhaustedError` instead of making another attempt. Overridable per class (`squishling max_total_output_tokens: ...`), per method, and per `squish!` call. See [Capping a call's cost](failures.md#capping-a-calls-cost-token-budgets). |
+| `budget_counts_cache_reads` | `false` | Whether the input tokens a request reads from the provider's prompt cache count toward `max_total_input_tokens`. Off by default, since reads are cheap; tokens written to the cache always count. Global only. See [Capping a call's cost](failures.md#capping-a-calls-cost-token-budgets). |
+| `squawk` | `nil` | A callable run after every LLM attempt (see `squawk_on`), and once more when a token budget or a disagreement stops the call, with the raw output, for sending it to an error tracker or tracing tool. Also settable per class and per method. See [Observing every attempt](failures.md#observing-every-attempt-squawk). |
+| `squawk_on` | `:all` | Which attempts reach the `squawk` hook: `:all`, `:rejections` (errors only), `:retries` (errors plus any accepted attempt after the first), `:final` (the last attempt the escalation allows), or a list of them (any one holding runs the hook). A call [stopped](failures.md#a-call-that-is-stopped) by a token budget or a disagreement is always reported. Also settable per class and per method. |
 | `observer` | `nil` | An around-style hook for every provider request: `:coolhand`, any object responding to `around(call)`, or `false` for none. `nil` uses the [Coolhand observer](coolhand.md) when the `coolhand` gem is configured. See [Observers](observers.md). |
+| `apprentice_report` | `nil` | The report hook of every [apprentice](apprentice.md) that doesn't declare its own `report:`: a callable taking keywords (`ruby:`, `llm:`, `match:`, `error:`, `inputs:`, `metadata:`). |
+| `apprentice_runner` | `:inline` | Where an [apprentice's](apprentice.md#running-it-in-the-background) shadow run happens: `:inline` (on the caller's thread, after the Ruby result), `:thread` (the built-in background pool), a `Squishling::Apprentice::ThreadRunner`, or any callable that takes the job and calls it. |
+| `apprentice_enabled` | `true` | Set `false` to stop every [apprentice](apprentice.md#turning-it-off) shadow run, whatever the classes declare (a kill switch). |
 | `default_harness` | `nil` (`:escalation`) | How every squishling class that doesn't declare its own uses its escalation: `:escalation`, `:squishsum`, `:judged_squishsum`, a [registered custom harness](harnesses.md#custom-harnesses), or a Hash with `type:` and options. See [Harnesses](harnesses.md). |
 | `validate_both_paths` | `false` | Whether the schema and `squish_validate` hold the Ruby path's return too, so both paths meet the same rules, and a Ruby return they reject is handed to the LLM with the draft and the problems. A class decides for itself with `squish_validate both_paths: true` or `false`. See [When the Ruby path fails](failures.md#when-the-ruby-path-fails). |
+| `sanitizer` | `[]` | A callable, or a list of them, run over everything every squished call sends, before any class's or method's own: filter, redact, or convert inputs. Keywords `value:`, `path:`, `reject:`. None can be switched off. See [Sanitizing inputs](inputs.md#sanitizing-inputs). |
+| `max_files`, `max_file_bytes` | `20`, `20_000_000` | The most files one call may send, and the most bytes in one; `nil` lifts a limit. A call over one raises `InputRejectedError` before any request. See [Limits](inputs.md#limits). |
 | `logger` | `nil` | Any `Logger`. Debug lines when a call routes to the LLM, warnings on each escalation and when a fallback is used. Never includes the raw model response; see [what ends up in errors and logs](failures.md#what-ends-up-in-errors-and-logs). |
 
-Transport-level retries (rate limits, 5xx, timeouts) are configured on RubyLLM itself
-(`RubyLLM.config.max_retries`, `request_timeout`).
+Transport-level retries (rate limits, 5xx, timeouts) belong to the adapter: RubyLLM's own
+(`RubyLLM.config.max_retries`, `request_timeout`), or the OpenAI-compatible adapter's `max_retries:` option.
 
 > **`max_retries` was removed.** The escalation now decides how many attempts run, and setting
 > `config.max_retries` raises `ConfigurationError`. The old default (`max_retries = 1`, two attempts on one model) is
@@ -67,9 +81,13 @@ Each step is a model name, or a Hash with:
 | `attempts:` | `1` | How many attempts this step gets before escalating to the next one. |
 | `priority:` | position | An Integer; steps run lowest first. Give every step a `priority:` or none. Steps with the same priority are one tier (see [Rotating models](#rotating-models-within-a-priority)). Gaps are fine. `order:` is the deprecated name for it. |
 | `rotate:` | `true` | Set `false` on a step to keep its tier in the order written instead of rotating it. |
+| `include_when:` | always | A Proc that leaves this step out of any call where it returns falsy (see [Excluding a model per call](#excluding-a-model-per-call)). |
 | `provider:` | the level's `provider:` | See [Providers](#providers-and-newly-released-models). |
+| `adapter:` | `config.adapter` | The name of an adapter from `config.adapters` that makes this step's requests, so one escalation can mix adapters. See [Mixing adapters](adapters.md#mixing-adapters-in-one-escalation). |
+| `retry_temperature:` | none | A Numeric `temperature` for this step's retries in the same chat (not its first attempt), to nudge a model that keeps sending the same rejected reply. Don't use it on a step that sets `thinking`, since reasoning models reject `temperature`. |
 | `forward_rejected:` | `true` | Set `false` to start this step from the original input alone, without the previous step's rejected output and its errors (see below). |
 | `params:` | `{}` | [Generation params](#generation-params) for this step, merged over the class and method params key by key. |
+| `cache:` | the level's `cache:` | [Prompt caching](#prompt-caching) for this step: `false`, `true`, or a Hash of options. It replaces the level's value, since caching behaves differently per model and provider. |
 
 Without `priority:`, steps run in the order written. With it, the order is explicit and doesn't depend on position:
 
@@ -109,6 +127,25 @@ squishling escalation: [
   whole tier in the order written, whatever its other steps say.
 - Rotation also moves which stages the [`:squishsum` and `:judged_squishsum`](harnesses.md) harnesses sample first.
 
+### Excluding a model per call
+
+`include_when:` takes a Proc, called like a `squish_when` predicate: against the instance, with the method's inputs as
+keywords. A step whose Proc returns falsy is left out of that call's escalation, for example a model without a BAA:
+
+```ruby
+squishling escalation: [
+  { model: "gpt-5", include_when: ->(client:, **) { !client.needs_a_baa_model? } },
+  "claude-sonnet-5-5"
+]
+```
+
+- Steps are filtered before rotation, so a tier rotates only between the models still eligible for the call. A step
+  that is excluded takes no part in its tier, so an excluded `rotate: false` step no longer pins it.
+- A call whose steps are all excluded raises `ConfigurationError`. It is never retried or passed to `squish_fallback`.
+- It applies wherever an escalation is declared (class, method, `default_escalation`, or `squish!`), but not to a judge
+  or harness step, which are single steps.
+- The Proc runs on the calling thread. An exception it raises propagates unwrapped.
+
 `params:` on a step let one step switch to a reasoning model that rejects sampling params:
 
 ```ruby
@@ -121,11 +158,11 @@ squishling params: { temperature: 0 },
 
 The first level that declares a `model:` or an `escalation:` supplies the whole thing (levels aren't merged):
 
-1. per call: `squish!(model: ...)` or `squish!(escalation: ...)` (see [Per-call overrides](#per-call-overrides))
+1. per call: `squish!(model: ...)` or `squish!(escalation: ...)` (see [Per-call overrides](#per-call-overrides)), or the same options of a [`squish_rescue`](routing.md#rescuing-declared-errors-with-squish_rescue) for a rescued call
 2. per method: `squish :name, model: ...` or `escalation: ...`
 3. per class: `squishling model: ...` or `escalation: ...` (inherited by subclasses)
 4. universal: `Squishling.config.default_model` or `default_escalation`
-5. RubyLLM's `default_model` (a single attempt)
+5. the adapter's default model (RubyLLM's `default_model`, or the OpenAI-compatible adapter's `default_model:`; a single attempt)
 
 ```ruby
 class InvoiceParser
@@ -141,15 +178,19 @@ end
 Passing both `model:` and `escalation:` in one declaration raises `ConfigurationError`, and so does a list passed as
 `model:`. Across separate declarations (a reopened class, or two config assignments), the latest one wins.
 
-Consecutive attempts of the same step (same model, provider, params, and `forward_rejected:`, e.g. `attempts: 2`)
+Consecutive attempts of the same step (same model, provider, adapter, params, `cache:`, `forward_rejected:`, and `retry_temperature:`, e.g. `attempts: 2`)
 continue one conversation. Moving to a different step starts a fresh chat with the original input plus the previous
 output and why it was rejected, so no provider-specific history crosses providers. That rejected output is
 model-generated and is sent to the next step's provider, even when it is a different one, truncated to 4,000
 characters. If you don't want a step to see it (say, because the next step is a different provider), set
 `forward_rejected: false` on that step and it starts from the original input only. Configuration errors (bad
-credentials, an unknown model, a request the provider rejects) never move to the next attempt. See [Failure handling](failures.md).
+credentials, an unknown model, a request the provider rejects) never move to the next attempt. A retry that returns
+exactly the reply the step was just told was invalid skips the step's remaining attempts and moves to the next step. See [Failure handling](failures.md).
 
 ## Providers and newly released models
+
+This section is about the RubyLLM adapter; the OpenAI-compatible adapter takes model names as given and ignores
+`provider:`.
 
 RubyLLM looks models up in its bundled registry. To use a model that isn't there yet, such as a newly released
 OpenAI or Anthropic model, name its provider next to it. Squishling then tells RubyLLM to assume the model exists:
@@ -191,14 +232,17 @@ end
 
 | Key | Sent as |
 |---|---|
-| `temperature` | RubyLLM's `with_temperature` |
-| `max_output_tokens` | RubyLLM's `with_max_output_tokens` (translated to each provider's own field) |
-| `thinking` | RubyLLM's `with_thinking`: `true` (the model's default), `false` (off), or options such as `{ effort: :low }`, `{ budget: 1024 }`, `{ display: :omitted }` |
-| anything else (`top_p`, `seed`, `service_tier`, Gemini's `generationConfig`, …) | merged into the provider request as-is via `with_provider_options`, in that provider's own field names |
+| `temperature` | RubyLLM's `with_temperature`; `temperature` in the request body for OpenAI-compatible endpoints |
+| `max_output_tokens` | RubyLLM's `with_max_output_tokens` (translated to each provider's own field); `max_completion_tokens` (or `max_tokens`) for OpenAI-compatible endpoints |
+| `thinking` | RubyLLM's `with_thinking`: `true` (the model's default), `false` (off), or options such as `{ effort: :low }`, `{ budget: 1024 }`, `{ display: :omitted }`. OpenAI-compatible endpoints take only `{ effort: }`, as `reasoning_effort`. |
+| anything else (`top_p`, `seed`, `service_tier`, Gemini's `generationConfig`, …) | merged into the provider request as-is (via `with_provider_options` in RubyLLM), in that provider's own field names |
 
 - **No params means provider defaults.** Squishling sends nothing unless you set it. For structured
   extraction on non-reasoning models (e.g. Anthropic Claude Haiku), a low temperature reduces run-to-run
   variance.
+- **Thinking counts against `max_output_tokens`** on providers that bill it as output: leave room for the thinking
+  budget plus the answer. With `thinking: { budget: 8192 }` and `max_output_tokens: 8192`, a reply that uses its full
+  budget is cut off before any JSON, which shows as [`InvalidOutputError#truncated?`](failures.md#a-cutoff-or-a-wrong-answer).
 - **Reasoning models** (e.g. OpenAI GPT-6 Luna) usually reject sampling params like `temperature` and `top_p`;
   tune `thinking: { effort: }` instead. Anthropic requires `temperature` to be 1 (or unset) when `thinking` is on.
 - **Unsetting an inherited key:** set it to `nil` to send nothing for that key, so the provider default applies.
@@ -208,9 +252,9 @@ end
   squish :triage, model: "gpt-6-luna", provider: :openai, params: { temperature: nil, thinking: { effort: :low } }
   ```
 
-- Keys that Squishling or RubyLLM control (`model`, `messages`, `input`, `instructions`, `system`, `stream`,
-  `response_format`, `text`, `output_config`, `tools`, `tool_choice`, `schema`, and the camelCase and plural
-  spellings other providers use, such as `systemInstruction`, `toolConfig`/`tool_config`, `outputConfig`, `inputs`, …)
+- Keys that Squishling or the adapter control (`model`, `messages`, `input`, `instructions`, `system`, `stream`,
+  `response_format`, `text`, `output_config`, `tools`, `tool_choice`, `functions`, `function_call`, `schema`, and the camelCase and plural
+  spellings other providers use, such as `systemInstruction`, `cachedContent`/`cached_content`, `toolConfig`/`tool_config`, `outputConfig`, `inputs`, …)
   raise `ConfigurationError`, because they would override the model, the conversation, or the strict output format.
 - **Nested containers** such as Gemini's `generationConfig` (and `generation_config` for Gemini Interactions) and
   Mistral Conversations' `completion_args` accept ordinary settings, but reject the keys inside them that carry the
@@ -225,10 +269,56 @@ end
 - If a provider rejects a param, the call raises `Squishling::ConfigurationError` naming the params. It isn't
   retried or sent to `squish_fallback`. See [Failure handling](failures.md).
 
+## Prompt caching
+
+Squishling puts the stable text (the purpose and the note on the inputs) in the system prompt and the
+per-call data in the user message, which is the order provider prompt caches want. With the RubyLLM adapter, caching is
+on by default: each request goes out with RubyLLM's `with_caching`, so Anthropic Claude (whose caching is opt-in) caches
+the prompt, and a call's retries within one escalation step reuse it. The cache point RubyLLM sets covers the request up
+to its last message, so the per-call data is written to the cache too, and only a later request that shares that prefix
+reads it back. The OpenAI-compatible adapter ignores the setting, and providers that cache on their own (OpenAI, Google
+Gemini) still do.
+
+`cache` is `true`, `false`, or a Hash of options for the provider (`{ ttl: "1h" }`). Each level overrides the one above
+it, and `nil` inherits; a Hash replaces the level above's rather than merging into it:
+
+```ruby
+Squishling.configure { |c| c.default_cache = false }              # every call (default: true)
+
+class Triager
+  include Squishling
+  squishling cache: false                                         # this class (and subclasses)
+
+  squish :triage, cache: { ttl: "1h" } do                         # one method
+    string :priority
+  end
+end
+
+squish!(cache: false, escalation: ["claude-opus-5-5"])            # one hand-off
+# escalation: [{ model: "claude-haiku-4-5", cache: false }, "claude-sonnet-5-5"]   # one step
+```
+
+- **Writing a cache entry costs extra.** Anthropic charges a premium for the write (about 1.25x the input price for the
+  5-minute lifetime, more for `ttl: "1h"`) and pays it back only when a later request reads the entry. A class with a
+  long prompt that is called once and never again costs slightly more with caching on; set `cache: false` for it.
+- **Not every model takes cache controls.** A model that can't cache may reject them (a provider 400, which is a
+  `ConfigurationError`, never retried); set `cache: false` for it, per class, method, or escalation step.
+- **A prefix below the model's minimum is not cached.** Providers ignore caching under a model-specific minimum, so a
+  short prompt is a harmless no-op, not an error.
+- **An option the provider doesn't take raises `ConfigurationError`** when the request is made (Anthropic accepts `ttl`,
+  for instance). Explicit Gemini content caches (`id:`) are not supported.
+- **Judgments** (`type: :judgment` judges) don't use a chat, so they are never cached.
+- **Token budgets** count the tokens written to the cache but not those read back, so a hit doesn't spend
+  `max_total_input_tokens`; `budget_counts_cache_reads = true` counts reads too.
+- **See whether it hits** in `cache_read_tokens` and `cache_write_tokens`: they are in `squawk`'s `usage` and on the
+  [observer](observers.md#what-yield-returns)'s `Usage` (nil when the provider reports none).
+
 ## Inheritance
 
-Subclasses inherit the model or escalation and its provider (as a pair), harness, generation params (merged key by key), purpose, output schema,
-`squish_when` predicate, `squish_context` names, `squish_validate` (and its `both_paths:` scope), `squish_rescue` (the classes add up, and a subclass's `append_to_purpose` adds to its parent's), `squish_fallback`, and every `squish` declaration. Overrides in a subclass, including
+Subclasses inherit the model or escalation and its provider (as a pair), harness, generation params (merged key by key), prompt caching, token budgets (limit by limit), purpose, output schema,
+`squish_when` predicate, `squish_context` names, `squish_validate` (and its `both_paths:` scope), `squish_fallback`, every `squish_rescue` declaration,
+[`apprentice_mode:`](apprentice.md), [`call_id:`](observers.md#declaring-the-call-id), and every `squish` declaration.
+Overrides in a subclass, including
 overridden methods, are routed the same way.
 
 `append_to_purpose` sections are added to, not replaced: a subclass's sections follow its parent's, and
@@ -237,5 +327,6 @@ overridden methods, are routed the same way.
 ## Per-call overrides
 
 Inside a squished method, `squish!` sends the call to the LLM with its own `purpose:`,
-`append_to_purpose:`, `context:`, `model:` or `escalation:` (with `provider:`), `params:`, and `harness:`. Each layers over the method and class
+`append_to_purpose:`, `context:`, `model:` or `escalation:` (with `provider:`), `params:`, `cache:`, `harness:`, and
+`max_total_output_tokens:`/`max_total_input_tokens:`. Each layers over the method and class
 settings the same way they layer over each other. See [Handing off to the LLM](routing.md#handing-off-to-the-llm-with-squish).

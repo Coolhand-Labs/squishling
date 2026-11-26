@@ -6,11 +6,13 @@ first tells you when the second is worth paying.
 ## What Squishling gives you
 
 - `result.squished?` says which path served a call, so you can count LLM calls per class.
-- The [`squawk` hook](failures.md#observing-every-attempt-squawk) runs after every LLM attempt and receives the
+- The [`squawk` hook](failures.md#observing-every-attempt-squawk) runs after every LLM attempt (by default; see `squawk_on` below) and receives the
   method (`label`, e.g. `"ShipmentUpdate#call"`), the model and provider, which attempt it was, and the token usage
-  RubyLLM reported. That is enough to attribute spend to a squishling method without any other tooling.
-- Cost in dollars comes from RubyLLM's model pricing. Multiply the reported tokens by your model's price, or read it
-  from RubyLLM directly (see [OpenTelemetry](#opentelemetry), or RubyLLM's `config.instrumenter`).
+  the adapter reported. That is enough to attribute spend to a squishling method without any other tooling.
+- A [token budget](failures.md#capping-a-calls-cost-token-budgets) (`max_total_output_tokens:`, `max_total_input_tokens:`)
+  caps what a single call may use across all its attempts, so a call that keeps failing can't spend without limit.
+- Cost in dollars isn't reported by Squishling's adapters. Multiply the reported tokens by your model's price, or, with
+  the RubyLLM adapter, read it from RubyLLM directly (see [OpenTelemetry](#opentelemetry), or RubyLLM's `config.instrumenter`).
 
 ## Deciding when to write the code
 
@@ -56,8 +58,8 @@ template each call belongs to; see [Coolhand Labs](coolhand.md).
 
 ### Custom: the `squawk` hook
 
-`config.squawk` runs after every LLM attempt, accepted or rejected, and is handed the method's label, the model,
-and the token usage RubyLLM reported. A lambda can take just the keywords it needs:
+`config.squawk` runs after every LLM attempt, accepted or rejected (unless you narrow it with `squawk_on:`, which makes token totals undercount, so keep `:all` for measuring), and is handed the method's label, the model,
+and the token usage the adapter reported. A lambda can take just the keywords it needs:
 
 ```ruby
 Squishling.configure do |config|
@@ -69,6 +71,10 @@ Squishling.configure do |config|
   end
 end
 ```
+
+A call that stops on its [token budget](failures.md#capping-a-calls-cost-token-budgets) or a disagreement is also
+reported once, with `metadata[:stopped]` set (`:budget` or `:disagreement`) and no `usage`, so the hook above logs
+it with empty counts; check `metadata[:stopped]` to count it apart from an attempt.
 
 Each line carries the `"Class#method"` that made the call, so grouping by label gives you tokens per squishling. A call
 that stays in Ruby makes no LLM request and never reaches the hook, so a label that stops appearing is a path that has
@@ -87,7 +93,8 @@ can meter spend knowing which method, escalation level, sample, or judge made th
 ```ruby
 class SpendObserver
   def around(call)
-    usage = yield # input_tokens, output_tokens (nil if unreported), and model; never the content
+    usage = yield # input_tokens (not counting cached ones), output_tokens, cache_read_tokens, cache_write_tokens
+                  # (each nil if unreported), and model; never the content
     tags = ["label:#{call.label}", "role:#{call.role || 'squish'}", "model:#{usage.model}"]
     Metrics.increment("squishling.tokens.in", usage.input_tokens.to_i, tags:)
     Metrics.increment("squishling.tokens.out", usage.output_tokens.to_i, tags:)
@@ -125,7 +132,9 @@ a `usage.ruby_llm` event per request, with tokens and cost, if you would rather 
 ## Privacy
 
 Squishling only sends the model what you name: the method arguments, any `squish_context` values, and any source you
-append. Tools that sit on the request path are a separate route out of your process, and they see both sides:
+append. An argument that isn't plain data (a model object, a `Range`) is refused rather than serialized with all its
+attributes; see [what is sent](routing.md#what-the-llm-sees). Tools that sit on the request path are a separate
+route out of your process, and they see both sides:
 
 - **Request interceptors, such as `coolhand`,** record the prompts (your purpose text and those inputs) and the
   model's responses. Coolhand sends them to coolhandlabs.com unless you point `config.base_url` at an endpoint of your

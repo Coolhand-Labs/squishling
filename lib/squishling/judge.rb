@@ -4,10 +4,12 @@ module Squishling
   # Picks between two disagreeing samples, or rejects both (see Run#judge). The judge is the given judge:
   # step, or else the escalation's next stage after the first. A chat judge answers with a strict verdict
   # schema; a :judgment judge (a System One decision model such as Jev) answers one choice question through
-  # RubyLLM.judge, and its pick counts only at or above min_confidence.
+  # the adapter's judgments (RubyLLM's, with the RubyLLM adapter), and its pick counts only at or above
+  # min_confidence.
   class Judge
     # The judge kinds: :chat (a chat model answering VERDICT_SCHEMA) and :judgment (a System One decision model
-    # through RubyLLM.judge). A judge is an escalation step (see ModelPath) plus these keys: type: (default :chat)
+    # through the adapter's judgments). A judge is an escalation step (see ModelPath) plus these keys:
+    # type: (default :chat)
     # and, for :judgment, min_confidence: (the probability the chosen candidate needs).
     TYPES = %i[chat judgment].freeze
     STEP_KEYS = %i[type min_confidence].freeze
@@ -41,21 +43,27 @@ module Squishling
 
     # judge: is a normalized judge step (see Harness::JudgedSquishsum) or nil for the escalation's next stage,
     # instructions: a String, a Proc evaluated against the receiver, or nil for the default prompt.
+    # files: the call's Images and Documents, which a chat judge is sent with the input; a :judgment judge can't take
+    # them.
     def initialize(definition:, receiver:, client:, judge:, instructions:, path:, purpose:, payload:, escalate:,
-      log_failure:, guard:, harness_type:)
+      log_failure:, guard:, budget_check:, harness_type:, files: [])
       @definition = definition
       @receiver = receiver
       @client = client
       @judge = judge
       @instructions = instructions
+      @files = files
       check!
+      check_judgments!
       @guard = guard
+      @budget_check = budget_check
       @harness_type = harness_type
       @purpose = purpose
       @payload = payload
       @escalate = escalate
       @log_failure = log_failure
       @steps = resolve_steps(path)
+      @client.check_adapters!(@steps, @files)
     end
 
     # The judge's first attempt, for logs and DisagreementError#models.
@@ -95,8 +103,28 @@ module Squishling
       raise ConfigurationError, "#{label} instructions must be a non-blank String or a Proc"
     end
 
+    # Raised before any request, like the rest of the judge's checks.
+    def check_judgments!
+      return unless judgment?
+
+      if @files.any?
+        kind = @files.all?(Image) ? "images" : "files"
+        raise ConfigurationError, "#{@definition.label}: judge type: :judgment can't see the call's #{kind}; use " \
+                                  "type: :chat"
+      end
+      return if @client.judgments?(judgment_steps(@judge).first)
+
+      raise ConfigurationError, "#{@definition.label}: judge type: :judgment needs an adapter that supports " \
+                                "judgments (the judge's adapter doesn't); use type: :chat or the :ruby_llm adapter"
+    end
+
     def non_blank_string?(value)
       value.is_a?(String) && !value.strip.empty?
+    end
+
+    # A judgment is not a chat, so it has nothing to cache whatever its step says.
+    def judgment_steps(judge)
+      ModelPath.steps([judge], provider: nil, params: {}).map { |step| step.with(cache: false) }
     end
 
     def judgment?
@@ -107,8 +135,9 @@ module Squishling
     # under its own, like any escalation step; a judgment judge sends only its own params, as provider options.
     def resolve_steps(path)
       if (judge = @judge)
-        params = judge[:type] == :judgment ? {} : @definition.params
-        return ModelPath.steps([judge], provider: nil, params:)
+        return judgment_steps(judge) if judge[:type] == :judgment
+
+        return ModelPath.steps([judge], provider: nil, params: @definition.params, cache: @definition.cache)
       end
 
       rest = path.drop_while { |step| step == path.first }
@@ -123,8 +152,8 @@ module Squishling
     def chat(candidates)
       prompt = Invoker::Prompt.new(
         instructions: "#{judge_instructions}\n\nThe operation's purpose:\n<purpose>\n#{@purpose}\n" \
-                      "</purpose>\n\n#{INPUT_NOTE}",
-        schema: Schema.for(VERDICT_SCHEMA), input: JSON.generate(state(candidates)), role: :judge
+                      "</purpose>\n\n#{INPUT_NOTE}#{Invoker.file_notes(@files)}",
+        schema: Schema.for(VERDICT_SCHEMA), input: JSON.generate(state(candidates)), role: :judge, files: @files
       )
       result = @escalate.call(@steps, prompt)
       Verdict.new(choice: result[:verdict].to_sym, reason: result[:reason], detail: nil)
@@ -163,6 +192,7 @@ module Squishling
     # A judgment always matches its questions, so only a failed request (LLMError) moves on to the next attempt.
     def judge_with_retries(input, questions)
       @steps.each.with_index(1) do |step, attempt|
+        @budget_check.call(attempts: attempt - 1)
         return @client.observed_judgment(input, questions:, step:, attempt:, attempts: @steps.size)
       rescue LLMError => e
         raise if attempt == @steps.size

@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "ostruct"
+
 require_relative "../fixtures/sourced_parser"
 
 RSpec.describe Squishling, "#squish!" do
@@ -110,8 +112,8 @@ RSpec.describe Squishling, "#squish!" do
     klass.call(record: "Ada")
 
     expect(chats.first.model).to eq("gpt-unknown")
-    expect(chats.first.options).to eq(provider: :openai, assume_model_exists: true)
-    expect(chats.first.generation).to eq(temperature: 0.2, provider_options: { top_p: 0.5 })
+    expect(chats.first.provider).to eq(:openai)
+    expect(chats.first.params).to eq(temperature: 0.2, top_p: 0.5)
   end
 
   it "keeps a method-level nil that unsets a class param when adding call params" do
@@ -123,7 +125,7 @@ RSpec.describe Squishling, "#squish!" do
 
     klass.call(record: "Ada")
 
-    expect(chats.first.generation).to eq(provider_options: { top_p: 0.5 })
+    expect(chats.first.params).to eq(top_p: 0.5)
   end
 
   it "can hand off again to a stronger model after a failed attempt" do
@@ -139,7 +141,7 @@ RSpec.describe Squishling, "#squish!" do
         squish!(model: "big-model", provider: :openai, context: { record_length: record.length })
       end
     end
-    chats = stub_llm(RubyLLM::ServiceUnavailableError.new("down"), { "name" => "Ada" })
+    chats = stub_llm(Squishling::LLMError.new("down"), { "name" => "Ada" })
 
     result = klass.call(record: "Ada")
 
@@ -158,12 +160,12 @@ RSpec.describe Squishling, "#squish!" do
 
       def call(**) = squish!(escalation: [{ model: "small-model", attempts: 2 }, "big-model"], provider: :openai)
     end
-    chats = stub_llm(nil, RubyLLM::ServiceUnavailableError.new("down"), { "name" => "Ada" })
+    chats = stub_llm(nil, Squishling::LLMError.new("down"), { "name" => "Ada" })
 
     expect(klass.call(record: "Ada").name).to eq("Ada")
     expect(chats.map(&:model)).to eq(%w[small-model big-model]) # attempts 1-2 share a chat
     expect(chats.first.messages.size).to eq(2)
-    expect(chats.map(&:options)).to all(include(provider: :openai))
+    expect(chats.map(&:provider)).to all(eq(:openai))
   end
 
   it "rejects model: and escalation: together" do
@@ -190,11 +192,10 @@ RSpec.describe Squishling, "#squish!" do
   end
 
   it "raises the LLM failure, caused by the rescued error, when there's no fallback" do
-    stub_llm(RubyLLM::ServiceUnavailableError.new("down"))
+    stub_llm(Squishling::LLMError.new("down"))
 
     expect { parser.call(record: "Ada") }.to raise_error(Squishling::LLMError) { |error|
-      expect(error.cause).to be_a(RubyLLM::ServiceUnavailableError)
-      expect(error.cause.cause).to be_a(ArgumentError)
+      expect(error.cause).to be_a(ArgumentError)
     }
   end
 
@@ -232,6 +233,255 @@ RSpec.describe Squishling, "#squish!" do
 
     expect { klass.call(record: "Ada") }.to raise_error(NotImplementedError, /no fallback/)
     expect(chats.size).to eq(1)
+  end
+
+  it "raises a ConfigurationError, not a SystemStackError, for an argument that contains itself" do
+    klass = Class.new do
+      include Squishling
+
+      purpose "Explain."
+      output_schema { string :name }
+
+      def call(data:) = data && squish!
+    end
+    chats = stub_llm({ "name" => "Ada" })
+    cyclic_hash = { "a" => 1 }
+    cyclic_hash["b"] = cyclic_hash
+    cyclic_array = [1]
+    cyclic_array << { "nested" => cyclic_array }
+    shared = { "x" => 1 }
+
+    expect { klass.call(data: cyclic_hash) }.to raise_error(Squishling::ConfigurationError, /contains itself/)
+    expect { klass.call(data: cyclic_array) }.to raise_error(Squishling::ConfigurationError, /contains itself/)
+    expect(chats).to be_empty
+
+    klass.call(data: [shared, shared])
+    expect(JSON.parse(chats.first.messages.first)).to eq("arguments" => { "data" => [{ "x" => 1 }, { "x" => 1 }] })
+  end
+
+  describe "arguments that are Struct, Data, OpenStruct, or Set" do
+    let(:klass) do
+      Class.new do
+        include Squishling
+
+        purpose "Explain."
+        output_schema { string :name }
+
+        def call(data:) = data && squish!
+      end
+    end
+    let(:point) { Struct.new(:x, :label) }
+    let(:pair) { Data.define(:left, :right) }
+
+    def sent(chats) = JSON.parse(chats.first.messages.first)["arguments"]["data"]
+
+    it "sends their members as JSON, not Ruby's inspect text" do
+      chats = stub_llm({ "name" => "Ada" })
+
+      klass.call(data: [point.new(1, "secret"), pair.new("l", "r"), Set[1, 2]])
+
+      expect(sent(chats)).to eq([{ "x" => 1, "label" => "secret" }, { "left" => "l", "right" => "r" }, [1, 2]])
+    end
+
+    it "sends an OpenStruct as its members" do
+      chats = stub_llm({ "name" => "Ada" })
+
+      klass.call(data: OpenStruct.new(a: 1, b: [2])) # rubocop:disable Style/OpenStructUse
+
+      expect(sent(chats)).to eq("a" => 1, "b" => [2])
+    end
+
+    it "still sends a Struct when OpenStruct isn't loaded" do
+      hide_const("OpenStruct")
+      chats = stub_llm({ "name" => "Ada" })
+
+      klass.call(data: point.new(1, "a"))
+
+      expect(sent(chats)).to eq("x" => 1, "label" => "a")
+    end
+
+    it "walks nested members" do
+      chats = stub_llm({ "name" => "Ada" })
+
+      klass.call(data: point.new(pair.new(Set[point.new(1, nil)], 2), { "k" => point.new(3, 4) }))
+
+      expect(sent(chats)).to eq("x" => { "left" => [{ "x" => 1, "label" => nil }], "right" => 2 },
+        "label" => { "k" => { "x" => 3, "label" => 4 } })
+    end
+
+    it "sends members of keyword_init Structs and an exception held by one as class and message" do
+      chats = stub_llm({ "name" => "Ada" })
+      kw = Struct.new(:code, :error, keyword_init: true)
+
+      klass.call(data: kw.new(code: 7, error: ArgumentError.new("bad")))
+
+      expect(sent(chats)).to eq("code" => 7, "error" => { "class" => "ArgumentError", "message" => "bad" })
+    end
+
+    it "converts them in squish_context and a squish! call's context: too" do
+      with_context = Class.new do
+        include Squishling
+
+        purpose "Explain."
+        output_schema { string :name }
+        squish_context :tier
+
+        def tier = Struct.new(:level).new("gold")
+        def call(data:) = squish!(context: { extra: Set[data] })
+      end
+      chats = stub_llm({ "name" => "Ada" })
+
+      with_context.call(data: "x")
+
+      expect(JSON.parse(chats.first.messages.first)["context"]).to eq("tier" => { "level" => "gold" }, "extra" => ["x"])
+    end
+
+    it "sends a Struct, Data, or Set that appears twice without calling it cyclic" do
+      chats = stub_llm({ "name" => "Ada" })
+      shared = point.new(1, nil)
+      set = Set[1]
+
+      klass.call(data: [shared, shared, pair.new(set, set)])
+
+      expect(sent(chats)).to eq([{ "x" => 1, "label" => nil }, { "x" => 1, "label" => nil },
+                                 { "left" => [1], "right" => [1] }])
+    end
+
+    it "raises a ConfigurationError for an OpenStruct that contains itself" do
+      chats = stub_llm({ "name" => "Ada" })
+      cyclic = OpenStruct.new(a: 1) # rubocop:disable Style/OpenStructUse
+      cyclic.me = cyclic
+
+      expect { klass.call(data: cyclic) }.to raise_error(Squishling::ConfigurationError, /contains itself/)
+      expect(chats).to be_empty
+    end
+
+    it "raises a ConfigurationError for a Struct that contains itself" do
+      chats = stub_llm({ "name" => "Ada" })
+      cyclic = point.new(1, nil)
+      cyclic.label = [cyclic]
+
+      expect { klass.call(data: cyclic) }.to raise_error(Squishling::ConfigurationError, /contains itself/)
+      expect(chats).to be_empty
+    end
+
+    it "raises a ConfigurationError for a Struct whose to_h doesn't return a Hash" do
+      chats = stub_llm({ "name" => "Ada" })
+      broken = Struct.new(:a) { def to_h = "not a hash" }.new(1)
+
+      expect { klass.call(data: broken) }.to raise_error(Squishling::ConfigurationError, /to_h must return a Hash/)
+      expect(chats).to be_empty
+    end
+  end
+
+  describe "arguments that aren't plain data" do
+    let(:klass) do
+      Class.new do
+        include Squishling
+
+        purpose "Explain."
+        output_schema { string :name }
+        squish_context :tier
+
+        def tier = "gold"
+        def call(data:) = data && squish!
+      end
+    end
+    let(:record) do
+      Class.new do
+        def as_json(*) = { "id" => 1, "secret" => "s3cr3t" }
+        def to_json(*args) = JSON.generate(as_json, *args)
+      end
+    end
+
+    def sent(chats) = JSON.parse(chats.first.messages.first)["arguments"]["data"]
+
+    it "refuses an object with as_json, naming its class and none of its attributes" do
+      chats = stub_llm({ "name" => "Ada" })
+
+      expect { klass.call(data: record.new) }
+        .to raise_error(Squishling::ConfigurationError, /can't be sent as JSON.*to_squishling/) { |error|
+          expect(error.message).not_to include("s3cr3t")
+        }
+      expect(chats).to be_empty
+    end
+
+    it "refuses a Range and a plain object, even inside a Hash, an Array, or a Struct" do
+      chats = stub_llm({ "name" => "Ada" })
+      holder = Struct.new(:item)
+
+      [1..2, Object.new].each do |value|
+        [{ a: value }, [value], holder.new(value)].each do |data|
+          expect { klass.call(data:) }.to raise_error(Squishling::ConfigurationError, /can't be sent as JSON/)
+        end
+      end
+      expect(chats).to be_empty
+    end
+
+    it "refuses it in a squish! call's context: too" do
+      context_klass = Class.new do
+        include Squishling
+
+        purpose "Explain."
+        output_schema { string :name }
+
+        def call(item:) = squish!(context: { item: })
+      end
+      chats = stub_llm({ "name" => "Ada" })
+
+      expect { context_klass.call(item: record.new) }.to raise_error(Squishling::ConfigurationError, /can't be sent/)
+      expect(chats).to be_empty
+    end
+
+    it "sends what to_squishling returns, walking it like any argument" do
+      inner = Class.new { def to_squishling = Struct.new(:id).new(1) }
+      outer = Class.new do
+        define_method(:initialize) { |nested| @nested = nested }
+        define_method(:to_squishling) { { id: 7, nested: @nested } }
+      end
+      chats = stub_llm({ "name" => "Ada" })
+
+      klass.call(data: outer.new(inner.new))
+
+      expect(sent(chats)).to eq("id" => 7, "nested" => { "id" => 1 })
+    end
+
+    it "raises a ConfigurationError for a to_squishling that returns itself or a cycle" do
+      chats = stub_llm({ "name" => "Ada" })
+      itself_back = Class.new { def to_squishling = self }.new
+
+      expect { klass.call(data: itself_back) }.to raise_error(Squishling::ConfigurationError, /contains itself/)
+      expect(chats).to be_empty
+    end
+
+    it "refuses what to_squishling returns when that is itself unsupported" do
+      chats = stub_llm({ "name" => "Ada" })
+      hands_back_range = Class.new { def to_squishling = 1..2 }.new
+
+      expect { klass.call(data: hands_back_range) }
+        .to raise_error(Squishling::ConfigurationError, /Range can't be sent as JSON/)
+      expect(chats).to be_empty
+    end
+
+    it "raises a ConfigurationError for a to_squishling that leads back to a container holding it" do
+      chats = stub_llm({ "name" => "Ada" })
+      holder = []
+      loops_back = Class.new { define_method(:to_squishling) { holder } }.new
+      holder << loops_back
+
+      expect { klass.call(data: holder) }.to raise_error(Squishling::ConfigurationError, /contains itself/)
+      expect(chats).to be_empty
+    end
+
+    it "still sends nil, booleans, strings, symbols, numbers, Times and Dates" do
+      chats = stub_llm({ "name" => "Ada" })
+      time = Time.utc(2026, 1, 2, 3, 4, 5)
+
+      klass.call(data: [nil, true, false, "s", :sym, 1, 1.5, time, Date.new(2026, 1, 2), DateTime.new(2026, 1, 2)])
+
+      expect(sent(chats).first(7)).to eq([nil, true, false, "s", "sym", 1, 1.5])
+      expect(sent(chats).drop(7).map(&:class)).to all(eq(String))
+    end
   end
 
   it "sends an exception passed as an argument as its class and message" do

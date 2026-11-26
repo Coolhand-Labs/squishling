@@ -7,7 +7,7 @@ when one of those names is already taken.
 
 | Where | Names |
 |---|---|
-| Class-level DSL | `squishling`, `purpose`, `append_to_purpose`, `output_schema`, `squish`, `squish_when`, `squish_fallback`, `squish_validate`, `squish_context`, `squished_methods`, `call`, and the `squishling_*` readers |
+| Class-level DSL | `squishling`, `purpose`, `append_to_purpose`, `output_schema`, `squish`, `squish_when`, `squish_fallback`, `squish_rescue`, `squish_validate`, `squish_context`, `squished_methods`, `call`, and the `squishling_*` readers |
 | Instance | `squishling_result`, `squish!`, and `result` (an alias for `squishling_result`) |
 
 Methods your class defines itself always win over these, whether you define them before or after the `include`.

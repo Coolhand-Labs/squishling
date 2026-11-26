@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark">
 <title>Squishling: write Ruby only where it's cheaper than the tokens</title>
-<meta name="description" content="Don't just use AI to write code. Use AI to not need code. Squishling is a Ruby gem for elastic software: start with an LLM (OpenAI, Anthropic Claude, Google Gemini via RubyLLM), harden the busy paths into Ruby, rescue errors, and measure tech debt in tokens.">
+<meta name="description" content="Don't just use AI to write code. Use AI to not need code. Squishling is a Ruby gem for elastic software: start with an LLM (OpenAI, Anthropic Claude, Google Gemini via RubyLLM or any OpenAI-compatible endpoint), harden the busy paths into Ruby, rescue errors, and measure tech debt in tokens.">
 <meta property="og:type" content="website">
 <meta property="og:title" content="Squishling: write Ruby only where it's cheaper than the tokens">
 <meta property="og:description" content="Start with an LLM, harden the busy paths into Ruby, and put a number on your tech debt.">
@@ -86,6 +86,14 @@
   @media (max-width: 38rem) { .beside { grid-template-columns: 1fr; } .beside img { max-width: 9rem; margin: 0 auto; } }
   ul.plain { padding-left: 1.2rem; margin: 0 0 1rem; }
   ul.plain li { margin-bottom: 0.5rem; }
+
+  /* Latest release callout, rewritten by /prep-release each release */
+  .release { margin: 1.75rem 0 0; background: var(--card); border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 0 10px 10px 0; padding: 0.9rem 1.1rem; font-size: 0.95rem; }
+  .release .kicker { color: var(--accent); }
+  .release p { margin: 0 0 0.6rem; }
+  .release ul { list-style: none; margin: 0 0 0.6rem; padding: 0; }
+  .release li { margin-bottom: 0.3rem; }
+  .release .more { margin: 0; font-size: 0.85rem; color: var(--muted); }
 
   /* A measured run: pass rate and cost */
   .run { display: grid; grid-template-columns: 1fr auto; gap: 0.75rem 1.25rem; align-items: center; background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 0.85rem 1.1rem; margin: 0 0 1.25rem; }
@@ -234,6 +242,21 @@
   <p class="small">Join the discussion on <a href="https://news.ycombinator.com/item?id=50105742">Hacker News</a>.</p>
 </header>
 
+<aside class="release" id="latest-release" aria-label="Latest release">
+  <p class="kicker">Latest release · v0.7.0 · <time datetime="2026-11-23">November 23, 2026</time></p>
+  <p>Squishling turns any Ruby class into a hybrid of code and LLM inference working together. v0.7.0 lets a method read
+  images, gives you more control over which models do the inferring, and sends the model cleaner data.</p>
+  <ul>
+    <li>🖼️ <strong>Images as inputs:</strong> pass a <code>Squishling::Image</code> (from a file, bytes, or URL) to a squished method and the model reads it, with no OCR step. Only build one from a URL or path you trust</li>
+    <li>🔀 <strong>Mix adapters in one escalation:</strong> name adapters in <code>config.adapters</code> and pick one per step with <code>adapter:</code>, so a single method can try Apple FM, then Claude Code, then Ollama</li>
+    <li>🧱 <strong>Structs reach the model as structure:</strong> a <code>Struct</code>, <code>Data</code>, <code>OpenStruct</code> or <code>Set</code> argument is now sent as an object or array of its members instead of Ruby's <code>inspect</code> text. Pass a Hash or define <code>to_h</code> to leave a field out</li>
+    <li>🧪 <strong>Tests and observers know the adapter:</strong> <code>Observer::Call#adapter</code>, and <code>step(adapter:)</code> in test scripts</li>
+    <li>🔎 <strong>Verified ahead of time:</strong> <code>Squishling.verify</code> catches an unknown adapter name before any request</li>
+  </ul>
+  <p class="more"><a href="https://github.com/Coolhand-Labs/squishling/releases/tag/v0.7.0">Release notes</a> ·
+  <a href="https://github.com/Coolhand-Labs/squishling/blob/main/CHANGELOG.md">Changelog</a></p>
+</aside>
+
 <details class="toc-inline"><summary>On this page</summary><ol id="tocInline"></ol></details>
 
 <section id="spectrum" data-toc="The spectrum">
@@ -344,7 +367,7 @@ end</code></pre>
   </div>
 <pre><code>Squishling.configure do |config|
   config.default_model = "claude-haiku-4-5-20251001"
-  # falls back to RubyLLM's default when nil
+  # falls back to the adapter's default when nil
 end
 
 class Parser
@@ -721,8 +744,8 @@ SomeHelperMethod.new.call(payload).email
   <h2>Try it, and tell us what breaks</h2>
   <div class="beside">
     <div>
-      <p>Add the gem, configure your provider keys in RubyLLM (OpenAI, Anthropic Claude, Google Gemini and others work),
-      and describe your first class.</p>
+      <p>Add the gem, pick an adapter (RubyLLM, or any OpenAI-compatible endpoint) and configure your provider keys
+      (OpenAI, Anthropic Claude, Google Gemini and others work), and describe your first class.</p>
 <pre><code># Gemfile
 gem "squishling"</code></pre>
     </div>
@@ -735,7 +758,6 @@ gem "squishling"</code></pre>
   <h3>On the roadmap</h3>
   <ul class="plain">
     <li>Framework-specific defaults.</li>
-    <li>Support for non-RubyLLM implementations.</li>
     <li>Output format annotations.</li>
   </ul>
   <p>Squish the star button and leave issues on GitHub.</p>

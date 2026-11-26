@@ -15,6 +15,7 @@ configures a default escalation (its model, with 2 attempts) and runs the same s
 | squish_validate rejection escalates to a fresh chat on the next step | `squish_validate`, a two-step `escalation:`, the escalation message |
 | squishsum accepts two agreeing samples and squawk reports each attempt | `harness: :squishsum` with a custom `compare:`, two concurrent samples, the `squawk` hook's output, `model`, and `usage` metadata from a real provider |
 | judged_squishsum samples concurrently and a chat judge picks a candidate | `harness:` concurrent samples, `compare:`, a dedicated chat `judge:` |
+| the model reads two images sent with the call, in order | `Squishling::Image` bytes (two solid-colour PNGs built in memory), the `attached_image` placeholders, image content parts through each adapter |
 | params the model rejects raise ConfigurationError, not the fallback | 400 handling, `squish_fallback` bypass |
 
 Every scenario runs with generation params the model supports (`config.default_params`). Each script also
@@ -24,12 +25,16 @@ names params its model is known to reject:
 |---|---|---|
 | `anthropic_example.rb` | `{ temperature: 0 }` | `{ thinking: { budget: 1024 }, temperature: 0 }` |
 | `openai_example.rb` | `{ thinking: { effort: :low } }` | `{ temperature: 0.1 }` (reasoning model) |
+| `openai_compatible_example.rb` | `{ thinking: { effort: :low } }` | `{ temperature: 0.1 }` (reasoning model) |
 
-The scripts share `support/live_harness.rb`. The two provider scripts together make about 17 small requests per
-provider, more if a model needs a retry.
+The scripts share `support/live_harness.rb`. `anthropic_example.rb` and `openai_example.rb` go through the RubyLLM
+adapter; `openai_compatible_example.rb` runs the same scenarios through the OpenAI-compatible adapter (plain
+`Net::HTTP`, no RubyLLM), against OpenAI by default or any endpoint via `--base-url` / `OPENAI_BASE_URL`. Each
+script makes about 17 small requests, more if a model needs a retry.
 
 The live scenarios use a chat judge only. A `type: :judgment` judge (a System One decision model such as Jev,
-through `RubyLLM.judge`) needs that provider's key and is covered by the offline specs in `spec/harness_spec.rb`.
+through the RubyLLM adapter's `RubyLLM.judge`) needs that provider's key and is covered by the offline specs in
+`spec/harness_spec.rb` and `spec/squishling/adapters/ruby_llm_spec.rb`.
 
 Failure handling (empty or malformed responses, provider errors, escalation, `squish_fallback`) is covered by the
 offline specs in `spec/failure_handling_spec.rb`, `spec/escalation_spec.rb`, and `spec/contracts_spec.rb`, because a
@@ -70,6 +75,17 @@ Each script resolves its key in this order:
 | `coolhand_example.rb` | `OPENAI_API_KEY`, or `ANTHROPIC_API_KEY` with `--provider anthropic` | `gpt-6-luna`, or `claude-haiku-4-5-20251001` |
 
 ## Running
+
+`bin/live-examples` runs every script here concurrently and prints one `PASS` / `NOKEY` / `FAIL` line each, with a
+log per script in `tmp/live-examples/`. It exits non-zero unless all pass. Provider keys usually live in `~/.zshrc`,
+which a non-interactive shell (an agent's tool shell, say) never sources, so it re-runs itself under `zsh -ic`; set
+`SQUISHLING_EXAMPLES_NO_ZSH=1` to use the current environment as-is.
+
+```bash
+bin/live-examples
+```
+
+Or run one script at a time:
 
 ```bash
 bundle install

@@ -8,17 +8,30 @@ module Squishling
   # Observers get call metadata (Call) and, back from the yield, the request's token Usage: never the model's
   # output or the method's inputs.
   module Observer
-    # What an observer is told about one provider request. handed_off is true when squish! (or an automatic
-    # Ruby-path hand-off) sent the call to the LLM (typically from a rescue) and false when squish_when or a
-    # missing implementation did. role is nil for an escalation attempt, :sample (with sample "a", "b", ...) or
-    # :judge, like squawk's metadata. attempt and attempts count the (expanded) escalation path the request
-    # belongs to. request is :chat, or :judgment for a System One judge.
+    # What an observer is told about one provider request. handed_off is true when squish!, squish_rescue, or a
+    # rejected Ruby return (squish_validate both_paths) sent the call to the LLM (typically from a rescue) and false
+    # when squish_when or a missing implementation did. role is nil for an escalation attempt, :sample (with sample
+    # "a", "b", ...) or :judge, like squawk's metadata. attempt and
+    # attempts count the (expanded) escalation path the request belongs to. request is :chat, or :judgment for a
+    # System One judge. adapter is the name of the configured adapter the step picked (nil for the default one).
+    # call_id identifies the squished call the request belongs to (shared by all its requests), and request_id this
+    # one request ("<call_id>.<n>"), so a later report on the call's result (an apprentice's review) can name the
+    # request that produced it. apprentice is true for the requests of an apprentice's shadow run (see Apprentice).
     Call = Data.define(:label, :purpose, :harness, :handed_off, :role, :sample, :attempt, :attempts, :model, :provider,
-      :request)
+      :request, :adapter, :call_id, :request_id, :apprentice) do
+      def initialize(adapter: nil, call_id: nil, request_id: nil, apprentice: false, **attributes)
+        super
+      end
+    end
 
     # What an observer's block returns: the request's token usage and the model that answered, never the content.
-    # A count the provider didn't report is nil.
-    Usage = Data.define(:input_tokens, :output_tokens, :model)
+    # A count the provider didn't report is nil. cache_read_tokens and cache_write_tokens are the input tokens served
+    # from, and written to, the provider's prompt cache (see Cache), so a hit is visible.
+    Usage = Data.define(:input_tokens, :output_tokens, :model, :cache_read_tokens, :cache_write_tokens) do
+      def initialize(input_tokens:, output_tokens:, model:, cache_read_tokens: nil, cache_write_tokens: nil)
+        super
+      end
+    end
 
     BUILT_IN = %i[coolhand].freeze
 
@@ -33,12 +46,12 @@ module Squishling
         return observer if BUILT_IN.include?(observer)
 
         raise ConfigurationError, "#{where} observer must be one of #{BUILT_IN.map(&:inspect).join(', ')}, " \
-                                  "an object that responds to around, or false, got #{observer.inspect}"
+                                  "an object that responds to around, or false, got #{Appendices.describe(observer)}"
       end
       return observer if observer.respond_to?(:around)
 
       raise ConfigurationError, "#{where} observer must respond to around(call) { ... } (or be false), " \
-                                "got #{observer.inspect}"
+                                "got #{Appendices.describe(observer)}"
     end
 
     # The observer that wraps a request: the configured one, the Coolhand observer when nothing is configured and
@@ -89,12 +102,30 @@ module Squishling
       response
     end
 
+    # Tells the resolved observer about an apprentice's shadow run (see Apprentice::Review), when it takes reviews
+    # (responds to apprentice). Its exceptions are its own and propagate.
+    def review(review)
+      observer = resolve(Squishling.config.observer)
+      observer.apprentice(review) if observer.respond_to?(:apprentice)
+    end
+
+    # An Adapter::Response carries its token counts in a Hash; a judgment (see Adapter::Base#judge) may carry them in
+    # an object with input and output instead. Shared with Budget::Tally; not part of the public API.
     def usage(response)
       tokens = response.respond_to?(:tokens) ? response.tokens : nil
       model = response.respond_to?(:model) ? response.model : nil
-      Usage.new(input_tokens: tokens&.input, output_tokens: tokens&.output,
+      Usage.new(input_tokens: token_count(tokens, :input_tokens, :input),
+        output_tokens: token_count(tokens, :output_tokens, :output),
+        cache_read_tokens: token_count(tokens, :cache_read_tokens, :cache_read),
+        cache_write_tokens: token_count(tokens, :cache_write_tokens, :cache_write),
         model: model.respond_to?(:id) ? model.id : model)
     end
-    private_class_method :usage
+
+    def token_count(tokens, key, reader)
+      return tokens[key] if tokens.is_a?(Hash)
+
+      tokens.respond_to?(reader) ? tokens.public_send(reader) : nil
+    end
+    private_class_method :token_count
   end
 end

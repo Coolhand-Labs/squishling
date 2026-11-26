@@ -8,57 +8,168 @@ A failed attempt moves on to the next one; once the last fails, the error is rai
 
 | Failure | What Squishling does |
 |---|---|
-| Rate limit, 5xx, overload, timeout, connection error | RubyLLM retries at the HTTP level first (`RubyLLM.config.max_retries`, default 3). If it still fails, moves to the next attempt in a fresh chat; on the last attempt, raises `Squishling::LLMError` with the original exception as its `cause`. |
-| Bad API key, unknown model, missing provider config | Raises `Squishling::ConfigurationError`. Never escalated, never sent to the fallback. |
-| Provider rejects the request (400 Bad Request), e.g. an unsupported `temperature` or a schema it won't accept | Raises `ConfigurationError` naming the error class and HTTP status, and the params in use; the provider's own message is on `cause`. Never escalated, never sent to the fallback, so a setup mistake can't be silently covered up on every call. |
-| Empty or `nil` response (e.g. a refusal or a max-tokens cutoff) | Moves to the next attempt, then raises `Squishling::InvalidOutputError` |
+| Rate limit, 5xx, overload, timeout, connection error | The [adapter](adapters.md) retries at the HTTP level first (RubyLLM: `RubyLLM.config.max_retries`, default 3; OpenAI-compatible: `max_retries:`, default 2). If it still fails, moves to the next attempt in a fresh chat; on the last attempt, raises `Squishling::LLMError` with a `cause` when the adapter has one: the RubyLLM adapter always does, a [sanitized stand-in](#the-cause-of-a-provider-failure); the OpenAI-compatible adapter only for transport errors (the error itself, which carries no response body), not for HTTP statuses. |
+| Bad API key, billing or quota problem (402), unknown model or endpoint (404), missing provider config | Raises `Squishling::ConfigurationError`. Never escalated, never sent to the fallback. |
+| Provider rejects the request (400 Bad Request, or another 4xx such as 409 or 422), e.g. an unsupported `temperature` or a schema it won't accept | Raises `Squishling::RequestRejectedError` (a `ConfigurationError`) naming the error class, the HTTP status, and the provider's error status/code when its body carries one (`INVALID_ARGUMENT`, `invalid_request_error`). They are also on `error.provider_status` and `error.provider_code` (nil when absent); only plain tokens are kept, never the provider's message. The message points at a param only when the provider named it, and otherwise says the params, output schema, or input may be invalid. The provider's own message is not on `cause` either unless you opt in (see [the cause of a provider failure](#the-cause-of-a-provider-failure)). It is never retried, so if you know a given code means "this input was bad", rescue it and decide for yourself. A 400 that reports an overlong input is the exception: the adapter raises an `LLMError` for it (the built-in adapters recognize the structured `context_length_exceeded` code; RubyLLM's own `ContextLengthExceededError` is honored too, and the OpenAI-compatible adapter also recognizes the usual wording of servers that send none), since a bigger model may take it. Which of the two a failure is, is the adapter's call (see [the error contract](adapters.md#the-error-contract)); a wording it doesn't recognize stays a rejected request. Never escalated, never sent to the fallback, so a setup mistake can't be silently covered up on every call. |
+| Empty or `nil` response (e.g. a refusal or a max-tokens cutoff) | Moves to the next attempt, then raises `Squishling::InvalidOutputError`. When the provider reported a max-tokens cutoff, the error says so and [`truncated?`](#a-cutoff-or-a-wrong-answer) is true. |
 | Malformed or truncated JSON | Moves to the next attempt, then raises `InvalidOutputError`. JSON wrapped in a markdown code fence is accepted. |
 | JSON that doesn't match the schema (wrong types, missing or extra keys, `null` in a non-`optional` field, a broken [conditional rule](schemas.md#contracts-beyond-the-schema), root not an object) | Moves to the next attempt with the validation errors, then raises `InvalidOutputError` |
 | Schema-valid output that [`squish_validate`](#output-checks-squish_validate) rejects | Moves to the next attempt with your messages, then raises `InvalidOutputError` |
+| The call has used its [token budget](#capping-a-calls-cost-token-budgets) | Stops before the next attempt and raises `Squishling::BudgetExhaustedError` (an `InvalidOutputError`) |
 | With a [squishsum harness](harnesses.md): two valid samples that differ, with no judge or a judge that rejects both | Raises `Squishling::DisagreementError` (an `InvalidOutputError`), carrying both typed `candidates` |
 
 Squishling validates output itself with [json_schemer](https://github.com/davishmcclurg/json_schemer), because
-RubyLLM doesn't, and some providers don't enforce strict mode. When the next attempt is on the same step (same
-model, provider, params, and `forward_rejected:`), the re-ask happens in the same conversation, so the model sees
-what it got wrong. A different step gets a fresh chat with the original input plus the rejected output (truncated to
-4,000 characters) and its errors, so that output is sent to the next step's provider, which may not be the one that
-produced it. Set `forward_rejected: false` on a step to leave both out. `InvalidOutputError` exposes `errors`, `raw`
-(the last response), `attempts`, and `models` (the model tried on each attempt); for a
-[`DisagreementError`](harnesses.md#when-the-harness-fails), `raw` holds both candidates, `attempts` is `nil`, and
-`models` has one entry per role (sample a, sample b, then the judge). With a `logger` configured, every
+adapters don't, and some providers don't enforce strict mode. When the next attempt is on the same step (same
+model, provider, params, `forward_rejected:`, and `retry_temperature:`), the re-ask happens in the same conversation, so the model sees
+what it got wrong. If that re-ask returns the same reply it was just told was invalid, Squishling doesn't spend the
+step's remaining attempts: it moves straight to the next step (or raises `InvalidOutputError`, when this was the
+last), so size `attempts:` for replies that can differ. Set `retry_temperature:` on a step to vary the temperature
+of its same-chat retries. A different step gets a fresh chat with the original input plus the rejected output
+(truncated to 4,000 characters) and its errors, so that output is sent to the next step's provider, which may not be the one that
+produced it. Set `forward_rejected: false` on a step to leave both out. `InvalidOutputError` exposes `errors`,
+`error_details` (the same messages, each tagged with where it came from; see below), `raw`
+(the last response), `attempts`, `models` (the model tried on each attempt), and `finish_reason` (why the provider
+stopped on the last one). For a [`DisagreementError`](harnesses.md#when-the-harness-fails), `raw` holds both
+candidates, `attempts` and `finish_reason` are `nil`, and `models` has one entry per role (sample a, sample b, then
+the judge). With a `logger` configured, every
 escalation is logged as a warning.
+
+### A cutoff or a wrong answer
+
+An empty or half-written reply can mean the model was cut off at the output cap, not that it answered wrongly. The
+provider's stop reason tells them apart: `InvalidOutputError#finish_reason` and `squawk`'s `metadata[:finish_reason]`
+hold it as a Symbol (`:stop`, `:max_tokens`, `:content_filter`, or the provider's own spelling; `nil` when it reported
+none), and `truncated?` is true for `:max_tokens`. A truncated error's message and the log line say so.
+
+```ruby
+rescue Squishling::InvalidOutputError => e
+  e.truncated? # => true: raise max_output_tokens, rather than tuning the prompt or validator
+```
+
+Providers that count thinking against the cap need `max_output_tokens` to leave room for the thinking budget plus the
+answer: `thinking: { budget: 8192 }` with `max_output_tokens: 8192` leaves none, so every reply that uses its full
+budget is cut off before any JSON is written.
 
 ### What ends up in errors and logs
 
-Model output can echo sensitive input, so the raw response is kept in one place: `InvalidOutputError#raw` (plus the opt-in `squawk` hook below).
+Model output can echo sensitive input, so the raw response is kept in one place: `InvalidOutputError#raw` (plus the
+opt-in `squawk` hook below, and an [apprentice's](apprentice.md) `report:` hook, which gets the LLM's typed result).
 `InvalidOutputError#message`, `#errors`, and `config.logger` warnings are built from these:
 
 - For unparseable JSON, only the position (`response was not valid JSON (at line 1 column 7)`), never the parser's
   snippet of the response.
 - JSON Schema errors, which name the schema path and the rule that failed. They never contain the rejected value, but
   they do name an extra key the model added (`object property at /foo is a disallowed additional property`), and
-  that key name is chosen by the model.
+  that key name is chosen by the model. These are the only entries Squishling itself fills with model-chosen text; see
+  [telling the entries apart](#telling-the-entries-apart).
 - Your own `squish_validate` messages, verbatim. If you interpolate result values into them, those values reach
   the message, the logger, and the next attempt's prompt.
 - A fixed message when a response contains a value JSON can't represent (`1e400` parses to `Infinity`, or a string
   with invalid UTF-8).
-- For a failed provider request (`LLMError`, and the `ConfigurationError` for a 400, bad credentials, or a forbidden
-  key), only the error class and HTTP status. The provider's own message can echo request content or part of an API
-  key, so it stays on `cause` (`error.cause.message`) for you to read or log deliberately.
+- For a failed provider request (`LLMError`, and the `ConfigurationError` for a rejected request, bad credentials, or a forbidden
+  key), only the error class and HTTP status, plus a rejection's provider status and code when they are plain tokens. The provider's own message can echo request content or part of an API
+  key, and error trackers report the whole `cause` chain, so it is not on `cause` either unless you
+  [opt in](#the-cause-of-a-provider-failure).
 - At most the first 20 of these errors, plus a count of the rest, so a very large malformed response can't flood
   the retry message or the log.
 - For a [`DisagreementError`](harnesses.md#when-the-harness-fails), only what Squishling wrote: a `:judgment` judge's
   choice and probability. A chat judge's `reason` is model-written, so it is available as `#reason` but never in the
   message or logs.
 
+#### Telling the entries apart
+
+`InvalidOutputError#errors` is an Array of Strings. `#error_details` is the same list as
+`Squishling::InvalidOutputError::Detail` values (`message`, `source`), so a sink with its own control syntax (a chat
+webhook, HTML, a markdown renderer) can escape only what needs it:
+
+| `source` | Where the message came from | `model_derived?` |
+|---|---|---|
+| `:schema` | A JSON Schema error. It can name a key the model chose. | `true` |
+| `:validator` | Your own [`squish_validate`](#output-checks-squish_validate) message, verbatim. Never flagged, so escape it too if you interpolate result values into it. | `false` |
+| `:parse` | A message about a response or return value that didn't parse (not valid JSON, empty, a value JSON can't represent). | `false` |
+| `:squishling` | Other text Squishling or a [custom harness](harnesses.md#when-the-harness-fails) wrote, such as the "... and N more errors" notice. | `false` |
+
+```ruby
+squish_fallback do |error, **|
+  trusted = error.error_details.reject(&:model_derived?).map(&:message)
+  notify_channel("squishling rejected output: #{trusted.first(2).join('; ')}")
+  # ...
+end
+```
+
 The same applies to anything you log yourself, such as `error.message` in a [fallback](#fallbacks). Use `error.raw`
 only where you are willing to store model output. To send the output of every attempt somewhere on purpose, use
 [`squawk`](#observing-every-attempt-squawk).
 
+### The cause of a provider failure
+
+A provider's own exception (RubyLLM's, say) carries the provider's response body in its message and `response`, and the
+body can echo your request. Error trackers such as Sentry report the whole `cause` chain, so an `LLMError`,
+`ConfigurationError`, or `RequestRejectedError` raised for a failed request does not carry that exception as its
+`cause`. The [RubyLLM adapter](adapters.md#ruby_llm) puts a `Squishling::Adapter::ProviderFailure` there instead: its
+message is the original's class and HTTP status (`RubyLLM::RateLimitError, HTTP 429`), and it has the original's
+backtrace, but none of its message, response, or other state. Transport errors that carry no body (the OpenAI-compatible
+adapter's timeouts and connection failures) are passed through as they are.
+
+To get the original back for debugging, accept that it reaches your tracker and set `keep_cause: true`:
+
+```ruby
+Squishling.configure do |config|
+  config.adapter = { type: :ruby_llm, keep_cause: true }
+end
+```
+
+Then `error.cause` is the `RubyLLM::Error` itself, with its message and `response`.
+
+## Capping a call's cost (token budgets)
+
+`attempts:` limits retries per step, but a call that fails every attempt still pays for all of them, and with
+reasoning models the failed attempts are often the longest. A token budget caps what one call may use across every
+request it makes, whichever [harness](harnesses.md) it runs:
+
+```ruby
+class TicketTriager
+  include Squishling
+
+  squishling escalation: [{ model: "claude-haiku-4-5", attempts: 2 }, { model: "claude-sonnet-5-5", attempts: 2 }],
+    max_total_output_tokens: 25_000,
+    max_total_input_tokens: 200_000
+end
+```
+
+Before each request, Squishling checks the tokens used so far by the call's earlier requests (the escalation's
+attempts, a squishsum harness's samples, and a judge's). Once either total has reached its limit, it makes no more
+requests and raises `Squishling::BudgetExhaustedError`. It is an `InvalidOutputError` (so
+[`squish_fallback`](#fallbacks) receives it, and existing `rescue InvalidOutputError` code keeps working), and
+`rescue Squishling::BudgetExhaustedError` tells it apart from a plain validation failure:
+
+- `limit` is `:max_total_output_tokens` or `:max_total_input_tokens`, `max` its value, and `used` the tokens spent
+  so far (`{ input_tokens:, output_tokens: }`).
+- `errors` starts with the budget line, followed by the validation errors of the last rejected output, which is in
+  `raw` (`nil` when no output was rejected, e.g. the samples were valid but there was no budget left for the judge);
+  `attempts` and `models` are the requests made.
+- Like any other error message, it carries no model output.
+
+Things to know:
+
+- The first request always runs, and a request already in flight is never cut short, so a call can end above the
+  limit by one request (for the squishsum harnesses, one round of samples).
+- Tokens are the counts the [adapter](adapters.md) reports (`output_tokens` includes a reasoning model's thinking
+  tokens for providers that count them that way). A request that failed reports none, and a provider that reports no
+  usage never exhausts a budget. The input total includes the tokens written to the prompt cache
+  (`cache_write_tokens`) but not those read from it (`cache_read_tokens`), which adapters report apart from
+  `input_tokens`: with [prompt caching](configuration.md#prompt-caching) on, a hit on a long cached prompt doesn't spend
+  the budget. Set `config.budget_counts_cache_reads = true` in `Squishling.configure` to count reads too.
+- The limits are positive Integers. Set them with `Squishling.configure` (`default_max_total_output_tokens`,
+  `default_max_total_input_tokens`), `squishling`, `squish :method, ...`, or a [`squish!`](routing.md#handing-off-to-the-llm-with-squish) call.
+  The more specific level wins, limit by limit, and `false` lifts a limit set at a wider level.
+- To limit a single response instead, use the `max_output_tokens` [generation param](configuration.md#generation-params).
+
 ## Observing every attempt (`squawk`)
 
 `squawk` is an opt-in hook for sending what the model returned to an error tracker or tracing tool. It runs after
-every LLM attempt, accepted or rejected, and does nothing unless you set it:
+every LLM attempt, accepted or rejected (unless you narrow it with `squawk_on:`, below), and once more when a token
+budget or a disagreement stops the call. It does nothing unless you set it:
 
 ```ruby
 Squishling.configure do |config|
@@ -71,12 +182,30 @@ end
 | Keyword | Value |
 |---|---|
 | `output` | The raw response: a Hash or String, or `nil` when the provider call itself failed |
-| `error` | `nil` for an accepted attempt. Otherwise the `InvalidOutputError` (with `errors` and `raw`) or `LLMError` that ended the attempt |
-| `metadata` | `label` (`"Class#method"`), `attempt`, `attempts` (the escalation's length; under a harness, the sample's or judge's own attempts), `final` (the last attempt), `model`, `provider`, `params`, `input` (the JSON sent: arguments and named context only), `usage` (token counts, when RubyLLM reports them), `role` (`nil` for an escalation attempt, `:sample`, or `:judge`), `sample` (`"a"`, `"b"`, ... for a sample's attempt, else `nil`) |
+| `error` | `nil` for an accepted attempt. Otherwise the `InvalidOutputError` (with `errors` and `raw`) or `LLMError` that ended the attempt, or the `BudgetExhaustedError` or `DisagreementError` that stopped the call |
+| `metadata` | `label` (`"Class#method"`), `attempt`, `attempts` (the escalation's length, or for a [stopped call](#a-call-that-is-stopped) the attempts made; `attempt` jumps past the attempts a repeated reply skips; under a harness, the sample's or judge's own attempts), `final` (the last attempt, or a rejection after which none follows), `repeated` (`true` when the attempt returned the same reply as the one before it, in the same chat, which skips the step's remaining attempts), `model`, `provider`, `params`, `input` (the JSON sent: arguments and named context only), `usage` (token counts, when the adapter reports them), `finish_reason` (why the provider stopped, e.g. `:stop` or `:max_tokens`; `nil` when unknown or the call failed), `role` (`nil` for an escalation attempt, `:sample`, or `:judge`), `sample` (`"a"`, `"b"`, ... for a sample's attempt, else `nil`), `stopped` (`nil` for an attempt; `:budget` or `:disagreement` for the [stopped call's report](#a-call-that-is-stopped)), `call_id` (the call's id, shared by its attempts: a UUID, or your own from [`with_call_id` or `call_id:`](observers.md#supplying-your-own-call-id); see [Identifying the request](apprentice.md#identifying-the-request)), `apprentice` (`true` for an [apprentice's](apprentice.md) shadow run) |
 
 - Set it globally with `config.squawk`, per class with `squishling squawk: ...`, or per method with
   `squish :triage, squawk: ...`. The method's hook wins over the class's, which wins over the configured one;
   `squawk: false` silences an inherited hook. Subclasses and `squish!` calls inherit it.
+- Limit which attempts reach the hook with `squawk_on:`: `:all` (the default), `:rejections` (only attempts that
+  errored), `:retries` (those plus any accepted attempt after the first), or `:final` (the last attempt the escalation
+  allows, accepted or not; `metadata[:final]`). A classifier that passes on the first try nearly every time can post
+  only when something went wrong:
+
+  ```ruby
+  squishling squawk: ->(error:, **) { Tracer.record(error) if error }, squawk_on: :retries
+  ```
+
+  Pass a list to combine conditions; the hook runs when any one holds. `squawk_on: %i[rejections final]` reports
+  every error, plus the last attempt when it is reached and succeeds. A call accepted on an earlier attempt never
+  reaches `:final`. A level's value replaces the one above it; lists are never merged across levels.
+
+  Set it globally with `config.squawk_on`, per class with `squishling squawk_on: ...`, or per method with
+  `squish :triage, squawk_on: ...`. It resolves on its own, method then class then configured, so
+  `config.squawk_on = :retries` filters every hook, including a class's own, unless that class or method overrides it.
+  Under a [harness](harnesses.md), `attempt`, `attempts` and `final` count per sample or judge, so a sample's
+  first-attempt success is skipped even while another sample retries, and `:final` fires once per sample and judge.
 - Any object that responds to `call` works. The hook receives only the keywords it declares, unless it takes `**`,
   so a lambda that wants just `error:` is fine and new metadata fields won't break it.
 - It runs inline, so keep it quick. Exceptions it raises propagate unchanged and fail the call, like any of your own
@@ -86,6 +215,28 @@ end
   `role`/`sample` say which one it was. A [custom harness](harnesses.md#reporting-to-squawk) reports the same way.
 - It isn't called for a `ConfigurationError`, for deterministic and fallback returns, or for an attempt where your own
   `squish_validate` raises (that exception propagates first).
+
+### A call that is stopped
+
+A call that a [token budget](#capping-a-calls-cost-token-budgets) or a
+[disagreement](harnesses.md#when-the-harness-fails) stops has no attempt of its own to report: the attempt before a
+budget stop was reported as not final, and a disagreement's samples were both accepted. So the call gets one more
+report, whatever `squawk_on:` is set to:
+
+- `error` is the `BudgetExhaustedError` or `DisagreementError`, `output` is `nil` (nothing was sent), `metadata[:final]`
+  is `true`, and `metadata[:stopped]` is `:budget` or `:disagreement` (it is `nil` for every attempt's report).
+- `attempt` and `attempts` are `error.attempts`, or `0` when that is `nil` (a disagreement, or a budget that ran out
+  before a sample or judge made its first attempt); a stop before a retry counts the attempts already made. `model` is
+  the last of `error.models`, and `provider`, `params`, `usage`, `role`, and `sample` are `nil`.
+- It is sent once, after the attempts that led to it and before `squish_fallback` runs, for the built-in harnesses and
+  for a [custom one](harnesses.md#reporting-to-squawk) that raises either error. A call to another squished method
+  from your own code (a `squish_validate`, say) reports its own stop, and the outer call does not report that error
+  again. The attempts before it keep `final: false`, so `squawk_on: :final` sees a budget or disagreement ending only
+  through this report.
+- Like any attempt's report, it runs your hook inline: an exception the hook raises propagates in place of the
+  `BudgetExhaustedError` or `DisagreementError` (which stays on `cause`), so `squish_fallback` does not run.
+- `squawk: false`, or no hook, sends nothing. Ending on the last invalid attempt is not a stop: that attempt already
+  carried `final: true`.
 
 ## Output checks (`squish_validate`)
 
@@ -127,10 +278,12 @@ end
 | Error | Raised when |
 |---|---|
 | `Squishling::Error` | Base class for everything below. Raised directly for misuse at call time, e.g. `result` or `squish!` called outside a squished method |
-| `Squishling::ConfigurationError` | Missing purpose or schema, a non-strict schema, invalid or reserved params, an invalid `model:`/`escalation:` declaration, an invalid `append_to_purpose` item or unavailable source, bad credentials, an unknown model, a request the provider rejects (400) |
+| `Squishling::ConfigurationError` | Missing purpose or schema, a non-strict schema, invalid or reserved params, an invalid `model:`/`escalation:` declaration, an invalid `append_to_purpose` item or unavailable source, bad credentials, an unknown model, a request the provider rejects (a 400 or other rejected 4xx, as `RequestRejectedError`, with `provider_status` and `provider_code`) |
+| `Squishling::InputRejectedError` | An input was refused before any request: a sanitizer's `reject`, a file over `max_files`/`max_file_bytes`, empty, unreadable, or of a type no adapter sends. `rejections` lists each problem with the input's `path`, never its value. Not a `ConfigurationError`: never retried, escalated, or absorbed by `squish_fallback`. See [Inputs](inputs.md) |
 | `Squishling::InvalidOutputError` | LLM output still invalid (schema or `squish_validate`) after every attempt in the escalation, or a deterministic/fallback return that doesn't match the schema |
 | `Squishling::DisagreementError` | A subclass of `InvalidOutputError`: a [squishsum harness](harnesses.md#when-the-harness-fails)'s samples disagreed and no judge accepted either. `candidates`, `verdict`, and `reason` describe what happened |
-| `Squishling::LLMError` | The provider call failed on the last attempt in the escalation, after RubyLLM's own retries, including context-length errors (`cause` holds the original) |
+| `Squishling::BudgetExhaustedError` | A subclass of `InvalidOutputError`: the call used up its [token budget](#capping-a-calls-cost-token-budgets) before an attempt was accepted. `limit`, `max`, and `used` describe the budget |
+| `Squishling::LLMError` | The provider call failed on the last attempt in the escalation, after the adapter's own retries, including context-length errors (`cause` holds a [sanitized stand-in](#the-cause-of-a-provider-failure), when the adapter has one) |
 
 Errors raised by your own Ruby code are not wrapped.
 
@@ -160,53 +313,35 @@ end
 RegexProposer.call(positives: [...], negatives: [...]).squished?   # false: Ruby served it
 ```
 
-Two things hand off, and nothing else does:
+`both_paths` is on with `squish_validate(both_paths: true)` for one class, or `config.validate_both_paths = true` for
+all of them (`both_paths: false` keeps a class to the LLM whatever the config says; `both_paths:` alone, with no block,
+changes only the scope and keeps the check declared above). With it off, a return the schema rejects raises
+`InvalidOutputError` (source "Deterministic") and `squish_validate` doesn't run on Ruby.
 
-| Ruby failure | Hands off when |
-|---|---|
-| Its return doesn't match the schema, or `squish_validate` rejects it | `both_paths` is on (`squish_validate both_paths: true`, or `config.validate_both_paths = true`). Off, a schema failure raises `InvalidOutputError` (source "Deterministic") and `squish_validate` doesn't run. |
-| It raises an error you named | `squish_rescue ParseError, ...` names it, like a `rescue` clause (names add up across calls and down the class chain). Unnamed errors propagate. |
+The LLM's context carries `ruby_draft` (what Ruby returned: a Hash, Array or result, cut at 4,000 characters) and
+`ruby_problems` (the schema or `squish_validate` messages, at most 20). The prompt gets a short note saying so
+(`Squishling::RubyPath::HANDOFF_NOTE`). The class's Ruby source is sent only if you appended it with
+`append_to_purpose ..., self`; the note says so when you did. The LLM's answer goes through the schema,
+`squish_validate`, escalation, and `squish_fallback` like any other, and `squished?` is `true`. If it fails too, the
+error is raised with the rejection as its `cause`. With a `logger`, each hand-off is a warning (`ruby output
+rejected`); `squished?` on the result tells you the Ruby hit rate.
 
-Naming `InvalidOutputError` doesn't change the first row: Ruby's own rejected return follows `both_paths`, while an
-`InvalidOutputError` from `result(...)` or another squished object it called is an ordinary named error. An error
-raised by your own `squish_validate`, and a `ConfigurationError`, never hand off.
-
-The LLM's context carries `ruby_draft` (what Ruby returned, a Hash, Array or result, cut at 4,000 characters),
-`ruby_problems` (the schema or `squish_validate` messages) and `ruby_error` (the class and message of what it raised,
-never a backtrace). The prompt gets a short note saying so (`Squishling::RubyPath::HANDOFF_NOTE`). The class's Ruby
-source is sent only if you appended it with `append_to_purpose ..., self`; the note says so when you did. The LLM's
-answer goes through the schema, `squish_validate`, escalation, and `squish_fallback` like any other, and `squished?` is
-`true`. If it fails too, the error is raised with the Ruby failure as its `cause`. With a `logger`, each hand-off is a
-warning naming the error class (`ruby raised ParseError`, or `ruby output rejected`), never its message; `squished?` on
-the result tells you the Ruby hit rate.
-
-A named error's message is sent to your provider along with the draft, so name only errors whose messages you'd send.
-A class with no purpose or schema is only typing Ruby's return, so nothing is handed off there.
-
-`squish_rescue` also takes `squish!`'s options, minus `context:`, which apply to every such hand-off (a stronger
-model, say). Called with options alone, it leaves the errors named above it (a parent class's) as they are:
-
-```ruby
-squish_rescue append_to_purpose: ["The Ruby that ran first:", self], model: "claude-opus-5-5"
-```
-
-`append_to_purpose` sections follow the built-in note (`false` drops everything above, the note included) and add to a
-parent class's. The vocabulary, in the order a call runs:
+Not handed off: an error raised by your own `squish_validate`, a class with no purpose or schema (it only types Ruby's
+return), or a call where the method already used `squish!`. Errors the Ruby *raises* are
+[`squish_rescue`'s](routing.md#rescuing-declared-errors-with-squish_rescue), a separate declaration. The vocabulary, in
+the order a call runs:
 
 | Declaration | Meaning | When |
 |---|---|---|
 | `squish_when` / `when:` | send to the LLM instead of Ruby | before Ruby |
-| `squish_rescue` | these Ruby errors go to the LLM | after Ruby |
+| `squish_rescue` | these Ruby errors go to the LLM | while Ruby runs |
 | `squish_validate` / `validate:` | judge a result (from either path with `both_paths`) | after Ruby or LLM |
 | `squish_fallback` / `fallback:` | the LLM failed, so return this | after the LLM |
-
-To handle one failure yourself, `rescue ParseError => e` and call [`squish!`](routing.md#handing-off-to-the-llm-with-squish)
-with your own context: it runs first, and the call isn't handed off twice.
 
 ## Fallbacks
 
 Use `squish_fallback` to decide what happens when the LLM path fails with `InvalidOutputError` (including a
-`DisagreementError`) or `LLMError`. It's the one fallback for every [harness](harnesses.md).
+`DisagreementError` or `BudgetExhaustedError`) or `LLMError`. It's the one fallback for every [harness](harnesses.md).
 It receives the error plus the method's inputs as keywords, and runs against the instance:
 
 ```ruby
@@ -225,7 +360,7 @@ end
 - To propagate the error instead, re-raise it with `raise error`.
 - Per method: `squish :triage, fallback: ->(error, **inputs) { ... }`.
 - Subclasses inherit the class-level fallback.
-- Calls handed to the LLM with `squish!` use the fallback too. A fallback can't call `squish!` itself; that
+- Calls handed to the LLM with `squish!` or [`squish_rescue`](routing.md#rescuing-declared-errors-with-squish_rescue) use the fallback too. A fallback can't call `squish!` itself; that
   raises `Squishling::Error` rather than looping. See [Handing off to the LLM](routing.md#handing-off-to-the-llm-with-squish).
 - Without a fallback, the error propagates.
 

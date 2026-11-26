@@ -1,0 +1,340 @@
+# Adapters
+
+An **adapter** is how Squishling reaches a model. Squishling builds the request (system prompt, conversation so far,
+strict output schema, generation params), the adapter makes one completion and returns the model's output, and
+Squishling does the rest: validation, `squish_validate`, retries and escalation, harnesses, `squawk`, and fallbacks.
+Two adapters ship, separate gems add more (below), and you can write your own.
+
+| Adapter | Reaches | Needs |
+|---|---|---|
+| [`:ruby_llm`](#ruby_llm) | OpenAI, Anthropic Claude, Google Gemini, AWS Bedrock, OpenRouter, and every provider [RubyLLM](https://rubyllm.com) supports | `gem "ruby_llm"` |
+| [`:openai_compatible`](#openai-compatible-endpoints) | Any server that speaks OpenAI's Chat Completions API: OpenAI, Ollama, vLLM, LM Studio, llama.cpp, Together, Groq, … | nothing (Ruby's `Net::HTTP`) |
+| [`squishling-apple_fm`](https://github.com/Coolhand-Labs/squishling-apple-fm-adapter) (separate gem) | The on-device model built into macOS (Apple Intelligence): free and offline, for development | `gem "squishling-apple_fm"`, macOS 26+ on Apple Silicon |
+| [`squishling-claude_code`](https://github.com/Coolhand-Labs/squishling-claude-code-adapter) (separate gem) | Your local Claude Code CLI (`claude -p`), on your own Claude subscription instead of API billing, for development | `gem "squishling-claude_code"`, Claude Code installed and logged in |
+| [Your own](#writing-your-own) | Anything | a class with one method |
+
+Squishling itself depends on neither RubyLLM nor any provider SDK.
+
+## Choosing one
+
+```ruby
+Squishling.configure do |config|
+  config.adapter = :ruby_llm                    # a built-in or registered adapter, by name
+  # config.adapter = { type: :openai_compatible, base_url: "http://localhost:11434/v1", default_model: "llama3.2" }
+  # config.adapter = MyAdapter.new              # or any adapter instance
+end
+```
+
+An adapter is built when you assign it, so a missing gem or a bad option fails at boot, not on the first request.
+`config.adapter` is the default: every squishling class, method, and escalation step goes through it unless the step
+picks another one (see [Mixing adapters](#mixing-adapters-in-one-escalation)).
+
+**When you set none**, Squishling uses the RubyLLM adapter if the `ruby_llm` gem is in your bundle, so apps that
+configured RubyLLM before adapters existed keep working. Squishling no longer requires `ruby_llm` when it loads, so an
+app that doesn't load its Gemfile with `Bundler.require` should `require "ruby_llm"` before `RubyLLM.configure`. Without the gem, the first squished call
+raises `Squishling::ConfigurationError` saying what to add.
+
+### Known risk: the RubyLLM adapter downloads some image URLs itself
+
+When a call carries an [image given by URL](images.md#adapters), the RubyLLM adapter hands the URL to RubyLLM, which
+downloads it from your process whenever it can't tell the image type from the URL's path (any path with no image
+extension) or the provider can't fetch URLs itself. That download follows redirects and doesn't filter hosts, so a URL
+that points at `localhost`, a private address, or a cloud metadata endpoint is fetched, and what comes back is sent to
+the provider. If a user can choose an image URL, that is a server-side request forgery risk that comes with the RubyLLM
+adapter: allow-list the URL's host and scheme before building the `Image`, or download it yourself and pass the bytes
+with `Image.new(data:)`. The OpenAI-compatible adapter never downloads an image: it sends the URL on for the provider
+to fetch.
+
+## Mixing adapters in one escalation
+
+Give `config.adapters` a name for each extra adapter, and pick one per step with `adapter:`:
+
+```ruby
+Squishling.configure do |config|
+  config.adapters = {
+    apple: :apple_fm,                                                        # squishling-apple_fm
+    claude: :claude_code,                                                    # squishling-claude_code
+    local: { type: :openai_compatible, base_url: "http://localhost:11434/v1" }
+  }
+end
+
+class Triage
+  include Squishling
+
+  squishling escalation: [
+    { model: "apple-fm", adapter: :apple },
+    { model: "sonnet", adapter: :claude },
+    { model: "llama3.2", adapter: :local, attempts: 2 },
+    "claude-opus-5-5"                          # no adapter: the default one (config.adapter, else RubyLLM)
+  ]
+end
+```
+
+Each value takes anything `config.adapter` does and is built when assigned. A step that names no adapter uses
+`config.adapter`, so existing setups are unchanged; if every step names one, you need no default (and no `ruby_llm`).
+`adapter:` works on any escalation step, on `squish!`'s `escalation:`, on `default_escalation`, and on a harness's
+`judge:` step. A single `model:` takes a bare name only, so use a one-step `escalation:` to put it on an adapter.
+
+- **The rest of the step is the adapter's to read.** `provider:` and `params:` mean what the chosen adapter makes of
+  them, so a step on `:local` doesn't need RubyLLM's `provider:`.
+- **An unknown name is a `ConfigurationError`** (naming the configured ones), raised when a call starts (before its first
+  request), not when the class loads, since a class can load before `Squishling.configure` runs.
+  [`Squishling.verify`](verifying.md) finds it ahead of time.
+- **Failures keep their meaning.** Each adapter classifies its own errors, then Squishling treats them as always: a
+  down Ollama is an `LLMError` and the call moves on to the next step, but a `ConfigurationError` (say, Claude Code
+  isn't logged in) ends the call and is never handed to the next adapter or to `squish_fallback`.
+- **Rejected output crosses adapters.** The step after a failed one is shown the failed step's rejected output (see
+  [escalation](configuration.md#models-and-escalation)), so it goes to the next step's adapter, possibly a different
+  vendor. Set `forward_rejected: false` on a step that shouldn't see it.
+- **A judge's adapter sees the full input**, like any judge's provider (see [the judge](harnesses.md#the-judge)).
+  `type: :judgment` judges need an adapter with judgments; the check is on the judge's own adapter.
+- **Observers and tests** are told the name: `Observer::Call#adapter`, `Adapter::Request#adapter` (handed to your
+  adapter, `nil` for the default), and `Testing::Request#adapter`.
+
+## `:ruby_llm`
+
+Everything works as it did before adapters: configure provider API keys with `RubyLLM.configure`, name models, and
+use `provider:` for models missing from RubyLLM's registry. See [Configuration](configuration.md). Transport-level
+retries are RubyLLM's (`RubyLLM.config.max_retries`, `request_timeout`).
+
+| Option | Default | Description |
+|---|---|---|
+| `keep_cause` | `false` | RubyLLM's exception holds the provider's response body, which can echo your request, and error trackers report the whole `cause` chain. By default the errors the adapter raises carry a sanitized `cause` (the class and HTTP status only). `true` keeps RubyLLM's original exception there. See [the cause of a provider failure](failures.md#the-cause-of-a-provider-failure). |
+
+**Failures** are sorted by the HTTP status of the error's response, the same way as for the OpenAI-compatible adapter
+below (an error with no response, such as a timeout, is sorted by its class). RubyLLM's own error classes are not what
+decides: on a 400 its middleware picks a class from the provider's message text, so a bad parameter whose message says
+"per day" would otherwise look like a rate limit. The one RubyLLM class that is honored over the status is
+`RubyLLM::ContextLengthExceededError`, an `LLMError`, since RubyLLM is where each provider's wording for an overlong
+prompt is known. RubyLLM picks that class from the message on a 400, with wording broader than the OpenAI-compatible
+adapter's, so a bad parameter whose message happens to match is retried as an overflow rather than rejected. Each of
+these errors carries a sanitized `cause` (see `keep_cause` above).
+
+This is the only built-in adapter that supports `type: :judgment` judges ([System One decision models](harnesses.md#the-judge)).
+
+## OpenAI-compatible endpoints
+
+```ruby
+Squishling.configure do |config|
+  config.adapter = {
+    type: :openai_compatible,
+    base_url: "http://localhost:11434/v1",   # where /chat/completions lives
+    api_key: ENV["LLM_API_KEY"],             # optional for local servers
+    default_model: "llama3.2"                # for steps that name no model
+  }
+  config.default_model = "llama3.2"
+end
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `base_url` | `https://api.openai.com/v1` | The API root. Requests go to `{base_url}/chat/completions`. Must be `http(s)` and carry no credentials, query, or fragment. |
+| `api_key` | `ENV["OPENAI_API_KEY"]` for OpenAI's own endpoint, else none | A String, or a callable returning one (called once per completion, outside the adapter's retry handling, so rotating keys work and its exceptions reach you unchanged). Sent as a bearer token; omitted when blank. The key is sent as-is, and not over plain `http://` to another machine unless `allow_insecure_http: true` (below). `OPENAI_API_KEY` is read only for OpenAI's own `https://api.openai.com`, so it can never go to another host: pass `api_key:` for any other endpoint that needs one. |
+| `headers` | `{}` | Extra request headers, e.g. `{ "OpenAI-Organization" => "org-…" }` or a gateway's own. |
+| `default_model` | `nil` | The model for steps that don't name one. Without it, a step with no model raises `ConfigurationError`. |
+| `allow_insecure_http` | `false` | A credential (the `api_key`, or a header named `Authorization`, `Proxy-Authorization`, `api-key`, or `X-Api-Key`; other headers aren't inspected) is never sent over plain `http://` to a host that isn't this machine: building the adapter (or, for a callable key, making the request) raises `ConfigurationError`. Loopback hosts (`localhost`, `*.localhost`, `127.0.0.0/8`, `::1`) are exempt, judged by the name as written and never resolved, so a `*.localhost` name counts even on a resolver that doesn't map it to loopback (use the bare `localhost`, or an IP, if you can't rely on that). Set `true` to send it anyway, for a trusted LAN or container network. With no credential, `http://` to any host is fine. |
+| `open_timeout` / `read_timeout` | `10` / `120` | Seconds. `read_timeout` restarts at every read, so it alone doesn't bound a request. |
+| `total_timeout` | `open_timeout + 2 * read_timeout` | Seconds one attempt (each retry gets its own) may take from connecting to the last byte of the response. Past it the call fails with an `LLMError` that isn't retried by the adapter. |
+| `max_response_bytes` | `8388608` (8 MiB) | The most a response body may hold, an error body included, checked against `Content-Length` and the bytes actually read. Over it, a successful response fails with an `LLMError` that isn't retried by the adapter; a failure status drops the body and is classified by its status. Raise it only if you expect very large completions. |
+| `max_retries` | `2` | Timeouts, connection and protocol failures, HTTP 408, 429, and 5xx are retried this many times with exponential backoff (honoring `Retry-After`, up to 30 seconds) before they surface as an `LLMError`. A timed-out request may still have been processed by the server, so a retry can be billed twice; set `max_retries: 0` if that matters more than resilience. |
+| `max_tokens_param` | `:max_completion_tokens` | The body key for `max_output_tokens`. Use `:max_tokens` for servers that don't know the newer name. |
+| `media_types` | the four image types, plus `application/pdf` for `api.openai.com` | The [file types](inputs.md) the server takes, some of `image/png`, `image/jpeg`, `image/gif`, `image/webp`, `application/pdf`. A call with a file of another type is refused before any request; an empty list or an unknown type raises `ConfigurationError`. |
+| `structured_output` | `:json_schema` | `:json_schema` asks for strict structured output. For servers without it use `:json_object`, or `:none`: the schema then goes into the system prompt in words. Squishling validates every answer itself either way. |
+
+**Credentials stay out of serializers.** The adapter holds the `api_key` and the `headers` (which may carry an
+`api-key` or `Authorization` value) in an opaque wrapper, not in plain instance variables, so logging or caching the
+adapter or `Squishling.config` can't write them out: `inspect`, `to_s`, `pp`, `to_yaml`, `as_json` (including
+ActiveSupport's `instance_values` walk) and `to_json` show `[REDACTED]`, and `Marshal.dump` raises a `TypeError`
+instead of dumping the key. This guards against accidental serialization (a logged config, an error tracker, a cache
+dump), not against code running in your process, which can still reach the value. If you write your own adapter,
+keep credentials out of plain instance variables the same way, or define `encode_with`, `as_json`, and
+`marshal_dump` to omit them.
+
+**How params map.** `temperature` → `temperature`; `max_output_tokens` → `max_tokens_param`; `thinking: { effort: }` →
+`reasoning_effort` (`true`/`false` leave the model's default, and a `budget:` or `display:` raises
+`ConfigurationError`, since Chat Completions has no field for them). Any other param (`top_p`, `seed`, …) goes into
+the request body as given. Squishling's own keys (`model`, `messages`, `response_format`, `n`, `stream`) always win.
+`provider:` has no meaning here and is ignored.
+
+**Failures.** The HTTP status decides (see [the status mapping](#the-error-contract)): 408, 413, 429, 5xx, timeouts, and
+connection errors raise `LLMError` once the adapter's own retries are used up; 401, 402, 403, 404, and a redirect raise
+`ConfigurationError`; any other 4xx (400, 409, 422, …) raises `RequestRejectedError`, never retried or escalated. The
+one exception is a 400 that reports an overlong context, which is an `LLMError` too, since it depends on the input (a
+bigger model may take it). This adapter recognizes one when the error's `code` or `type` is `context_length_exceeded`, or,
+for servers that send neither (vLLM, Ollama, llama.cpp), when its message uses the usual wording ("context length",
+"context window", "context size", "too many tokens", "prompt is too long"). The message is only matched against that
+wording, never repeated; the match is deliberately narrow, so a wording it doesn't know is a rejected request, not a
+retry. Messages carry the status or error class only; a rejected request also carries the server's error status and code
+when they are plain tokens (as `provider_status` and `provider_code`). The server's message, the response body, and the
+API key never appear in an error or log. Redirects aren't followed, so the key can't be sent to another host.
+
+**Response limits.** The adapter sends `Accept-Encoding: identity` (it replaces any `Accept-Encoding` header you set)
+and reads the body in chunks. A successful (2xx) response that is compressed anyway, one over `max_response_bytes`,
+and any response that takes longer than `total_timeout` each raise an `LLMError` naming the limit (never the URL or
+any of the response) and are not retried by the adapter, since the same request would meet the same limit;
+escalation and `squish_fallback` handle it like any other `LLMError`. A failure status (4xx, 5xx, or a redirect) is
+classified by its status alone even when its body is compressed or over the cap: the body is dropped unread, so a
+gateway's gzipped 401 is still a `ConfigurationError`, not a transport failure that `squish_fallback` would absorb,
+and a 503 is still retried.
+
+## Writing your own
+
+Subclass `Squishling::Adapter::Base`, implement `complete`, and return a `Squishling::Adapter::Response`:
+
+```ruby
+class AcmeAdapter < Squishling::Adapter::Base
+  def initialize(client: Acme::Client.new)
+    super()
+    @client = client
+  end
+
+  def complete(request)
+    reply = @client.chat(
+      model: request.model,
+      system: request.instructions,
+      messages: request.messages,                 # [{ role: :user | :assistant, content: "…" }, …]
+      json_schema: request.schema["schema"],      # strict; Squishling validates the answer regardless
+      **request.params
+    )
+    Squishling::Adapter::Response.new(
+      content: reply.text,                        # the raw String (or a Hash you already parsed)
+      model: reply.model,
+      tokens: { input_tokens: reply.usage.in, output_tokens: reply.usage.out }
+    )
+  rescue Acme::AuthError
+    raise configuration_error(request, "Acme rejected the credentials")
+  rescue Acme::HTTPError => e
+    # sorted by status like the built-in adapters; only the status and a rejection's status/code tokens are repeated
+    raise http_failure(request, status: e.status, body: e.response_body, via: "Acme, HTTP #{e.status}")
+  rescue Acme::Error => e
+    raise llm_error(request, "Acme failed (#{e.class})")
+  end
+
+  private
+
+  # Optional: what an overlong prompt looks like for Acme. The default (super) already recognizes a 400 whose error
+  # code or type is "context_length_exceeded"; add whatever else Acme's errors tell you, without reading its message.
+  # body is the provider's error body, a JSON String or a Hash (or nil); ErrorBody.error reads either safely.
+  def context_length?(status:, body:)
+    super || (status == 400 && Squishling::Adapter::ErrorBody.error(body)&.[]("code") == "prompt_too_long")
+  end
+end
+
+Squishling.configure { |config| config.adapter = AcmeAdapter.new }
+# or register it by name, to use config.adapter = :acme (or { type: :acme, client: … }):
+Squishling.register_adapter(:acme, AcmeAdapter)
+```
+
+### The request
+
+`Squishling::Adapter::Request` carries everything for one completion:
+
+| Field | |
+|---|---|
+| `label` | `"Class#method"`, to prefix your error messages (the `configuration_error` / `llm_error` helpers do; `http_failure(request, status:, body:, via:)` sorts an HTTP failure; `rejected_request_error(request, via:, body:, http_status:)` builds the error for a rejected request, from a JSON String or String-keyed Hash body). |
+| `model`, `provider` | The escalation step's, or `nil` when it names none (use your own default). What `provider:` means is up to you. |
+| `adapter` | The name your adapter was configured under in `config.adapters`, or `nil` when it is the default adapter. |
+| `instructions` | The system prompt. |
+| `messages` | The conversation so far, ending with the user message to answer. After invalid output, Squishling appends your previous answer and a retry message; you never keep history. Each `content` is a String, except a chat's first user message in a call with [images](#images-and-documents). |
+| `schema` | `{ "name", "description", "schema", "strict" => true }`: the strict structured-output payload, without the conditional keywords providers can't take. |
+| `params` | The resolved [generation params](configuration.md#generation-params): the portable `:temperature`, `:max_output_tokens`, `:thinking`, plus provider-specific keys. Squishling has already rejected the keys it owns. Translate the portable ones for your provider; pass the rest through if it takes them. |
+| `cache` | The [prompt caching](configuration.md#prompt-caching) to ask for: `false` (none), or a Hash of options (`{}` for the provider's default, `{ ttl: "1h" }`). Ignore it if your provider has no prompt caching or caches on its own. |
+
+### The response
+
+`Squishling::Adapter::Response.new(content:, model:, tokens:, finish_reason:)`. `content` is the model's output as a
+String, or a Hash if you parsed it; `nil` or empty counts as invalid output and is retried. `model` is the id the
+provider reports. `tokens` is a Hash (`:input_tokens`, which leaves out the tokens read from or written to the prompt cache, `:output_tokens`, `:cache_read_tokens`, `:cache_write_tokens`, and anything else you have); `{}` when
+unknown. These feed [`squawk`'s `usage`](failures.md#observing-every-attempt-squawk), the [observer](observers.md)'s `Usage`, and the
+[token budget](failures.md#capping-a-calls-cost-token-budgets), which counts `:input_tokens`, `:cache_write_tokens` and
+`:output_tokens`, and `:cache_read_tokens` only with `budget_counts_cache_reads` (a response with none never exhausts a
+budget).
+`finish_reason` is why the provider stopped, as a Symbol: `:stop`, `:max_tokens` (the output cap cut the reply off),
+`:content_filter`, `:tool_calls`, or the provider's own spelling; leave it out (`nil`) when unknown. Map your
+provider's "length" reason to `:max_tokens`, so Squishling can [tell a cutoff from a wrong
+answer](failures.md#a-cutoff-or-a-wrong-answer).
+
+### The error contract
+
+Classifying a provider failure is the adapter's job; what happens next is Squishling's.
+
+**An adapter defines** which error a failure is. Only the adapter knows its provider's status codes, error bodies, and
+how it says a prompt is too long:
+
+| Raise | When | What Squishling does |
+|---|---|---|
+| `Squishling::ConfigurationError` | Bad credentials, billing, an unknown model or endpoint: anything a retry can't fix | Raised at once. Never retried, escalated, or sent to `squish_fallback`. |
+| `Squishling::RequestRejectedError` (a `ConfigurationError`) | The provider refused the request itself: a 400 or another 4xx for a bad param or schema | Same as `ConfigurationError`, so a setup mistake can't be hidden by a fallback on every call. |
+| `Squishling::LLMError` | Rate limit, 5xx, timeout, connection failure, an overlong context: anything worth another go | Moves to the next attempt; raised from the last one (and goes to `squish_fallback`). |
+
+**Squishling manages** everything that follows from the class: retries, escalation, the fallback, the token budget, and
+`squawk`. It never looks at a provider's status, code, or message; it sees only the error class your adapter raised.
+
+For an HTTP provider, `http_failure(request, status:, body:, via:)` does the sorting, so every adapter treats a status
+the same way: 408, 413, 429, 5xx, no status at all (a timeout), and a success status (a reply that was unusable) are
+`LLMError`s; 401, 402, 403, 404, and a redirect are `ConfigurationError`s;
+every other 4xx is a `RequestRejectedError`. `via` ("Acme, HTTP 400") is the only text repeated, plus the status and
+code tokens of a rejection. Between those, one case depends on the provider: a rejected request whose input was too
+long for the model should be an `LLMError`, since a bigger model may take it. `http_failure` asks the
+`context_length?(status:, body:)` hook. Its default recognizes a 400 whose error `code` or `type` is
+`context_length_exceeded` and never reads the message; override it (calling `super`) to recognize what your provider
+sends. Where the adapter can't tell, leave it: the failure stays a `RequestRejectedError`, which is never absorbed.
+
+Keep the provider's own message out of every error you raise: it can echo request content or part of a key, and ours
+reach logs and error trackers, and so do trackers that walk the `cause` chain. If the provider's exception carries a
+response body (an HTTP client error), don't leave it as the `cause` that raising inside a `rescue` sets: pass
+`cause: sanitized_cause(error, status: …)`, which builds a stand-in with only the class, the status, and the
+backtrace. An exception that carries no body (a timeout, a refused connection) can stay as the `cause`. Any other
+exception propagates unwrapped and is never retried, so map your transport's errors. Return anything but an
+`Adapter::Response` and Squishling raises `ConfigurationError`.
+
+### Optional hooks
+
+- **`judgments?` and `judge(input, questions:, step:, label:)`**: System One decision models for `type: :judgment` judges.
+  `judge` returns an object answering `[:winner]` with something that responds to `choice` and `probabilities`.
+  Without `judgments?`, such a judge raises `ConfigurationError` before any request. If the object has `tokens` (with
+  `input` and `output` readers), they count toward the call's token budget.
+- **`capture_context` and `with_context(context) { … }`**: samples (the `:squishsum` harnesses) send their requests from
+  worker threads. `capture_context` runs on the caller's thread and returns whatever your tracing needs; `with_context`
+  re-establishes it around each worker's request. The RubyLLM adapter uses this for its instrumentation workflow.
+
+### Images and documents
+
+A call can carry [images](images.md) and PDFs ([inputs](inputs.md)). A chat's first user message then has an Array of
+content parts instead of a String: `{ type: :text, text: String }`, then `{ type: :image, image: Squishling::Image }`
+per image and `{ type: :file, file: Squishling::Document }` per document. An `Image` gives you `data` (the bytes) with
+`media_type`, `data_uri`, and `filename`, or, for `url?` images, the `url` for the provider to fetch, plus the `detail`
+asked for (`:low`, `:high`, or `nil`). A `Document` gives you `data`, `media_type` (`application/pdf`), `data_uri`, and
+a generic `filename` ("document.pdf").
+
+`media_types(step)` says which types the adapter takes for a step's model: any of `Squishling::Image::MEDIA_TYPES` and
+`Squishling::Document::MEDIA_TYPES`. The default is the four image types when `images?` returns `true` and none
+otherwise, so an adapter that predates documents keeps getting images and Strings, and takes documents only by saying
+so. Override it when you know what a model can read: a call with a file of a type that isn't listed raises
+`ConfigurationError` before any request. The RubyLLM adapter refuses everything for a model RubyLLM's registry lists without image or PDF
+input, and otherwise takes images (when the registry lists image input) and PDFs (the registry is often behind on
+PDF input, so the provider decides), and the OpenAI-compatible adapter takes a `media_types:` option (PDFs are on by default only for
+OpenAI's own endpoint, since other servers rarely read them). Where an adapter can't tell, the provider's refusal comes
+back as the error its status maps to (`RequestRejectedError` for a 400), never retried.
+
+### Thread safety
+
+Adapters are called concurrently from worker threads when a harness takes samples. Keep no unsynchronized mutable
+state (a per-request HTTP connection, as the OpenAI-compatible adapter does, is the simple way).
+
+### Testing against your adapter
+
+To test your *application* (not an adapter), use [`squishling/testing`](testing.md): a scripted adapter with request
+inspection, call assertions, and stubs. To unit-test an adapter you wrote, a canned one is enough:
+
+```ruby
+class CannedAdapter < Squishling::Adapter::Base
+  def initialize(*replies) = (@replies = replies)
+
+  def complete(request)
+    Squishling::Adapter::Response.new(content: @replies.shift, model: request.model, tokens: {})
+  end
+end
+
+Squishling.configure { |config| config.adapter = CannedAdapter.new({ "label" => "bug" }) }
+```

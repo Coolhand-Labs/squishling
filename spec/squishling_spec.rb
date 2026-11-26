@@ -1,5 +1,8 @@
 # frozen_string_literal: true
 
+# The strict-payload checks below run RubyLLM's own schema normalizer on what the RubyLLM adapter is handed.
+require "ruby_llm"
+
 RSpec.describe Squishling do
   let(:invoice_parser) do
     Class.new do
@@ -65,6 +68,157 @@ RSpec.describe Squishling do
 
       expect(klass.call("long text").summary).to eq("short")
       expect(JSON.parse(chats.first.messages.first)).to eq("arguments" => { "text" => "long text" })
+    end
+
+    it "falls back to the LLM when the stub is a define_method block or spans several lines" do
+      klass = Class.new do
+        include Squishling
+
+        purpose "Summarize."
+        output_schema { string :summary }
+        squish :from_block, :multi_line
+
+        define_method(:from_block) { |text| raise NotImplementedError, text }
+
+        def multi_line(text)
+          raise NotImplementedError,
+            "write me: #{text}"
+        end
+      end
+      stub_llm({ "summary" => "a" }, { "summary" => "b" })
+
+      expect(klass.new.from_block("x").summary).to eq("a")
+      expect(klass.new.multi_line("x").summary).to eq("b")
+    end
+
+    it "falls back to the LLM when a prepended module's stub is the implementation" do
+      stub = Module.new { def call(text) = raise(NotImplementedError) }
+      klass = Class.new do
+        prepend stub
+        include Squishling
+
+        purpose "Summarize."
+        output_schema { string :summary }
+      end
+      stub_llm({ "summary" => "short" })
+
+      expect(klass.call("long text").summary).to eq("short")
+    end
+
+    describe "a NotImplementedError from called code" do
+      let(:abstract_base) { Class.new { def parse(_value) = raise(NotImplementedError, "abstract") } }
+      let(:klass) do
+        base = abstract_base
+        Class.new do
+          include Squishling
+
+          purpose "Parse."
+          output_schema { string :parsed }
+          squish :via_object, :via_block, :via_helper
+
+          define_method(:via_object) { |ssn| base.new.parse(ssn) }
+          define_method(:via_block) { |ssn| proc { raise NotImplementedError, ssn }.call }
+          define_method(:via_helper) { |ssn| helper(ssn) }
+
+          def helper(_value) = raise(NotImplementedError)
+        end
+      end
+
+      %i[via_object via_block via_helper].each do |name|
+        it "propagates from #{name} and sends nothing to the provider" do
+          chats = stub_llm({ "parsed" => "x" })
+
+          expect { klass.new.public_send(name, "123-45-6789") }.to raise_error(NotImplementedError)
+          expect(chats).to be_empty
+        end
+      end
+
+      it "propagates when a stub sits behind a user super chain" do
+        parent = Class.new { def call(text) = raise(NotImplementedError, text) }
+        child = Class.new(parent) do
+          include Squishling
+
+          purpose "Parse."
+          output_schema { string :parsed }
+
+          def call(text) = super + text
+        end
+        chats = stub_llm({ "parsed" => "x" })
+
+        expect { child.new.call("secret") }.to raise_error(NotImplementedError, "secret")
+        expect(chats).to be_empty
+      end
+    end
+
+    it "relies on the implementation lambda being one frame above the method" do
+      caught = nil
+      klass = Class.new do
+        include Squishling
+
+        purpose "Parse."
+        output_schema { string :parsed }
+
+        define_method(:call) { |text| raise NotImplementedError, text }
+      end
+      allow(Squishling::Wrapper).to receive(:stub?).and_wrap_original do |original, error|
+        caught = error
+        original.call(error)
+      end
+      stub_llm({ "parsed" => "x" })
+
+      klass.new.call("x")
+
+      expect(caught.backtrace_locations[1].absolute_path).to eq(Squishling::Wrapper.const_get(:FILE, false))
+    end
+
+    it "fails closed when the error carries no backtrace locations" do
+      error = NotImplementedError.new("stub")
+
+      expect(Squishling::Wrapper.stub?(error)).to be(false)
+      expect(Squishling::Wrapper.stub?(error.tap { |e| e.set_backtrace(["wrapper.rb:1"]) })).to be(false)
+    end
+
+    it "does not take an error raised outside the wrapper's frames for a stub" do
+      error = begin
+        raise NotImplementedError, "helper"
+      rescue NotImplementedError => e
+        e
+      end
+
+      expect(Squishling::Wrapper.stub?(error)).to be(false)
+    end
+
+    it "falls back to the LLM when a stub in a squished parent is reached through super" do
+      parent = Class.new do
+        include Squishling
+
+        purpose "Parse."
+        output_schema { string :parsed }
+
+        def call(text) = raise(NotImplementedError, text)
+      end
+      child = Class.new(parent) { def call(text) = super.then { |result| result } }
+      stub_llm({ "parsed" => "x" })
+
+      expect(child.new.call("x").parsed).to eq("x")
+    end
+
+    it "propagates a stub raised after squish! instead of making a second LLM call" do
+      klass = Class.new do
+        include Squishling
+
+        purpose "Parse."
+        output_schema { string :parsed }
+
+        def call(text)
+          squish!
+          raise NotImplementedError, text
+        end
+      end
+      chats = stub_llm({ "parsed" => "x" }, { "parsed" => "y" })
+
+      expect { klass.new.call("x") }.to raise_error(NotImplementedError, "x")
+      expect(chats.size).to eq(1)
     end
 
     it "falls back to the LLM when the method is not defined at all" do
@@ -494,24 +648,10 @@ RSpec.describe Squishling do
       end
     end
 
-    it "assumes a model exists when it's missing from RubyLLM's registry and a provider is given" do
-      base.squishling(model: "gpt-unknown", provider: :openai)
-      chat = chat_for(base)
-
-      expect(chat.model).to eq("gpt-unknown")
-      expect(chat.options).to eq(provider: :openai, assume_model_exists: true)
-    end
-
-    it "keeps registry lookups for known models" do
-      base.squishling(model: "claude-haiku-4-5", provider: :anthropic)
-
-      expect(chat_for(base).options).to eq(provider: :anthropic)
-    end
-
     it "sends no provider when none is declared" do
       base.squishling(model: "claude-haiku-4-5")
 
-      expect(chat_for(base).options).to eq({})
+      expect(chat_for(base).provider).to be_nil
     end
 
     it "uses the configured default provider with the default model" do
@@ -520,7 +660,7 @@ RSpec.describe Squishling do
         c.default_provider = :openai
       end
 
-      expect(chat_for(base).options).to eq(provider: :openai, assume_model_exists: true)
+      expect(chat_for(base).provider).to eq(:openai)
     end
 
     it "keeps a provider paired with the model declared at the same level" do
@@ -529,19 +669,19 @@ RSpec.describe Squishling do
       chat = chat_for(base, :quick)
 
       expect(chat.model).to eq("claude-haiku-4-5")
-      expect(chat.options).to eq({})
+      expect(chat.provider).to be_nil
     end
 
     it "accepts a per-method provider" do
       base.squish(:luna, model: "gpt-unknown", provider: :openai) { string :value }
 
-      expect(chat_for(base, :luna).options).to eq(provider: :openai, assume_model_exists: true)
+      expect(chat_for(base, :luna).provider).to eq(:openai)
     end
 
     it "inherits the class provider in subclasses" do
       base.squishling(model: "gpt-unknown", provider: :openai)
 
-      expect(chat_for(Class.new(base)).options).to include(provider: :openai)
+      expect(chat_for(Class.new(base)).provider).to eq(:openai)
     end
 
     it "inherits the model and provider together when a subclass only changes something else" do
@@ -550,7 +690,7 @@ RSpec.describe Squishling do
       chat = chat_for(child)
 
       expect(chat.model).to eq("gpt-unknown")
-      expect(chat.options).to eq(provider: :openai, assume_model_exists: true)
+      expect(chat.provider).to eq(:openai)
     end
 
     it "doesn't give a subclass's own model its parent's provider" do
@@ -559,28 +699,28 @@ RSpec.describe Squishling do
       chat = chat_for(child)
 
       expect(chat.model).to eq("claude-haiku-4-5")
-      expect(chat.options).to eq({})
+      expect(chat.provider).to be_nil
     end
 
     it "doesn't give a subclass's own escalation its parent's provider" do
       base.squishling(model: "gpt-unknown", provider: :openai)
       child = Class.new(base) { squishling escalation: ["claude-haiku-4-5", "claude-sonnet-5-5"] }
 
-      expect(chat_for(child).options).to eq({})
+      expect(chat_for(child).provider).to be_nil
     end
 
     it "drops the provider when the same class later declares a model without one" do
       base.squishling(model: "gpt-unknown", provider: :openai)
       base.squishling(model: "claude-haiku-4-5")
 
-      expect(chat_for(base).options).to eq({})
+      expect(chat_for(base).provider).to be_nil
     end
 
     it "accepts a provider after the class's own model, in a later call" do
       base.squishling(model: "gpt-unknown")
       base.squishling(provider: :openai)
 
-      expect(chat_for(base).options).to eq(provider: :openai, assume_model_exists: true)
+      expect(chat_for(base).provider).to eq(:openai)
     end
 
     it "raises instead of ignoring a class provider with no model declared on that class" do
@@ -611,8 +751,8 @@ RSpec.describe Squishling do
       base.squishling(escalation: ["gpt-unknown", "gpt-unknown-2"], provider: :openai)
       base.squish(:luna, escalation: ["gpt-unknown"], provider: :openai) { string :value }
 
-      expect(chat_for(base).options).to eq(provider: :openai, assume_model_exists: true)
-      expect(chat_for(base, :luna).options).to eq(provider: :openai, assume_model_exists: true)
+      expect(chat_for(base).provider).to eq(:openai)
+      expect(chat_for(base, :luna).provider).to eq(:openai)
     end
   end
 
@@ -684,6 +824,62 @@ RSpec.describe Squishling do
       expect(child.call(mode: :ruby).value).to eq("0>1>llm")
       expect(chats.size).to eq(1)
       expect(JSON.parse(chats.first.messages.first)["arguments"]).to eq("mode" => "ruby", "depth" => 2)
+    end
+
+    describe "squished methods that call each other" do
+      let(:pair) do
+        Class.new do
+          include Squishling
+
+          purpose "Answer."
+          output_schema { string :value }
+
+          squish :inner, when: ->(**) { true } do
+            string :value
+          end
+          squish :outer, when: ->(**) { false } do
+            string :value
+          end
+
+          def inner(text) = { value: "ruby inner #{text}" }
+          def outer(text) = { value: "outer>#{inner(text).value}" }
+        end
+      end
+
+      it "routes a squished method called from another's Ruby implementation on its own" do
+        chats = stub_llm({ "value" => "llm" })
+
+        expect(pair.new.outer("x").value).to eq("outer>llm")
+        expect(chats.size).to eq(1)
+        expect(JSON.parse(chats.first.messages.first)["arguments"]).to eq("text" => "x")
+      end
+
+      it "routes a squished method called while another decides whether to go to the LLM" do
+        pair.squish :outer, when: ->(**) { inner("probe").value == "llm" } do
+          string :value
+        end
+        chats = stub_llm({ "value" => "llm" }, { "value" => "llm outer" })
+
+        expect(pair.new.outer("x").value).to eq("llm outer")
+        expect(chats.size).to eq(2)
+        expect(JSON.parse(chats.first.messages.first)["arguments"]).to eq("text" => "probe")
+      end
+
+      it "routes the same method called on another instance while a call decides whether to go to the LLM" do
+        probing = Class.new do
+          include Squishling
+
+          purpose "Answer."
+          output_schema { string :value }
+          squish_when { |inner: false, **| inner || self.class.new.call(inner: true).value == "llm" }
+
+          def call(inner: false) = { value: inner ? "ruby inner" : "ruby outer" }
+        end
+        chats = stub_llm({ "value" => "llm" }, { "value" => "llm outer" })
+
+        expect(probing.call.value).to eq("llm outer")
+        expect(chats.size).to eq(2)
+      end
     end
   end
 

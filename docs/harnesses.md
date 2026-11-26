@@ -58,8 +58,8 @@ Both samples run on the escalation's first step, with its model, provider, and p
 - **They're independent.** Each sample has its own chat, and the two requests are sent concurrently on separate
   threads. Only the provider requests run on those threads. Parsing, schema validation, `squish_validate`,
   `compare:`, and the judge all run on the calling thread, so your Squishling callbacks never run concurrently.
-  RubyLLM instrumentation subscribers (e.g. `ActiveSupport::Notifications` listeners for `chat.ruby_llm`) do see
-  each sample's request on its worker thread, outside the Rails executor, so keep them thread-safe.
+  With the RubyLLM adapter, instrumentation subscribers (e.g. `ActiveSupport::Notifications` listeners for
+  `chat.ruby_llm`) do see each sample's request on its worker thread, outside the Rails executor, so keep them thread-safe.
 - **Each one is retried like an escalation step.** A sample with invalid output is re-asked in its own chat, up to
   the first step's `attempts:`, while a sample that already passed keeps its result. A failed request gets a fresh
   chat. A sample still failing after its attempts fails the call with `InvalidOutputError` or `LLMError`, as
@@ -83,13 +83,20 @@ whose typed result is returned (`squished?` is `true`), or it picks `neither`, w
 The judge is:
 
 1. the `judge:` step, if declared: a model name, or a Hash with `model:`, `provider:`, `params:`, and `attempts:`
-   (as in an escalation step, without `priority:` or `rotate:`), plus `type:`; or
+   (as in an escalation step, without `priority:`, `rotate:`, or `include_when:`), plus `type:`; or
 2. the escalation's next step after the sampled one, with its attempts. Steps tied on `priority:` rotate between calls
    (see [Rotating models](configuration.md#rotating-models-within-a-priority)), so which model that is can vary.
 
 A judged harness with neither raises `ConfigurationError` before any sample is requested. A `judge:`
 step uses only its own `provider:`; it doesn't inherit the class or method `provider:`, which belongs to their models
 (a chat judge's params, though, do merge over the method's).
+
+**What the judge is sent.** The judge's provider receives the operation's purpose, the call's full input (the same
+method arguments and named context the samples saw), and **both candidate outputs**, whatever they hold. None of it is
+capped or filtered, and there is no opt-out short of not using a judged harness. When the judge is a different
+provider than the sampled model (a `judge:` step with its own `provider:`, or an escalation's next step on another
+provider), the input and both outputs go to that provider as well, so only name a judge you would trust with the
+input itself.
 
 ### Chat judges
 
@@ -108,8 +115,10 @@ valid verdict raises `InvalidOutputError`. A chat judge's params are the method'
 ### System One judgment models (Jev)
 
 A judge can also be a System One decision model, such as TypeSafe's Jev, via
-[RubyLLM judgments](https://rubyllm.com/judgments/) (RubyLLM 2.1+). Decision models return calibrated
-probabilities rather than text, so they are much faster and cheaper than a chat judge.
+[RubyLLM judgments](https://rubyllm.com/judgments/) (RubyLLM 2.1+). This needs an [adapter](adapters.md) that
+supports judgments, which today means the `:ruby_llm` adapter; on any other, a `type: :judgment` judge raises
+`ConfigurationError` before a request is made (a `type: :chat` judge works with every adapter). Decision models return
+calibrated probabilities rather than text, so they are much faster and cheaper than a chat judge.
 
 ```ruby
 squishling harness: {
@@ -122,8 +131,8 @@ Squishling asks one `choice` question (`a`, `b`, or `neither`), with the judge p
 operation's purpose, input, output schema, and candidates as the judgment input. A pick of `a` or `b` is
 accepted only when its probability is at least `min_confidence:` (default `0.8`). Otherwise, as with `neither`,
 `DisagreementError` is raised with the choice and its probability in its `reason`. A judgment judge sends only its own
-`params:` (as RubyLLM `provider_options:`). `attempts:` retries a failed request. Configure the provider's
-credentials in RubyLLM as usual.
+`params:` (as RubyLLM `provider_options:`). `attempts:` retries a failed request. Judgments are a RubyLLM feature, so
+they need the `:ruby_llm` adapter, with the provider's credentials configured in RubyLLM as usual.
 
 ### The default judge prompt
 
@@ -165,6 +174,10 @@ end
 | `raw` | Both candidates as Hashes, `[a.to_h, b.to_h]` |
 | `attempts` | `nil` |
 | `models` | The model behind each role: sample `a`, sample `b`, then the judge if one ran (one entry each, not one per attempt) |
+
+A [token budget](failures.md#capping-a-calls-cost-token-budgets) covers every request of the call, the samples
+and the judge's included. When it is spent before the next round of retries or before the judge can run, the call raises
+`BudgetExhaustedError` (also an `InvalidOutputError`, and also sent to the fallback) instead of a `DisagreementError`.
 
 Other failures are unchanged. A sample or judge that never produces valid output raises `InvalidOutputError`, a
 failed request on the last attempt raises `LLMError`, and setup mistakes (including a provider 400 on either
@@ -256,7 +269,7 @@ the harness is declared, before any request is made, and an unknown, missing, or
 
 | Type | Accepts | `call` receives |
 |---|---|---|
-| `:step` | A model name, or a Hash with `model:`, `provider:`, `params:`, `attempts:`, `forward_rejected:` | A normalized, frozen step; pass it to `run.escalate`, or in the Array given to `run.samples` |
+| `:step` | A model name, or a Hash with `model:`, `provider:`, `params:`, `attempts:`, `forward_rejected:`, `retry_temperature:` | A normalized, frozen step; pass it to `run.escalate`, or in the Array given to `run.samples` |
 | `:proc` | A Proc | The Proc |
 | `:string`, `:symbol`, `:integer`, `:boolean` | A String, a Symbol (or String, converted), an Integer, `true` or `false` | The value |
 
@@ -288,12 +301,15 @@ results, the same type the deterministic path returns.
 | `run.stage(declaration)` | A stage from a model name or a step Hash (a single step is a stage of one attempt). It keeps its own provider, and its `params:` merge over the method's, as a [judge](#the-judge) step does |
 | `run.escalate(*stages)` | Makes each attempt in order until an output passes the schema and `squish_validate`, in the same chat after invalid output and in a fresh one (told about the rejected output) on a new step. With no argument, it runs the escalation: exactly what `:escalation` does |
 | `run.samples(stages)` | Takes an Array of stages (so `run.samples([stage, stage])`, not `run.samples(stage)`; a bare step counts as a stage of one attempt): one sample per stage, each in its own chat and retried like an escalation step, with the requests of every round sent concurrently. Returns the outputs in order. Each stage must be one model's attempts: mixed steps raise `ConfigurationError`. Samples are named `"a"`, `"b"`, ... (up to 26) |
-| `run.judge(judge: nil, instructions: nil)` | Resolves a [judge](#the-judge) now (so a missing one raises `ConfigurationError` before any request) and returns it. `judge:` is a model name, or a [judge Hash](#the-judge) (`model:`, `provider:`, `params:`, `attempts:`, `type:`, `min_confidence:`; no `priority:` or `rotate:`), and `instructions:` a non-blank String or a Proc. `judge.verdict(first, second)` returns a `Squishling::Judge::Verdict` with `choice` (`:a`, `:b`, or `:neither`), `reason`, and `detail`, and `judge.step` is its first attempt. A chat judge's `reason` is model-written, so use `detail` (Squishling's own text, `nil` for a chat judge), not `reason`, in messages and logs. Without `judge:`, the judge is the escalation's second stage |
+| `run.judge(judge: nil, instructions: nil)` | Resolves a [judge](#the-judge) now (so a missing one raises `ConfigurationError` before any request) and returns it. `judge:` is a model name, or a [judge Hash](#the-judge) (`model:`, `provider:`, `params:`, `attempts:`, `type:`, `min_confidence:`; no `priority:`, `rotate:`, or `include_when:`), and `instructions:` a non-blank String or a Proc. `judge.verdict(first, second)` returns a `Squishling::Judge::Verdict` with `choice` (`:a`, `:b`, or `:neither`), `reason`, and `detail`, and `judge.step` is its first attempt. A chat judge's `reason` is model-written, so use `detail` (Squishling's own text, `nil` for a chat judge), not `reason`, in messages and logs. Without `judge:`, the judge is the escalation's second stage |
 | `run.agree?(first, second, compare = nil)` | `compare` (evaluated against the instance with both results and the method's inputs) or, without one, exact equality |
 | `run.log(message)` | A warning to `config.logger`, prefixed with `"[Squishling] Class#method"` |
 
 `call` returns the accepted result: one a primitive of this run returned. Returning anything else (a Hash, `nil`, a
-result you built or copied with `with`) raises `ConfigurationError`, so a harness can't skip validation.
+result you built or copied with `with`) raises `ConfigurationError`, so a harness can't skip validation. The check is
+by object identity, which suits the typed results of an object schema. When the schema isn't an object, a result is a
+bare JSON value, and an immediate such as `1` or `true` counts as produced whatever its source, so there the check can't
+catch a hand-built value.
 
 ### When a custom harness fails
 
@@ -302,8 +318,10 @@ A harness fails the way the built-ins do, so `squish_fallback` and the error cla
 - **Attempts run out.** `run.escalate` and `run.samples` raise `InvalidOutputError` (invalid output after the last
   attempt) or `LLMError` (a failed request on the last attempt) themselves, with the same attributes as always.
 - **Your rule rejects.** Raise one of those errors yourself. `Squishling::DisagreementError.new(candidates:,
-  models:)` is the one for samples that don't agree, and `Squishling::InvalidOutputError.new(errors: [...], source: "Harness")` for
-  anything else. Both go to [`squish_fallback`](failures.md#fallbacks).
+  models:)` is the one for samples that don't agree, and `Squishling::InvalidOutputError.new(errors: [...],
+  source: "Harness")` for anything else. Both go to [`squish_fallback`](failures.md#fallbacks). A String error is
+  tagged `:squishling` in [`error_details`](failures.md#telling-the-entries-apart); pass a
+  `Squishling::InvalidOutputError::Detail` to tag it yourself.
 - **Setup mistakes** raise `ConfigurationError`, which is never retried and never sent to the fallback.
 - **Your own exceptions** (from `call`, `compare:`, or `squish_validate`) propagate unchanged. Squishling doesn't wrap or
   swallow them.
@@ -313,10 +331,16 @@ available to your code as the results and in `InvalidOutputError#raw`, and to `s
 
 ### Reporting to `squawk`
 
-Every attempt a primitive makes is reported to the [`squawk`](failures.md#observing-every-attempt-squawk) hook, with
-usage, so [token measuring](measuring-tokens.md) works unchanged. `metadata[:role]` says what the attempt was for:
+Every attempt a primitive makes is reported to the [`squawk`](failures.md#observing-every-attempt-squawk) hook
+(unless narrowed with `squawk_on:`), with usage, so [token measuring](measuring-tokens.md) works unchanged. `metadata[:role]` says what the attempt was for:
 `nil` for an escalation attempt, `:sample` (with `metadata[:sample]` set to `"a"`, `"b"`, ...), or `:judge`. `attempt`
-and `attempts` count within that sample, judge, or escalation.
+and `attempts` count within that sample, judge, or escalation. `metadata[:repeated]` is `true` for an attempt that
+sent back the reply it was just rejected for; the primitive then skips the rest of that step's attempts (the next
+step's `attempt` jumps past them, and a sample ends with its `InvalidOutputError`).
+
+A call that ends on the token budget or on a `DisagreementError` (the built-in squishsum harnesses', or one your
+`call` raises) is reported once more, as [a stopped call](failures.md#a-call-that-is-stopped), with `metadata[:stopped]`
+set and no output. Squishling does it around your `call`, so a custom harness needs no code for it.
 
 ### Threads
 

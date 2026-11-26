@@ -7,19 +7,111 @@ module Squishling
   # missing API key). Never retried and never passed to squish_fallback.
   class ConfigurationError < Error; end
 
+  # The provider answered a request with HTTP 400 (or another 4xx that isn't a credentials, billing, model, redirect,
+  # or too-long-input problem; the adapter decides which, see Adapter::Base#http_failure). Still a ConfigurationError:
+  # never retried, escalated, or passed to a fallback. The provider's message is never repeated; the machine-readable
+  # status and code its error body carries are, when they are plain tokens (e.g. "INVALID_ARGUMENT",
+  # "invalid_request_error"). Both are nil when the body has none.
+  class RequestRejectedError < ConfigurationError
+    attr_reader :provider_status, :provider_code
+
+    def initialize(message, provider_status: nil, provider_code: nil)
+      @provider_status = provider_status
+      @provider_code = provider_code
+      super(message)
+    end
+  end
+
+  # Squishling.verify! found problems in the squished classes' setup. report holds them all (see Verification::Report).
+  class VerificationError < ConfigurationError
+    attr_reader :report
+
+    def initialize(report)
+      @report = report
+      super(report.to_s)
+    end
+
+    def problems
+      report.problems
+    end
+  end
+
+  # An input the call would send was refused before any request was made: the sanitizer (squish_sanitize) rejected it
+  # (reject.call), a file is over max_files or max_file_bytes, empty or unreadable, or its type isn't one an adapter
+  # can send (a fax's TIFF nobody converted). Never retried or escalated, and not passed to squish_fallback: the
+  # input is what's wrong, so the caller decides what to do about it. rejections holds every problem found, each with
+  # the path of the input in the call ("arguments.pages[1]", nil when it isn't one input's), never the value, the
+  # bytes, a file name, or a URL (a rejection message you wrote with reject.call is your own: don't put values in it).
+  class InputRejectedError < Error
+    Rejection = Data.define(:path, :message) do
+      def to_s = path ? "#{path}: #{message}" : message
+    end
+
+    attr_reader :rejections
+
+    def initialize(rejections, label: nil)
+      @rejections = rejections.freeze
+      super("#{"#{label}: " if label}#{@rejections.join('; ')}")
+    end
+
+    def self.single(message, label: nil, path: nil)
+      new([Rejection.new(path, message)], label:)
+    end
+  end
+
   # Output that didn't match the schema (or a squish_validate check): from the LLM after every attempt in the
   # escalation, or from the deterministic path.
   class InvalidOutputError < Error
-    # models: the model ids tried, one per attempt (nil entries mean RubyLLM's default model).
-    attr_reader :errors, :raw, :attempts, :models
+    # Added to the message (and the log line) when the last reply was cut off at the output token cap.
+    CUTOFF_NOTE = "cut off at the output token limit"
 
-    def initialize(errors:, raw: nil, source: "LLM", attempts: nil, models: nil)
-      @errors = errors
+    # One entry of #error_details: the message and where it came from.
+    #   :schema      a JSON Schema error; it can name a key the model chose (a disallowed additional property)
+    #   :validator   your own squish_validate message, verbatim (so it holds model values only if you interpolate them)
+    #   :parse       a message about a response or return value that didn't parse (not valid JSON, empty,
+    #                a value JSON can't represent)
+    #   :squishling  any other text Squishling or a custom harness wrote
+    Detail = Data.define(:message, :source) do
+      # One detail per message, all from the same source.
+      def self.from(messages, source) = messages.map { |message| new(message, source) }
+
+      def initialize(message:, source:)
+        unless Detail::SOURCES.include?(source)
+          raise ArgumentError, "unknown error source #{source.inspect} (expected #{Detail::SOURCES.join(', ')})"
+        end
+
+        super
+      end
+
+      # Whether the message can contain text the model chose, so a sink with its own control syntax should escape
+      # it. Your own squish_validate messages are never flagged, even if you interpolate result values into them.
+      def model_derived? = source == :schema
+    end
+    Detail::SOURCES = %i[schema validator parse squishling].freeze
+
+    # models: the model ids tried, one per attempt (nil entries mean the adapter's default model). finish_reason: why
+    # the provider stopped on the last attempt (a Symbol such as :stop or :max_tokens; nil when unknown or not from
+    # an LLM).
+    # errors: Strings, or Details; a String counts as :squishling text.
+    attr_reader :errors, :error_details, :raw, :attempts, :models, :finish_reason
+
+    def initialize(errors:, raw: nil, source: "LLM", attempts: nil, models: nil, finish_reason: nil)
+      @error_details = errors.map { |error| error.is_a?(Detail) ? error : Detail.new(error.to_s, :squishling) }
+      @error_details.freeze
+      @errors = @error_details.map(&:message).freeze
       @raw = raw
       @attempts = attempts
       @models = models
+      @finish_reason = finish_reason
       tries = attempts ? " after #{attempts} attempt#{'s' unless attempts == 1}" : ""
-      super("#{source} output was invalid#{tries}: #{errors.join('; ')}")
+      cutoff = " (#{CUTOFF_NOTE})" if truncated?
+      super("#{source} output was invalid#{tries}: #{@errors.join('; ')}#{cutoff}")
+    end
+
+    # Whether the last reply was cut off at the output token cap, so raising max_output_tokens (leaving room for any
+    # thinking budget) is the fix rather than changing the prompt or validator.
+    def truncated?
+      finish_reason == :max_tokens
     end
   end
 
@@ -44,7 +136,25 @@ module Squishling
     end
   end
 
-  # The LLM call itself failed (rate limit, server error, timeout, connection) after RubyLLM's own
-  # HTTP retries. The original exception is available as #cause.
+  # The call spent its token budget (max_total_output_tokens or max_total_input_tokens) before any attempt was
+  # accepted, so no further request was made. limit names the budget that was reached, max its value, and used the
+  # tokens spent so far ({ input_tokens:, output_tokens: }). errors starts with the budget line, then the validation
+  # errors of the last rejected output, which is in raw (nil when no output had been rejected, e.g. the samples were
+  # valid but the judge could not run). Like any InvalidOutputError it goes to squish_fallback.
+  class BudgetExhaustedError < InvalidOutputError
+    attr_reader :limit, :max, :used
+
+    def initialize(limit:, max:, used:, errors: [], raw: nil, attempts: nil, models: nil)
+      @limit = limit
+      @max = max
+      @used = used
+      spent = used.fetch(:"#{limit.to_s.delete_prefix('max_total_')}")
+      super(errors: ["token budget exhausted: #{spent} of #{max} #{limit} used", *errors], raw:, attempts:, models:)
+    end
+  end
+
+  # The LLM call itself failed (rate limit, server error, timeout, connection) after the
+  # adapter's own HTTP retries. #cause is the adapter's: a sanitized stand-in (Adapter::ProviderFailure) for a provider
+  # exception that carries a response body, or the transport error itself when it carries none.
   class LLMError < Error; end
 end

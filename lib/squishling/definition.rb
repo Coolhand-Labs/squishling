@@ -7,11 +7,16 @@ module Squishling
     # Matches the keys a squish! context: Hash may use.
     NAME_KEY = ->(key) { key.is_a?(String) || key.is_a?(Symbol) }
 
-    attr_reader :klass, :name, :call_context, :handed_off
+    # One attempt on RubyLLM's default model, when no level declares a model.
+    DEFAULT_STEP = { model: nil, attempts: 1, forward_rejected: true }.freeze
+
+    # apprentice_run is true for the definition an apprentice's shadow run uses (see #for_apprentice).
+    attr_reader :klass, :name, :call_context, :handed_off, :apprentice_run
 
     def initialize(klass:, name:, purpose: nil, append_to_purpose: nil, output_schema: nil, model: nil,
-      provider: nil, params: nil, harness: nil, predicate: nil, fallback: nil, validator: nil, squawk: nil,
-      call_context: {}, handed_off: false)
+      provider: nil, params: nil, cache: nil, harness: nil, predicate: nil, fallback: nil, validator: nil,
+      sanitizer: nil, squawk: nil, squawk_on: nil, budget: nil, apprentice: nil, call_id: nil, call_context: {},
+      handed_off: false)
       @klass = klass
       @name = name
       @purpose = purpose
@@ -20,49 +25,72 @@ module Squishling
       @model = model
       @provider = provider
       @params = params
+      @cache = cache
       @harness = harness
       @predicate = predicate
       @fallback = fallback
       @validator = validator
+      @sanitizer = sanitizer
       @squawk = squawk
+      @squawk_on = squawk_on
+      @budget = budget || {}
+      @apprentice = apprentice
+      @call_id = call_id
       @call_context = call_context
       @handed_off = handed_off
+      @apprentice_run = false
     end
 
     # This definition with one call's overrides on top. The output schema, predicate, fallback, and validator
     # can't be overridden: the call must still return the method's result type.
     def for_call(purpose: nil, append_to_purpose: nil, context: nil, model: nil, escalation: nil,
-      provider: nil, params: nil, harness: nil, via: "squish!")
-      call_path = ModelPath.declare(model, escalation, "#{label} #{via}")
-      raise ConfigurationError, "#{label}: #{via} provider: needs a model: or escalation:" if provider && !call_path
-      unless context.nil? || (context.is_a?(Hash) && context.each_key.all?(NAME_KEY))
-        raise ConfigurationError, "#{label}: #{via} context: must be a Hash with String or Symbol keys"
-      end
+      provider: nil, params: nil, cache: nil, harness: nil, max_total_output_tokens: nil,
+      max_total_input_tokens: nil)
+      call_path = ModelPath.declare(model, escalation, "#{label} squish!")
+      raise ConfigurationError, "#{label}: squish! provider: needs a model: or escalation:" if provider && !call_path
 
-      appended = Appendices.normalize(append_to_purpose, "#{label} #{via}") unless append_to_purpose.nil?
-      call_params = params && Params.normalize(params, "#{label} #{via} params")
-      call_harness = Harness.normalize(harness, "#{label} #{via}") unless harness.nil?
+      check_context!(context)
+
+      appended = Appendices.normalize(append_to_purpose, "#{label} squish!") unless append_to_purpose.nil?
+      call_params = params && Params.normalize(params, "#{label} squish! params")
+      call_cache = Cache.normalize(cache, "#{label} squish! cache")
+      call_harness = Harness.normalize(harness, "#{label} squish!") unless harness.nil?
+      call_budget = Budget.build("#{label} squish!", output: max_total_output_tokens, input: max_total_input_tokens)
       self.class.new(
         klass:, name:, output_schema: @output_schema, predicate: @predicate, fallback: @fallback,
-        validator: @validator, squawk: @squawk,
+        validator: @validator, sanitizer: @sanitizer, squawk: @squawk, squawk_on: @squawk_on, call_id: @call_id,
         purpose: purpose || @purpose,
         append_to_purpose: [*@append_to_purpose, *appended],
         model: call_path || @model, provider: call_path ? provider : @provider,
         # merge, not Params.resolve: a nil at the method level must still unset the class's key.
         params: call_params ? (@params || {}).merge(call_params) : @params,
-        harness: call_harness || @harness,
+        cache: [call_cache, @cache].find { |level| !level.nil? },
+        harness: call_harness || @harness, budget: @budget.merge(call_budget),
         call_context: @call_context.merge((context || {}).transform_keys(&:to_sym)),
         handed_off: true # only a hand-off (squish!, or the Ruby path's) builds a definition this way
       )
     end
 
-    def label
-      "#{klass}##{name}"
+    # This definition for an apprentice's shadow run of a call: the same settings, its requests marked as the
+    # apprentice's (see Observer::Call#apprentice).
+    def for_apprentice
+      dup.tap { |copy| copy.instance_variable_set(:@apprentice_run, true) }
     end
+
+    def label = "#{klass}##{name}"
+
+    # The id of one call (see CallId): the one the caller gave (supplied, from Squishling.with_call_id), else what the
+    # method's (or its class's) call_id: declaration gives, else nil, for a generated UUID.
+    def call_id_for(receiver, inputs, supplied = nil)
+      supplied || CallId.declared(call_id_source, receiver, inputs, label)
+    end
+
+    # The call_id: declaration the method resolves to (its own over its class's).
+    def call_id_source = @call_id.nil? ? klass.squishling_call_id : @call_id
 
     # The system prompt: the purpose, then each append_to_purpose section.
     def purpose(receiver)
-      value = @purpose || klass.purpose
+      value = declared_purpose
       value = receiver.instance_exec(&value) if value.is_a?(Proc)
       return value if value.nil? || value.empty?
 
@@ -79,16 +107,48 @@ module Squishling
     end
 
     # One ModelPath::Step per attempt, from the first level (method, class, or config) that declares a model
-    # or escalation, or a single attempt on RubyLLM's default model. A provider travels with the model declared
+    # or escalation, or a single attempt on the adapter's default model. A provider travels with the model declared
     # at the same level, so a per-method Anthropic model never inherits a class-level OpenAI provider. Models
-    # tied on priority are rotated by this method's call count (see Rotation).
-    def escalation_path
+    # tied on priority are rotated by this method's call count (see Rotation). Steps whose include_when: is falsy
+    # for this call's inputs are left out, so a tier rotates only between its eligible models. advance: false looks
+    # at the turn the next call will get without counting this one (a prompt preview).
+    def escalation_path(receiver, inputs, advance: true)
+      declared, provider = declared_path
+      eligible = ModelPath.eligible(declared, receiver, inputs, label)
+      # Counted when the declared path rotates (so a call that excludes some models doesn't skew the others'
+      # rotation) or when this call's eligible steps do (an excluded rotate: false step no longer pins its tier).
+      rotates = ModelPath.rotating?(declared) || ModelPath.rotating?(eligible)
+      turn = if rotates
+        advance ? Rotation.advance(klass, name) : Rotation.peek(klass, name)
+      else
+        0
+      end
+      ModelPath.steps(eligible, provider:, params:, cache:, turn:)
+    end
+
+    # The steps and provider of the first level (method, class, or config) that declares a model or escalation, or
+    # the default step, before any call's include_when: filtering.
+    def declared_path
       config = Squishling.config
       entries, provider = [[@model, @provider], [klass.squishling_model_path, klass.squishling_provider],
                            [config.default_model_path, config.default_provider]].find(&:first)
-      entries ||= [{ model: nil, attempts: 1, forward_rejected: true }]
-      turn = ModelPath.rotating?(entries) ? Rotation.advance(klass, name) : 0
-      ModelPath.steps(entries, provider:, params:, turn:)
+      [entries || [DEFAULT_STEP], provider]
+    end
+
+    # Whether a purpose is declared for this method or its class (a Proc one can't be evaluated without a receiver).
+    def purpose_declared?
+      value = declared_purpose
+      value.is_a?(Proc) || !(value.nil? || value.empty?)
+    end
+
+    # The names the method's inputs are sent under (see #bind_arguments), and whether any keyword may be an input:
+    # there is no implementation to name them, it takes **, or has a parameter with no name to send it under.
+    def input_names
+      names = parameters.filter_map { |type, param| input_name(type, param) }
+      any_keyword = !implemented? || parameters.any? do |type, param|
+        type == :keyrest || (Squawk::POSITIONAL_TYPES.include?(type) && param.nil?)
+      end
+      [names, any_keyword]
     end
 
     # How the escalation is used (see Harness): the method's, the class's, the configured default, or :escalation.
@@ -101,31 +161,30 @@ module Squishling
       Params.resolve(Squishling.config.default_params, klass.squishling_params, @params)
     end
 
+    # Prompt caching: false, or the options to ask the provider for (see Cache). The config default, overridden by the
+    # class, then the method (and a squish! call).
+    def cache
+      Cache.resolve(Squishling.config.default_cache, klass.squishling_cache, @cache)
+    end
+
+    # The token limits of one call (see Budget): config defaults, overridden limit by limit by the class, then by the
+    # method (and a squish! call).
+    def budget
+      Budget.resolve(Squishling.config.default_budget, klass.squishling_budget, @budget)
+    end
+
     # Extra output checks run on schema-valid LLM results (see ClassMethods#squish_validate).
     def validator
       @validator || klass.squishling_validator
     end
 
-    # Whether both paths are validated: the Ruby path's return is held to the schema and squish_validate too, and a
-    # rejected one is handed to the LLM. The class's `squish_validate both_paths:`, else the configured default.
-    def both_paths?
-      declared = klass.squishling_both_paths
-      declared.nil? ? Squishling.config.validate_both_paths : declared
-    end
+    # The sanitizers a call runs, in order: the configuration's, each class in the chain (see
+    # ClassMethods#squish_sanitize), then the method's. All of them run.
+    def sanitizers = [*Squishling.config.sanitizers, *klass.squishling_sanitizers, @sanitizer].compact
 
-    # The exception classes the class hands to the LLM when Ruby raises them (squish_rescue); none by default.
-    def rescue_classes
-      klass.squishling_rescue
-    end
-
-    # The squish! overrides every automatic hand-off carries: the class's squish_rescue options.
-    def rescue_overrides
-      klass.squishling_rescue_overrides
-    end
-
-    # A hand-off needs something to say and a shape to answer in; a class without them only types Ruby's return.
-    def llm_capable?
-      !(@purpose || klass.purpose).nil? && !schema.nil?
+    # The squish_fallback handler: the method's, else the class's (nil when there is none).
+    def fallback
+      @fallback || klass.squishling_fallback
     end
 
     # The observability hook: the method's, else the class's, else the configured one. `false` at a level
@@ -134,12 +193,37 @@ module Squishling
       [@squawk, klass.squishling_squawk, Squishling.config.squawk].find { |hook| !hook.nil? } || nil
     end
 
+    # Which attempts reach the hook (see Squawk): the method's, else the class's, else the configured one.
+    def squawk_on
+      [@squawk_on, klass.squishling_squawk_on, Squishling.config.squawk_on].find { |on| !on.nil? }
+    end
+
     def context_names
       klass.squishling_context_names
     end
 
+    # The apprentice settings (see Apprentice) the method runs with, or nil when apprentice mode is off for it: the
+    # method's, merged over the class's.
+    def apprentice
+      Apprentice.resolve(klass.squishling_apprentice, @apprentice)
+    end
+
+    # Whether the method itself (not its class) turns apprentice mode on.
+    def apprentice_declared?
+      !(@apprentice.nil? || @apprentice == false)
+    end
+
+    # The squish_when predicate: the method's, else the class's.
+    def predicate
+      @predicate || klass.squishling_predicate
+    end
+
+    # Whether the method has a Ruby implementation (otherwise every call goes to the LLM).
+    def implemented?
+      !Wrapper.implementation(klass.instance_method(name)).nil?
+    end
+
     def squish?(receiver, inputs)
-      predicate = @predicate || klass.squishling_predicate
       return false unless predicate
 
       receiver.instance_exec(**inputs, &predicate) ? true : false
@@ -147,10 +231,11 @@ module Squishling
 
     # Runs the elastic path. When the LLM fails (InvalidOutputError or LLMError) and a fallback is
     # declared, the fallback's return value is used instead, coerced like a deterministic return.
-    def invoke_llm(receiver, inputs)
-      Invoker.new(self, receiver, inputs).call
+    # supplied is the CallId::Handle that gave the call its id (Squishling.with_call_id), told the accepted request.
+    def invoke_llm(receiver, inputs, call_id: nil, supplied: nil)
+      Invoker.new(self, receiver, inputs, call_id: call_id_for(receiver, inputs, call_id), supplied:).call
     rescue InvalidOutputError, LLMError => e
-      handler = @fallback || klass.squishling_fallback
+      handler = fallback
       raise unless handler
 
       Squishling.config.logger&.warn("[Squishling] #{label} LLM failed, using fallback: #{e.message}")
@@ -170,7 +255,7 @@ module Squishling
 
       attrs = attrs.to_h if attrs.is_a?(Result::Instance)
       data, errors = jsonify_return(attrs)
-      errors = schema.validate(data) if errors.empty?
+      errors = InvalidOutputError::Detail.from(schema.validate(data), :schema) if errors.empty?
       raise InvalidOutputError.new(errors:, raw: attrs, source: "Deterministic") if errors.any?
 
       schema.build(data, squished:)
@@ -196,7 +281,7 @@ module Squishling
             unnamed += 1
           end
         when :rest
-          bound[param.nil? || param == :* ? :args : param] = positional.shift(positional.size)
+          bound[input_name(type, param)] = positional.shift(positional.size)
         end
       end
       positional.each_with_index { |value, index| bound[:"arg#{unnamed + index}"] = value }
@@ -206,11 +291,28 @@ module Squishling
 
     private
 
+    def check_context!(context)
+      return if context.nil? || (context.is_a?(Hash) && context.each_key.all?(NAME_KEY))
+
+      raise ConfigurationError, "#{label}: squish! context: must be a Hash with String or Symbol keys"
+    end
+
     # Values JSON can't represent (NaN, Infinity, cycles) are invalid output, not a raw JSON error.
     def jsonify_return(attrs)
       [Schema.jsonify(attrs), []]
     rescue JSON::GeneratorError, JSON::NestingError => e
-      [nil, [e.message]]
+      [nil, [InvalidOutputError::Detail.new(e.message, :parse)]]
+    end
+
+    def declared_purpose
+      @purpose || klass.purpose
+    end
+
+    def input_name(type, param)
+      case type
+      when :req, :opt, :key, :keyreq then param
+      when :rest then param.nil? || param == :* ? :args : param
+      end
     end
 
     # The implementation's parameters, beneath the prepended wrappers.

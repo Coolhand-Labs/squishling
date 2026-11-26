@@ -7,6 +7,248 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-11-23
+
+Images as call inputs, mixing adapters in one escalation, and structured Ruby values that now reach the model as
+structure. Read **Changed** before upgrading: a `Struct`, `Data`, `OpenStruct`, or `Set` argument is sent differently.
+
+### Added
+
+- `Squishling::Image`: a squished method can read images. Build one from bytes (`Image.new(data:)`, the media type read
+  from the bytes), a file (`Image.from_path`), or a URL the provider fetches (`Image.from_url`), with an optional
+  `detail: :low | :high`, and pass it as an argument, inside a Hash or Array, or as a `squish_context` value. The JSON
+  input carries `{"attached_image": N}` in its place and the images go with each chat's first message, after the text;
+  the Ruby path gets the `Image` unchanged. A retry continues the chat, an escalation starts a fresh chat that carries
+  them again, samples and a `:chat` judge are sent them, and a `type: :judgment` judge can't see them, so that
+  combination raises `ConfigurationError`. PNG, JPEG, GIF, and WebP are supported. An image's `inspect`, `to_s`,
+  `as_json`, `to_json`, and YAML describe it (media type and size, or a URL without its query), and `Marshal` refuses
+  it, so its bytes don't reach logs, errors, or `squawk`. Known risk: with the RubyLLM adapter, RubyLLM may download an
+  image's URL from your process, from any host it can reach, so only build an `Image` from a URL or path you trust: see
+  [Images](docs/images.md#untrusted-urls-and-paths). (#110)
+- `Adapter::Base#images?` (default `false`): an adapter that takes images sets it, and then receives a chat's first
+  message as content parts (`{ type: :text, ... }`, then `{ type: :image, image: Squishling::Image }`). A call with
+  images through an adapter without it, on any of its steps, raises `ConfigurationError` before the first request, so
+  existing custom adapters keep getting String content. The RubyLLM and OpenAI-compatible adapters take images, and
+  `Testing::Request#images` and `squishling_preview`'s `images:` show what was sent. See [Images](docs/images.md). (#110)
+- `config.adapters`, a Hash of named adapters (each value takes anything `config.adapter` does, and is built when
+  assigned), and an `adapter:` key on escalation steps, so one escalation can run, say, Apple FM, Claude Code, and Ollama
+  in sequence. A step without `adapter:` keeps using `config.adapter`. `adapter:` also works on `squish!`'s
+  `escalation:`, on `default_escalation`, and on a harness's `judge:` step. An unknown adapter name raises
+  `ConfigurationError` before the call's first request (judge steps and custom-harness stages included), and
+  `Squishling.verify` reports it ahead of time. Error semantics are unchanged: an `LLMError` moves to the next step; a
+  `ConfigurationError` still ends the call. See [Mixing adapters](docs/adapters.md#mixing-adapters-in-one-escalation).
+  (#100)
+- `Adapter::Request#adapter`, `Observer::Call#adapter`, and `Testing::Request#adapter` carry the step's adapter name
+  (`nil` for the default adapter). In tests, `step(adapter: :name)` selects a reply by it, and `Squishling::Testing`
+  routes every name in `config.adapters` to its scripted adapter. (#100)
+
+### Changed
+
+- **Behavior change:** a `Struct`, `Data`, or `OpenStruct` argument or `squish_context` value now reaches the model as an
+  object of its members (its `to_h`), and a `Set` as an array, instead of Ruby's `inspect` text such as
+  `#<struct S a="secret">`. A model that was reading `#<struct S a="x">` now receives `{"a": "x"}`, and the class name is
+  no longer sent. All members are sent, so pass a Hash or define `to_h` to leave a field out. A value that contains
+  itself, or whose `to_h` doesn't return a Hash, raises `ConfigurationError`. `assert_sent_arguments` compares against what was actually sent. See
+  [Routing](docs/routing.md). (#95, #106)
+- `Squishling.verify` checks the default adapter only for the steps that use it when `config.adapters` is set, and checks
+  every `adapter:` a step or judge names. (#100)
+
+### Internal
+
+- Development dependencies: `ruby_llm` 2.2, `coolhand` 0.11, RuboCop 1.92.2, and `ostruct` (no longer a default gem on
+  Ruby 4.0); `ruby/setup-ruby` 1.338.0 in CI. (#103, #107, #108, #109, #106)
+- The `prep-release` and `finish-release` skills credit outside and first-time contributors. (#105)
+
+## [0.6.0] - 2026-11-01
+
+Prompt caching, on by default. Read **Changed** before upgrading: requests now ask the provider to cache the stable
+prompt, which can bill a cache write on providers that charge for one.
+
+### Added
+
+- Prompt caching: a `cache` setting that asks the provider to cache the stable prompt (the purpose and the input note in
+  the system prompt), so a repeated call can read it back instead of paying for it again. It is `true`, `false`, or a
+  Hash of options such as `{ ttl: "1h" }`, set with `config.default_cache`, `squishling cache:`, `squish :method,
+  cache:`, `squish!(cache:)`, or an escalation step's `cache:`; the more specific level wins. There is no class-level
+  `cache false` macro, since it would collide with `ActiveRecord::Base.cache`: use `squishling cache: false`. The RubyLLM
+  adapter asks for it with `Chat#with_caching` and sends no cache controls when it is off; a System One judgment is never
+  cached. See [Prompt caching](docs/configuration.md#prompt-caching). (#79, #80)
+- `Observer::Usage` gains `cache_read_tokens` and `cache_write_tokens`, and `Adapter::Request`, `ModelPath::Step`, and
+  `Testing::Request` gain a `cache` member (defaulting to `false`, so existing constructors keep working). Adapters that
+  report cache usage put `:cache_read_tokens` and `:cache_write_tokens` in `Adapter::Response#tokens`. (#79, #80)
+- `config.budget_counts_cache_reads` (default `false`, `true` or `false` only): whether the tokens a request reads from the
+  provider's prompt cache count toward `max_total_input_tokens`. (#97)
+
+### Changed
+
+- **Behavior change:** prompt caching is on by default (`config.default_cache` is `true`). With the RubyLLM adapter, a
+  provider that bills for cache writes (such as Anthropic Claude) may charge a write premium on the first call. Set
+  `config.default_cache = false`, or `cache: false` on a class, method, or step, to opt out. A model that can't take
+  cache controls may reject the request, which raises `ConfigurationError`: set `cache: false` for that model. The
+  OpenAI-compatible adapter ignores the setting. (#79, #80)
+- **Behavior change:** `max_total_input_tokens` now counts the tokens written to the prompt cache, which RubyLLM
+  reports apart from `input_tokens`, so a call that writes a large cached prompt can reach the budget sooner than before.
+  Tokens read from the cache are left out unless `budget_counts_cache_reads` is `true`. Output tokens are unchanged.
+  (#79, #80, #97)
+- **Behavior change:** the OpenAI-compatible adapter reports `input_tokens` net of cached tokens, as every adapter
+  does (the cached reads go to `cache_read_tokens`, and a server's cache writes to `cache_write_tokens`). A custom
+  adapter's `input_tokens` should likewise exclude cached tokens. Code that read `input_tokens` from `squawk` usage or an
+  observer for this adapter will see a smaller number on cache hits. (#79, #80)
+
+### Documented
+
+- The adapter docs list the separate [`squishling-apple_fm`](https://github.com/Coolhand-Labs/squishling-apple-fm-adapter)
+  and [`squishling-claude_code`](https://github.com/Coolhand-Labs/squishling-claude-code-adapter) adapter gems. (#94)
+
+## [0.5.1] - 2026-10-31
+
+The v0.5.0 red-team follow-ups (#70): data-egress, secret-leakage, and misclassification fixes. Several of them change
+behavior that used to work, so read **Changed** before upgrading.
+
+### Added
+
+- The OpenAI-compatible adapter takes `allow_insecure_http:` (default `false`), `max_response_bytes:` (default 8 MiB), and
+  `total_timeout:` (default `open_timeout + 2 * read_timeout`, per attempt). See **Changed** for what they guard.
+  (#74, #86)
+- `keep_cause: true` on the RubyLLM adapter keeps the provider's original exception as `cause`. (#76, #84)
+- `Adapter::Base#http_failure(request, status:, body:, via:)`, an overridable `context_length?(status:, body:)` hook, and
+  `sanitized_cause(error, status:)` for custom adapters: one shared mapping from an HTTP status to `LLMError`,
+  `ConfigurationError`, or `RequestRejectedError`, and a body-free `cause`. See [Adapters](docs/adapters.md). (#72, #76,
+  #84, #88)
+- `squawk` metadata gains `stopped:` (`:budget`, `:disagreement`, or `nil` for an ordinary attempt). (#73, #87)
+
+### Changed
+
+- **Behavior change:** a `NotImplementedError` raised by code a squished method calls (an abstract method on another
+  object, a helper, a block) now propagates instead of sending the method's arguments to the provider. Only the
+  method's own stub routes to the LLM: `def x = raise NotImplementedError`, `define_method`, a prepended module, and an
+  undefined method. To use the LLM from a rescue deeper in the stack, call `squish!` in the method. (#71, #83)
+- **Behavior change:** `error.cause` from the RubyLLM adapter is now an `Adapter::ProviderFailure` that names only the
+  original's class and HTTP status (`RubyLLM::RateLimitError, HTTP 429`) and keeps its backtrace, because the original's
+  message is the provider's response body, which can echo request content and which error trackers such as Sentry report
+  from the cause chain. This reverses 0.4.0's choice to keep the original: code that read `e.cause.message` or
+  `e.cause.is_a?(RubyLLM::...)` needs `keep_cause: true`. The OpenAI-compatible adapter's transport causes carry no body
+  and are unchanged. (#76, #84)
+- **Behavior change:** a provider failure is classified by the adapter from its HTTP status and structured error
+  `code`/`type`, no longer from the provider's message text. Both adapters now agree: 408, 413, 429, and 5xx are
+  `LLMError`; 401, 402, 403, 404, and 3xx are `ConfigurationError`; every other 4xx is a `RequestRejectedError`. On
+  RubyLLM, 402, 404, and 422 were retryable `LLMError`s. A context overflow is an `LLMError` (so it retries and
+  escalates) only when the body's `code`/`type` is `context_length_exceeded`, the adapter recognizes it (the
+  OpenAI-compatible adapter still matches the usual wordings, no longer a bare "maximum ... tokens"), or RubyLLM raised
+  its `ContextLengthExceededError`; one that is only in the message text now raises `RequestRejectedError`. (#72, #88)
+- **Behavior change:** the OpenAI-compatible adapter refuses to send an `api_key` or `Authorization` header over
+  `http://` to a host that isn't loopback (`localhost`, `*.localhost`, `127.0.0.0/8`, `::1`), raising
+  `ConfigurationError`. A LAN or Docker setup such as `http://ollama:11434/v1` needs `allow_insecure_http: true`.
+  Successful responses over `max_response_bytes` raise `LLMError`, requests send `Accept-Encoding: identity` and a
+  compressed successful reply is refused, and `total_timeout:` bounds a whole attempt, not each read. None of those is
+  retried by the adapter. A failure status (4xx, 5xx, redirect) is classified by its status even when its body is
+  compressed or over the cap. (#74, #86)
+- **Behavior change:** a hand-written Hash `output_schema` with `properties` but no `type: "object"`, at the root or
+  nested (a property, array `items`, an `optional` branch, a `$ref` target), now raises `ConfigurationError` when the
+  schema is built, and `Squishling.verify` reports it. Add `type: "object"` (or a union that includes it). Schematist
+  schemas are unaffected. (#77, #81)
+- **Behavior change:** a schema with a remote or unresolvable `$ref` now raises `ConfigurationError` when it is built
+  (and in `verify`), not a raw `JSONSchemer::UnknownRef` on the first reply. A Hash or Array argument that contains
+  itself raises `ConfigurationError`, not `SystemStackError`. `cached_content` joins the reserved `params` keys. (#78,
+  #85)
+- **Behavior change:** the `squawk` hook now also runs once when a call ends on `BudgetExhaustedError` or
+  `DisagreementError`, with `output: nil`, `final: true`, and `stopped:` set, so `squawk_on: :final` and `:rejections`
+  see those endings. A hook that assumes every call has output or usage should skip calls where `metadata[:stopped]` is
+  set. (#73, #87)
+- `Marshal.dump` of an `OpenAICompatible` adapter (or a config holding one) now raises `TypeError`, and its API key and
+  header values show as `[REDACTED]` in `to_yaml` and `as_json`, as they already did in `inspect`. Rebuild the adapter
+  from its options instead of caching a dump. (#75, #82)
+
+### Fixed
+
+- A provider 400 whose error `message`, `code`, or `type` is not valid UTF-8 (for example an echo cut mid-character) now
+  raises `RequestRejectedError` like any other 400, instead of a bare `ArgumentError` that is not a Squishling error.
+- A `ConfigurationError` for a rejected `config.adapter`, `observer`, or `squawk` now names the object's class instead of
+  its `inspect` output, which could print an instance variable such as an access token.
+- `Schema::CACHE` holds its keys weakly, so schema classes replaced by a Rails code reload can be collected. Two equal
+  Hash schemas now share one cached `Schema`. (#78, #85)
+
+### Documented
+
+- `Observer::Call#purpose` is the fully rendered system prompt, including `append_to_purpose` source and procs: treat it
+  as sensitive. `Testing::Stubs` hooks persist after `Testing.reset!`; `Testing.no_llm_call` swaps the process-wide
+  adapter, so it is not safe under parallel test threads; `Run#produced?` compares by identity. (#78, #85)
+
+## [0.5.0] - 2026-10-28
+
+### Added
+
+- Pluggable adapters: provider requests go through an adapter (`Squishling::Adapter::Base`, a stateless
+  `complete(request)`), set with `config.adapter` or registered with `Squishling.register_adapter`. Two ship:
+  `:ruby_llm` (the previous behavior) and `:openai_compatible`, plain `Net::HTTP` against any `/chat/completions`
+  endpoint with retries and strict `json_schema` output, which keeps keys and provider text out of errors, logs, and
+  `inspect`. See [Adapters](docs/adapters.md). (#47)
+- `include_when:` on an escalation step: a Proc called like `squish_when` (the method's inputs as keywords, on the
+  instance) that leaves the step out of a call when falsy, for example a model without a BAA. Steps are filtered before
+  rotation, and a call left with no steps raises `ConfigurationError`. (#46)
+- `squishling/testing` (opt-in, `require "squishling/testing"`): a scripted adapter that records requests and
+  conversations, `assert_no_llm_call`/`forbid_provider_calls!`, schema-validated `stub_result`/`stub_error`,
+  `validate`/`fallback_for`/`preview`, schema-driven `valid_reply_for`/`invalid_reply_for`, squawk capture, and
+  Minitest and RSpec mixins. See [Testing](docs/testing.md). (#44, #50)
+- `Squishling.verify`/`verify!` check every squished class without a request (output schema and typed result, resolved
+  escalation, params and squawk, harness and judge, the keywords `include_when:`/`squish_when` take, and the adapter),
+  reporting every problem; `verify!` raises `VerificationError`. Squished classes are tracked in a weak registry
+  (`Squishling.squished_classes`). A `squishling:verify` rake task (with a Rails Railtie) and a `be_squishling_valid`
+  RSpec matcher (`require "squishling/rspec"`) wrap it. See [Verifying squished classes](docs/verifying.md). (#48, #67)
+- Per-call token budgets: `max_total_output_tokens:` and `max_total_input_tokens:` (on `squishling`, `squish`,
+  `squish!`, and `default_max_total_*` in `Squishling.configure`; layered limit by limit, `false` lifts one) cap what one
+  call spends across its escalation attempts, squishsum sample rounds, and judge. A request in flight is never cut short,
+  so a call can end above the limit by one request. Once a limit is reached the call raises `BudgetExhaustedError`, an
+  `InvalidOutputError`, so `squish_fallback` still receives it. (#55, #68)
+- `squawk_on:` (`:all`, `:rejections`, `:retries`, `:final`, or a list) filters which attempts reach the `squawk` hook,
+  settable with `config.squawk_on`, `squishling squawk_on:`, and `squish :method, squawk_on:`. The default `:all` keeps
+  the old behavior. (#58, #69)
+- `Adapter::Response#finish_reason` (a Symbol such as `:stop` or `:max_tokens`), filled by both built-in adapters.
+  `InvalidOutputError` gains `finish_reason` and `truncated?`, with a fixed note in its message and log line when the
+  reply was cut off, and `squawk` metadata gains `finish_reason`. (#54, #60)
+- `InvalidOutputError#error_details`: `InvalidOutputError::Detail` entries (`message`, `source` of `:schema`,
+  `:validator`, `:parse` or `:squishling`) with a `model_derived?` predicate that is true only for schema errors, which
+  can name a key the model chose. Escape just those when forwarding messages to a chat webhook, HTML, or markdown.
+  `#errors` is still an Array of Strings (now frozen). (#57, #62)
+- `RequestRejectedError` (a `ConfigurationError`) for a provider's 400, with `provider_status` and `provider_code` read
+  as plain tokens from the error body (`INVALID_ARGUMENT`, `invalid_request_error`). The provider's message is still
+  never repeated. (#52, #53)
+- `retry_temperature:` on an escalation step sets the temperature for same-chat retries only. (#56, #61)
+
+### Changed
+
+- **Breaking change:** `ruby_llm` is no longer a runtime dependency of the gem. Apps that use the RubyLLM adapter (the
+  default when no adapter is configured and `ruby_llm` is loadable) must now list `gem "ruby_llm"` in their own
+  Gemfile, and `require "ruby_llm"` before `RubyLLM.configure` if they don't use `Bundler.require`; or switch to
+  `config.adapter = :openai_compatible`. (#47)
+- **Behavior change:** a schema property named like a method the typed result needs (`class`, `hash`, `to_h`,
+  `members`, `inspect`, `is_a?`, ...) now raises `ConfigurationError` when the schema is built, before any request,
+  instead of replacing that method on the result class and failing late. Rename such fields (`class` to
+  `ticket_class`); the reserved names are listed in [Output schemas](docs/schemas.md). (#43, #49)
+- **Behavior change:** when a same-chat retry returns the exact reply it was just rejected for, Squishling skips the
+  step's remaining attempts and moves to the next step (or raises `InvalidOutputError` right away on the last step);
+  samples end early the same way. `InvalidOutputError#attempts` counts requests actually made, `squawk` metadata gains
+  `repeated:`, and `final:` now means no attempt follows a rejection. Size a step's `attempts:` for replies that can
+  differ. (#56, #61)
+- A provider 400's "Check params" hint now names a param only when the provider's error body names one you configured,
+  and otherwise says the params, output schema, or input may be invalid. An array-wrapped overlong-context 400 from the
+  OpenAI-compatible adapter is now an `LLMError`. (#53)
+
+### Fixed
+
+- A raw Hash `output_schema` that omits `type: "object"` no longer lets a non-object reply (a String, Array, or number)
+  reach the typed result as a `NoMethodError`; it is now invalid output, retried, escalated, and sent to
+  `squish_fallback` like any other. Schemas built with Schematist always had `type: "object"`.
+- `RequestRejectedError`'s `provider_status` and `provider_code` no longer accept a hyphenated token, so a key-shaped
+  string a gateway echoes into an error body is never repeated in our message. The RubyLLM adapter's "invalid params"
+  `ConfigurationError` now names the param keys, not their values.
+
+### Internal
+
+- Development dependencies: `ruby_llm` 2.1.1, `coolhand` 0.10.0, and `rubocop` 1.92.1; CI pins `ruby/setup-ruby` v1.335.0
+  so the matrix resolves Ruby 3.3.13, 3.4.12, and 4.0.9. A `finish-release` skill now tags and publishes a reviewed
+  release-prep PR. (#45, #51, #59, #63, #64, #65)
+
 ## [0.4.0] - 2026-10-18
 
 ### Added
