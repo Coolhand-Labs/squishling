@@ -72,10 +72,11 @@ module Squishling
       # result, found by its client id: liked when it matched the Ruby result, otherwise disliked with the Ruby result
       # as the revised output. Nothing is sent without such a request (the LLM failed), without a verdict (compare:
       # raised), or with a coolhand gem that can't tag logs with client ids. It is sent right away, from the shadow
-      # run's job: Coolhand sends its logs from a background queue, so the feedback can arrive before the log it names;
-      # attaching it then is up to the Coolhand server, which matches the two by client_unique_id. (Coolhand.flush
-      # can't confirm the log was delivered, and waits on every queued log, so it isn't used.) Coolhand's feedback call
-      # doesn't raise.
+      # run's job, with no Coolhand.flush (which waits on every queued log and can't confirm delivery). Coolhand 0.13+
+      # makes feedback that names a client_unique_id wait for that request's own log when it was queued in this
+      # process, and skips it if that log failed; on 0.12 the feedback can arrive before its log, and attaching it then
+      # is up to the Coolhand server, which matches the two by client_unique_id. Coolhand's feedback call returns nil
+      # on a failure instead of raising, and nothing here retries it.
       def apprentice(review)
         return if review.request_id.nil? || review.match.nil?
         return unless self.class.client_ids? && ::Coolhand.respond_to?(:feedback_service)

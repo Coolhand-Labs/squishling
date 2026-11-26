@@ -79,7 +79,8 @@ Squishling.with_call_id("ticket-123") do |call|
   request_id = call.accepted_request_id # "ticket-123.1", or ".2" and up after a retry or escalation
 end
 
-Coolhand.flush # logs are sent in the background; make sure this one has been delivered
+# With coolhand 0.13 or later this waits (up to 5 seconds) for that request's own log, so no Coolhand.flush is needed.
+# On 0.12, call Coolhand.flush first: logs are sent in the background and the feedback could arrive before its log.
 Coolhand.feedback_service.create_feedback(client_unique_id: request_id, sentiment: "like")
 ```
 
@@ -108,9 +109,13 @@ The feedback finds its log by `client_unique_id`, the request's `request_id`. So
 - **A Coolhand server that stores `client_unique_id` on logs and matches feedback by it**, which Coolhand added
   alongside coolhand 0.12.0.
 
-Squishling doesn't depend on the coolhand gem; add `gem "coolhand", ">= 0.12"` to your own Gemfile. The feedback is
-sent from the shadow run's job as soon as the run ends. Coolhand sends its logs from a background queue, so the
-feedback can reach Coolhand before the log it names; whether it is still attached then is up to the Coolhand server,
-which matches the two by `client_unique_id`. With a [background runner](apprentice.md#running-it-in-the-background),
+Squishling doesn't depend on the coolhand gem; add `gem "coolhand", ">= 0.13"` to your own Gemfile (0.12 works, see
+below). The feedback is sent from the shadow run's job as soon as the run ends. Coolhand sends its logs from a
+background queue. With coolhand 0.13 or later, feedback that names a `client_unique_id` waits (up to 5 seconds) for
+that request's own log, and only that log, and is not posted if the log failed to send; this covers logs queued in the
+same process, so a custom `apprentice_runner` that hands the job to another process can still send feedback ahead of
+its log. With 0.12 the feedback can reach Coolhand before the log it names; whether it is still attached then is up to
+the Coolhand server, which matches the two by `client_unique_id`. Coolhand's `create_feedback` returns `nil` on a
+failure and never retries it, and Squishling doesn't either. With a [background runner](apprentice.md#running-it-in-the-background),
 sending it adds nothing to the call's latency. Each apprentice request's workload is described as
 `Class#method (apprentice)`, under the same workload and template keys as the method's other calls.

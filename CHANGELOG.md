@@ -45,7 +45,8 @@ an argument that isn't plain data is now refused rather than serialized, and a `
   `requests_for(apprentice:)`, and `with_apprentice`. See [Apprentice mode](docs/apprentice.md). (#113)
 - Every call has a `call_id` and every request a `request_id` (`"<call_id>.<n>"`), on `Observer::Call`, `squawk`
   metadata, and apprentice reports. With the `coolhand` gem the Coolhand observer tags each log with it and sends the
-  Ruby result as feedback on the accepted request. (#113)
+  Ruby result as feedback on the accepted request; with coolhand 0.13 or later that feedback waits for its own log
+  when it was queued in the same process. (#113)
 - `Squishling.with_call_id("ticket-123") { ... }` gives the first squished call started in the block your id instead of
   a generated UUID, and `call_id:` on `squishling` and `squish` takes each call's id from an input or a Proc. The id is
   validated up front, goes to observers, `squawk`, and reports, and never to the provider; `Squishling.verify` checks a
@@ -97,7 +98,7 @@ an argument that isn't plain data is now refused rather than serialized, and a `
 
 ### Internal
 
-- Development dependencies: `ruby_llm` 2.2.3, RuboCop 1.92.3, and WebMock 3.36.0; `ruby/setup-ruby` 1.343.0 in CI;
+- Development dependencies: `ruby_llm` 2.2.3, `coolhand` 0.13, RuboCop 1.92.3, and WebMock 3.36.0; `ruby/setup-ruby` 1.343.0 in CI;
   `rubygems/release-gem` 1.4.2 in the Publish workflow, which fixes the `await-release` step that turned the v0.7.0
   Publish run red after the gem was pushed. (#112, #114, #115, #117, #118)
 

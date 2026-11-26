@@ -165,7 +165,8 @@ request:
 Over time that gives you the model's agreement rate with your Ruby code, per workload, in Coolhand. It needs coolhand
 0.12.0 or later, which tags each log with the request's id (`Coolhand.with_context(client_unique_id:)`), and a Coolhand
 server that matches feedback by that id (see [Apprentice feedback](coolhand.md#apprentice-feedback)). With an older gem
-the logs carry no id, so no feedback is sent and everything else works as before.
+the logs carry no id, so no feedback is sent and everything else works as before. From coolhand 0.13 the feedback also
+waits for its own log when it was queued in the same process.
 
 ## Turning it off
 
