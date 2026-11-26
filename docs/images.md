@@ -33,8 +33,8 @@ Which files are recognized, and how, is on [Inputs](inputs.md#passing-files-dire
 | `Squishling::Image.from_url(url, media_type: nil)` | An http(s) URL the provider fetches itself. Nothing is downloaded here, so the URL has to be reachable from the provider (a signed URL works). The media type is the one you give, or the one the path's extension says (`.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`); a URL with neither (`/files/123?sig=...`) needs `media_type:` with the RubyLLM adapter. |
 
 PNG, JPEG, GIF, and WebP are supported. `detail: :low` or `:high` asks the provider to spend fewer or more tokens on
-the image; providers without the setting ignore it. For a PDF, render its pages to images (one `Image` per page) and
-pass them as an Array; text you can extract from the PDF can go alongside as a plain argument.
+the image; providers without the setting ignore it. A PDF is not an image: pass it as it is (a file, a blob, or a
+`Squishling::Document`) and the model reads it natively; see [Inputs](inputs.md).
 
 ## What the model sees
 
