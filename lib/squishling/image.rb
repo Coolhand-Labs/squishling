@@ -16,6 +16,8 @@ module Squishling
   # (media type and size, or a URL without its query), so an image in an error, a log line, or a squawk report
   # carries no content. Images are immutable and compare by content.
   class Image
+    include Concealed
+
     MEDIA_TYPES = { "image/png" => "png", "image/jpeg" => "jpg", "image/gif" => "gif", "image/webp" => "webp" }.freeze
     EXTENSIONS = { ".png" => "image/png", ".jpg" => "image/jpeg", ".jpeg" => "image/jpeg", ".gif" => "image/gif",
                    ".webp" => "image/webp" }.freeze
@@ -88,34 +90,6 @@ module Squishling
     def inspect
       described = url? ? safe_url : "#{@media_type}, #{@data.bytesize} bytes"
       "#<#{self.class.name} #{described}#{", detail: #{@detail}" if @detail}>"
-    end
-    alias_method :to_s, :inspect
-
-    # Serializers (Rails' as_json walks instance variables) get the description, never the bytes.
-    def as_json(*)
-      inspect
-    end
-
-    def to_json(*)
-      JSON.generate(inspect)
-    end
-
-    # YAML gets the description, and Marshal refuses (the way Secret does), so a cache or job payload can't carry bytes.
-    def encode_with(coder)
-      coder.scalar = inspect
-    end
-
-    def marshal_dump
-      raise TypeError, "Squishling::Image can't be dumped: it holds the image's bytes"
-    end
-
-    def ==(other)
-      other.is_a?(Image) && other.state == state
-    end
-    alias_method :eql?, :==
-
-    def hash
-      [self.class, *state].hash
     end
 
     protected

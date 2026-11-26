@@ -1,90 +1,108 @@
 # frozen_string_literal: true
 
 module Squishling
-  # Turns a call's arguments and context into the plain JSON the model is sent. Internal: not part of the public API.
+  # Turns a call's arguments and context into the plain JSON the model is sent, in three steps: normalize (files are
+  # read, and a Struct, Set, or Exception becomes plain data), sanitize (the developer's hooks, see Sanitizer), and
+  # serialize (each file becomes a placeholder, and what no adapter can send is refused). Internal: not part of the
+  # public API.
   module Payload
+    SENDABLE = (Image::MEDIA_TYPES.keys + Document::MEDIA_TYPES.keys).freeze
+    # A Hash key that may appear in an error's path as it is. Others (a name, an MRN, an email: data) are masked.
+    SAFE_KEY = /\A[A-Za-z_][A-Za-z0-9_-]{0,63}\z/
+
     module_function
 
-    PLAIN_TYPES = [NilClass, TrueClass, FalseClass, String, Symbol, Numeric, Time].freeze
-
-    # label names the call in a ConfigurationError. images collects the Images found, in order: each goes into the
-    # JSON as {attached_image: N} (its 1-based number), and the same Image passed twice is attached once.
-    def jsonify(value, label, images = [])
-      Schema.jsonify(describe(value, label, images))
+    # The JSON body for tree (the call's { arguments:, context: }) and the files it sends, in order: each goes into
+    # the JSON as {attached_image: N} or {attached_document: N} (its 1-based number among files of its kind), and the
+    # same file passed twice (by content) is attached once. sanitizers run on the receiver, in order. label names the
+    # call in an error. Raises InputRejectedError for everything found wrong, before any request.
+    def build(tree, label, sanitizers: [], receiver: nil)
+      normalizer = Normalizer.new(label)
+      node = normalizer.call(tree)
+      node = Sanitizer.new(sanitizers, receiver, label, normalizer).call(node) if sanitizers.any?
+      files = []
+      [json(serialize(node, label, files), label), files]
     end
 
-    # Exceptions are sent as their class and message. Plain JSON would send only the message, and with
-    # json/add/exception loaded it would also send the backtrace, which exposes file paths. A Struct, Data, or
-    # OpenStruct is sent as its members (to_h) and a Set as its elements, not as Ruby's inspect text. path is the
-    # containers being walked: one that contains itself is a ConfigurationError rather than a SystemStackError.
-    # Any other object is refused unless it is a JSON primitive, a Time or Date, or defines to_squishling (whose
-    # return value is sent in its place): as_json/to_json would send every attribute of, say, an ActiveRecord model.
-    def describe(value, label, images, path = [])
-      case value
-      when Image then { attached_image: attach(value, images) }
-      when Exception then { class: exception_class_name(value.class), message: value.message }
-      when Array, Set then elements(value, label, images, path)
-      when Hash, Struct, Data then members(value, label, images, path)
-      else other(value, label, images, path)
+    # The JSON for one value, with no sanitizing. files collects the files found (see #build).
+    def jsonify(value, label, files = [])
+      json(serialize(Normalizer.new(label).call(value), label, files), label)
+    end
+
+    # Plain JSON data for what serialize returned. A value JSON can't carry (an invalid byte, NaN) is refused without
+    # the system's message, which quotes it.
+    def json(body, label)
+      Schema.jsonify(body)
+    rescue JSON::JSONError => e
+      raise InputRejectedError.single(unrepresentable(e), label:), cause: nil
+    end
+
+    # Why a value can't be JSON, without the value (or the system's message, which quotes it).
+    def unrepresentable(error)
+      return "an input is nested too deeply to send as JSON" if error.is_a?(JSON::NestingError)
+
+      "an input holds a value JSON can't represent (such as invalid UTF-8 or NaN)"
+    end
+
+    def serialize(node, label, files)
+      problems = []
+      body = serialized(node, files, problems, nil)
+      max = Squishling.config.max_files
+      if max && files.size > max
+        problems << InputRejectedError::Rejection.new(nil, "#{files.size} files is over max_files (#{max})")
+      end
+      raise InputRejectedError.new(problems, label:) if problems.any?
+
+      body
+    end
+
+    def serialized(node, files, problems, path)
+      case node
+      when Image, Document then { placeholder(node) => attach(node, files, problems, path) }
+      when Hash then node.to_h { |key, item| [key, serialized(item, files, problems, join(path, key))] }
+      when Array then node.each_with_index.map { |item, index| serialized(item, files, problems, "#{path}[#{index}]") }
+      else node
       end
     end
 
-    # What isn't a container: an OpenStruct's members, a plain value as it is, or what to_squishling says to send.
-    def other(value, label, images, path)
-      return members(value, label, images, path) if open_struct?(value)
-      return value if plain?(value)
-
-      unless value.respond_to?(:to_squishling)
-        raise ConfigurationError,
-          "#{label}: #{value.class} can't be sent as JSON, because that could send all of its attributes. " \
-          "Pass a plain Hash, or define #{value.class}#to_squishling to return what the model should see"
-      end
-
-      within(value, label, path) { |inner| describe(value.to_squishling, label, images, inner) }
+    def placeholder(file)
+      file.is_a?(Image) ? :attached_image : :attached_document
     end
 
-    def plain?(value)
-      PLAIN_TYPES.any? { |type| value.is_a?(type) } || (defined?(::Date) && value.is_a?(::Date))
+    # The file's number among the files of its kind (1-based), added to files the first time it is seen. A file no
+    # adapter can send, or one over max_file_bytes, is recorded in problems.
+    def attach(file, files, problems, path)
+      problems.concat(file_problems(file, path))
+      kind = files.select { |attached| attached.instance_of?(file.class) }
+      existing = kind.index { |attached| attached.equal?(file) || attached == file }
+      return existing + 1 if existing
+
+      files << file
+      kind.size + 1
     end
 
-    def elements(value, label, images, path)
-      within(value, label, path) { |inner| value.map { |item| describe(item, label, images, inner) } }
+    def file_problems(file, path)
+      [unsendable(file), too_large(file)].compact.map { |message| InputRejectedError::Rejection.new(path, message) }
     end
 
-    def members(value, label, images, path)
-      pairs = value.is_a?(Hash) ? value : value.to_h
-      unless pairs.is_a?(Hash)
-        raise ConfigurationError,
-          "#{label}: #{value.class}#to_h must return a Hash to be sent as JSON, got #{pairs.class}"
-      end
+    def unsendable(file)
+      return unless file.is_a?(Document) && !Document::MEDIA_TYPES.key?(file.media_type)
 
-      within(value, label, path) { |inner| pairs.transform_values { |item| describe(item, label, images, inner) } }
+      type = Attachment.known_type?(file.media_type) ? file.media_type : "an unrecognized file type"
+      "#{type} can't be sent to a model (Squishling sends #{SENDABLE.join(', ')}); convert it with squish_sanitize"
     end
 
-    # OpenStruct is a default gem that Ruby 4.0 stops loading by default, so it can't be named unless it is loaded.
-    def open_struct?(value) = defined?(::OpenStruct) && value.is_a?(::OpenStruct) # rubocop:disable Style/OpenStructUse
-
-    def within(container, label, path)
-      if path.any? { |ancestor| ancestor.equal?(container) }
-        raise ConfigurationError, "#{label}: an argument or context value contains itself, so it can't be sent as JSON"
-      end
-
-      yield path + [container]
+    def too_large(file)
+      max = Squishling.config.max_file_bytes
+      "#{file.bytesize} bytes is over max_file_bytes (#{max})" if max && file.bytesize && file.bytesize > max
     end
 
-    # The image's number in the message (1-based), added to images the first time it is seen.
-    def attach(image, images)
-      index = images.index { |attached| attached.equal?(image) }
-      return index + 1 if index
+    # path extended by a Hash key, for an error message. A key that isn't a plain identifier is masked, since a Hash
+    # keyed by data (an MRN, a name) would put that data in the message.
+    def join(path, key)
+      return path ? "#{path}.#{key}" : key.to_s if SAFE_KEY.match?(key.to_s)
 
-      images << image
-      images.size
-    end
-
-    # An anonymous error class (Class.new(StandardError)) is named after its closest named ancestor.
-    def exception_class_name(klass)
-      klass = klass.superclass until klass.name
-      klass.name
+      "#{path}[key]"
     end
   end
 end

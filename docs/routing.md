@@ -239,8 +239,8 @@ and the class name is not sent), a `Set` as an array, and Hashes and Arrays are 
 recursively. An exception goes as its class and message. A value that contains itself raises a `ConfigurationError`.
 All members are sent, so pass a Hash or define `to_h` to leave a field out.
 
-`nil`, booleans, Strings, Symbols, numbers, `Time`, and `Date` go as they are. Any other object (a `Range`, a
-`Pathname`, a plain object, an ActiveRecord model) raises a `ConfigurationError` that names its class, before any
+`nil`, booleans, Strings, Symbols, numbers, `Time`, `Date`, and `URI` go as they are, and a file (an upload, a blob, a
+`File`, a `Pathname`; see [Inputs](inputs.md)) is read. Any other object (a `Range`, a plain object, an ActiveRecord model) raises a `ConfigurationError` that names its class, before any
 request: serializing it with `as_json` or `to_json` would send every attribute, and an easy mistake would leak them.
 Pass a Hash instead, or define `to_squishling` on the class to return what the model should see; its return value (a
 Hash, a Struct, or anything else listed here) is converted the same way. `to_squishling` is for these other objects: a

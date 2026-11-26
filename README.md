@@ -225,7 +225,9 @@ sees it right where the value goes, and the purpose stays short and about the go
 - [Adapters](docs/adapters.md): the RubyLLM and OpenAI-compatible adapters, mixing them in one escalation, and your own
 - [Routing](docs/routing.md): when a call goes to the LLM, `squish!`, `append_to_purpose`, hardening a path,
   what the LLM sees
-- [Images](docs/images.md): pass a `Squishling::Image` (bytes, a file, or a URL) for the model to read
+- [Inputs](docs/inputs.md): pass files (PDFs, images, a fax), HL7, or FHIR as they are, and filter or rewrite
+  everything sent with `squish_sanitize`
+- [Images](docs/images.md): what the model sees of an image, and the `Squishling::Image` class
 - [Apprentice mode](docs/apprentice.md): return the Ruby result and run the LLM alongside it, on every call or a
   sample, to measure the model against your mature code (with Coolhand Labs feedback)
 - [Output schemas](docs/schemas.md): schema forms, strict mode, typed results, optional vs. empty, contracts

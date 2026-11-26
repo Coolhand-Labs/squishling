@@ -406,11 +406,11 @@ RSpec.describe Squishling, "#squish!" do
       expect(chats).to be_empty
     end
 
-    it "refuses a Range, a Pathname, and a plain object, even inside a Hash, an Array, or a Struct" do
+    it "refuses a Range and a plain object, even inside a Hash, an Array, or a Struct" do
       chats = stub_llm({ "name" => "Ada" })
       holder = Struct.new(:item)
 
-      [1..2, Pathname.new("/tmp"), Object.new].each do |value|
+      [1..2, Object.new].each do |value|
         [{ a: value }, [value], holder.new(value)].each do |data|
           expect { klass.call(data:) }.to raise_error(Squishling::ConfigurationError, /can't be sent as JSON/)
         end

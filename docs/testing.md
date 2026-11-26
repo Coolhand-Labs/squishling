@@ -93,7 +93,7 @@ and `#verdict` are the real ones; rescue them as you would in production.
 | | |
 |---|---|
 | `arguments`, `context` | the method's arguments and the `squish_context` / `squish!` context the model was sent |
-| `images` | the [`Squishling::Image`s](images.md) sent with the conversation's first message (`[]` when none were) |
+| `images`, `documents` | the [`Squishling::Image`s](images.md) and `Squishling::Document`s (PDFs) sent with the conversation's first message (`[]` when none were) |
 | `system_prompt`, `output_schema` | the purpose (with `append_to_purpose` sections) and the strict schema |
 | `model`, `provider`, `adapter`, `params`, `cache` | the step it went to (`adapter` is its name from `config.adapters`, `nil` for the default; `cache` is `false` when [prompt caching](configuration.md#prompt-caching) was off for it) |
 | `role`, `sample`, `attempt`, `attempts` | `nil`/`:sample`/`:judge`, `"a"`, and where it is in the escalation |

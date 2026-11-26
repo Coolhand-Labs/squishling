@@ -50,6 +50,11 @@ module Squishling
     #   ->(output:, metadata:, error:) { Tracer.record(output, metadata, error) }
     attr_reader :squawk
 
+    # The sanitizers every squished method runs before any of its class's or its own (see
+    # ClassMethods#squish_sanitize), and the most files, and the most bytes in one file, a call may send (nil lifts a
+    # limit). A call over one raises InputRejectedError before any request.
+    attr_reader :sanitizers, :max_files, :max_file_bytes
+
     # Which attempts reach the squawk hook: :all (the default), :rejections (attempts that errored), :retries (those
     # plus any accepted attempt after the first), :final (the last attempt the escalation allows), or a list of
     # them. Also settable per class and per method.
@@ -116,6 +121,9 @@ module Squishling
       @logger = nil
       @squawk = nil
       @squawk_on = :all
+      @sanitizers = [].freeze
+      @max_files = 20
+      @max_file_bytes = 20_000_000
       @apprentice_report = nil
       @apprentice_runner = :inline
       @apprentice_enabled = true
@@ -196,6 +204,19 @@ module Squishling
       @squawk = Squawk.validate(hook, "Squishling.configure")
     end
 
+    # One sanitizer, or a list of them (run in order).
+    def sanitizer=(hooks)
+      @sanitizers = Array(hooks).map { |hook| Sanitizer.validate(hook, "Squishling.configure") }.freeze
+    end
+
+    def max_files=(limit)
+      @max_files = positive_or_nil(limit, "max_files")
+    end
+
+    def max_file_bytes=(limit)
+      @max_file_bytes = positive_or_nil(limit, "max_file_bytes")
+    end
+
     def squawk_on=(on)
       @squawk_on = Squawk.validate_on(on, "Squishling.configure") || :all
     end
@@ -251,6 +272,13 @@ module Squishling
     end
 
     private
+
+    # A limit: a positive Integer, or nil for none.
+    def positive_or_nil(value, name)
+      return value if value.nil? || (value.is_a?(Integer) && value.positive?)
+
+      raise ConfigurationError, "Squishling.configure: #{name} must be a positive Integer or nil, got #{value.inspect}"
+    end
 
     def boolean!(name, value)
       self.class.boolean!("Squishling.configure: #{name}", value)

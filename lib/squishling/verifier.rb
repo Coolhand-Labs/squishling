@@ -47,6 +47,7 @@ module Squishling
         ModelPath.from_escalation(steps, "#{@definition.label} escalation") if steps.any?
         Params.normalize(@definition.params, "#{@definition.label} params")
         Squawk.validate(@definition.squawk, @definition.label)
+        @definition.sanitizers.each { |hook| Sanitizer.validate(hook, @definition.label) }
         []
       end
 

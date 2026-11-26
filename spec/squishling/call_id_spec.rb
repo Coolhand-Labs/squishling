@@ -308,7 +308,8 @@ RSpec.describe Squishling::CallId do
       ticket = -> { klass.call.priority }
 
       expect(Squishling.with_call_id("ticket-123", &ticket)).to eq("high")
-      noarg = klass.method(:call)
+      klass.define_singleton_method(:triage) { call }
+      noarg = klass.method(:triage)
       handled = Squishling.with_call_id("ticket-124", &noarg)
       expect(handled.priority).to eq("high")
     end

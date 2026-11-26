@@ -36,10 +36,15 @@ module Squishling
     # Calls the hook with the keywords it declares, or all of them when it takes **. Exceptions it raises are the
     # developer's own and propagate as-is.
     def call(hook, **payload)
+      hook.call(**slice(hook, payload))
+    end
+
+    # The keywords the hook declares (all of them when it takes **).
+    def slice(hook, payload)
       parameters = parameters(hook)
-      payload = payload.slice(*parameters.filter_map { |type, name| name if KEYWORD_TYPES.include?(type) }) \
-        unless parameters.any? { |type, _| type == :keyrest }
-      hook.call(**payload)
+      return payload if parameters.any? { |type, _| type == :keyrest }
+
+      payload.slice(*parameters.filter_map { |type, name| name if KEYWORD_TYPES.include?(type) })
     end
 
     # Positional parameters, or a bare splat, would receive the keywords as a Hash (or not at all).

@@ -107,7 +107,8 @@ Flag any change that breaks one of these; they are behavior contracts, not style
   (setup mistakes; never retried, escalated, or passed to fallbacks; a provider 400 or other rejected 4xx is its
   `RequestRejectedError` subclass), `InvalidOutputError` (bad output after every attempt in the escalation;
   `BudgetExhaustedError` is its subclass for a spent token budget), `LLMError` (provider/transport failure after the
-  adapter's HTTP retries, `cause` per the adapter, see the invariant on provider text below). Never wrap or swallow
+  adapter's HTTP retries, `cause` per the adapter, see the invariant on provider text below), `InputRejectedError`
+  (an input refused before any request; see the pipeline invariant below). Never wrap or swallow
   exceptions raised by the user's own Ruby code.
 - **Model output leaves the process only through `InvalidOutputError#raw`, the opt-in `squawk` hook, and an
   apprentice's opt-in `report:` hook** (its `llm:` result; `config.apprentice_listener`, set only by
@@ -150,9 +151,27 @@ Flag any change that breaks one of these; they are behavior contracts, not style
   attempt of its own to report, so `Invoker` sends one final report for it (`stopped:`, `final: true`, no output), for
   built-in and custom harnesses alike, before `squish_fallback` runs. Each error is reported once, even when it passes
   through an outer squished call.
-- **Image bytes leave only to the provider.** A `Squishling::Image` argument goes to the provider (and a chat
-  judge's) as a content part, with a placeholder in the JSON input; `Image#inspect`/`to_s`/`as_json`/`to_json`/YAML
-  describe it without its bytes or a URL's query (Marshal refuses), so logs, errors, `squawk`, and serializers never
+- **Every input passes through one pipeline: normalize, sanitize, serialize.** `Payload.build` (in `Invoker#prepare`,
+  on the caller's thread, an apprentice's included) first normalizes the call's `{ arguments:, context: }`: files are
+  recognized by duck typing (`Attachment`: an ActiveStorage blob/attachment, an upload, an IO, a `Pathname`, an
+  image-extension `URI`, a binary `String` with a known file signature, never a text `String`) and read as an `Image`, a
+  `Document` (a PDF, or a type waiting to be converted), or text. Then each sanitizer (`squish_sanitize`,
+  `squish ... sanitize:`, `config.sanitizer`) runs a full pass in order config, class chain, method, offered every node
+  as `value:`/`path:`/`reject:`; its return value always replaces the node, none can be switched off, and `squish!` can't
+  bypass them. Then serialize: files become `{attached_image: N}` / `{attached_document: N}` placeholders (numbered per
+  kind, deduped by content), and a file no adapter sends, or over `max_files`/`max_file_bytes`, is refused. Every
+  refusal is one `InputRejectedError` listing each problem by path (a Hash key that isn't a plain identifier is
+  masked as `[key]`). It is not a `ConfigurationError`, so it is never
+  retried, escalated, or absorbed by `squish_fallback`, and it never carries values, bytes, file names, or URLs
+  (a sanitizer's own `reject.call` text is the developer's). A sanitizer's exceptions propagate, so nothing is sent.
+  The Ruby path, `squish_when`, and `squish_fallback` get the input as passed; the squawk `input`, judges, escalation, and
+  `Testing.preview` are built from the sanitized payload. Sizes are checked before a file is read where they are known,
+  and `max_files` as files are found, so an oversized or numerous input is refused without reading all of it (the file
+  or collection that crosses a limit is read, at most one byte past `max_file_bytes` for a stream). Which media types an adapter
+  takes (per step and model) is `Adapter::Base#media_types`; the client refuses the rest before any request.
+- **File bytes leave only to the provider.** A `Squishling::Image` or `Document` argument goes to the provider (and a
+  chat judge's) as a content part, with a placeholder in the JSON input; `inspect`/`to_s`/`as_json`/`to_json`/YAML
+  describe it without its bytes or an image URL's query (Marshal refuses; see `Concealed`), so logs, errors, `squawk`, and serializers never
   carry them. An adapter that doesn't declare `images?` is never sent content parts.
 - **Only named context leaves the process.** The LLM sees method arguments, `squish_context` values, a
   `squish!` call's `context:`, and source the developer explicitly passes to `append_to_purpose` — never
@@ -222,10 +241,10 @@ Flag any change that breaks one of these; they are behavior contracts, not style
 The public surface is `Squishling.configure`/`config`, the adapter plugin point (`config.adapter`,
 `Squishling.register_adapter`/`adapters`/`reset_adapters!`, `Squishling::Adapter::Base` (`complete`, the optional
 `judgments?`/`judge`/`images?`/`capture_context`/`with_context`, the `http_failure`/`context_length?` classification
-helpers, and the `sanitized_cause` helper with its `Adapter::ProviderFailure`), `Adapter::Request`
+helpers, `media_types(step)`, and the `sanitized_cause` helper with its `Adapter::ProviderFailure`), `Adapter::Request`
 (with `cache` and `adapter`), `Adapter::Response`, `Squishling::Image` (`new`/`from_path`/`from_url`, and what an
-adapter reads: `data`, `media_type`, `url`/`url?`, `detail`, `data_uri`, `filename`) with the content parts it puts in
-a message, and the built-in `Adapters::RubyLLM` and `Adapters::OpenAICompatible` with their options), the
+adapter reads: `data`, `media_type`, `url`/`url?`, `detail`, `data_uri`, `filename`) and `Squishling::Document` (`data`,
+`media_type`, `data_uri`, `filename`) with the content parts they put in a message, and the built-in `Adapters::RubyLLM` and `Adapters::OpenAICompatible` with their options), the
 `include Squishling` DSL
 (`squishling` — including its
 `model:`/`escalation:` (steps with `model:`, `attempts:`, `priority:`, `rotate:`, `provider:`, `adapter:`, `params:`,
@@ -234,20 +253,20 @@ a message, and the built-in `Adapters::RubyLLM` and `Adapters::OpenAICompatible`
 `judge_instructions:`)/`append_to_purpose:`/`squawk:`/`squawk_on:` options — `purpose`, `append_to_purpose`,
 `output_schema`, `squish_when`, `squish_context`, `squish` (including `validate:`/`cache:`/`harness:`/`squawk:`/
 `squawk_on:`),
-`squish_validate`, `squish_fallback`, `result`/`squishling_result`, the `to_squishling` hook an argument's class may
-define, `squish!` (including
+`squish_validate`, `squish_sanitize` (and `squish`'s `sanitize:`), `squish_fallback`, `result`/`squishling_result`, the
+`to_squishling` hook an argument's class may define, `squish!` (including
 `model:`/`escalation:`/`cache:`/`harness:`), and the `max_total_output_tokens:`/`max_total_input_tokens:` options of
 `squishling`, `squish`, and `squish!`, and the `apprentice_mode:` option (`when:`, `compare:`, `report:`) of `squishling` and
 `squish`), `Squishling::Configuration` options (including `adapters`, `default_harness`, `apprentice_report`,
 `apprentice_runner`, `apprentice_enabled`,
-`default_cache`, `budget_counts_cache_reads`,
+`default_cache`, `budget_counts_cache_reads`, `sanitizer`, `max_files`, `max_file_bytes`,
 `default_max_total_output_tokens`/`default_max_total_input_tokens`, `observer`, `squawk_on`, and `squawk`, whose
 `output:`/`metadata:`/`error:` keywords are public), `Squishling::Observer::Call` (with `adapter`, `call_id`, `request_id`, `apprentice`)/`Usage`
 (with `cache_read_tokens`/`cache_write_tokens`),
 `Squishling::Harness::DEFAULT_JUDGE_INSTRUCTIONS`, result objects (`squished?`, `to_h`, `[]`), and the error classes
 (including `InvalidOutputError#error_details` (`InvalidOutputError::Detail`: `message`, `source`,
 `model_derived?`), `InvalidOutputError#models`, `DisagreementError#candidates`/`verdict`/`reason`,
-`RequestRejectedError#provider_status`/`provider_code`, `BudgetExhaustedError#limit`/`max`/`used`, and
+`RequestRejectedError#provider_status`/`provider_code`, `BudgetExhaustedError#limit`/`max`/`used`, `InputRejectedError#rejections` (with `Rejection#path`/`message`), and
 `VerificationError#report`/`problems`). The apprentice surface is public too: `Squishling::Apprentice.drain`, `Apprentice::ThreadRunner` (`size:`,
 `max_queue:`, `call`, `drain`, `pending`), `Apprentice::Review`, an observer's optional `apprentice(review)`, the
 report hook's keywords (`ruby:`, `llm:`, `match:`, `error:`, `inputs:`, `metadata:`), and the squawk `metadata` keys
@@ -264,7 +283,7 @@ support is public too: `Squishling::Testing` (`install`, `forbid_provider_calls!
 `capture_squawk`/`with_squawk`, `disable_apprentice!`/`without_apprentice`/`capture_apprentice`/`with_apprentice` with
 `ApprenticeCapture`), its script DSL (`step`/`sample`/`judge`/`apprentice`, `reply`/`fail`/`once`, `Reply`),
 `Testing::Adapter#requests`/`conversations`/`requests_for` (with `apprentice:`) with `Testing::Request` (with `adapter`, selectable with
-`step(adapter:)`, `images`, and `apprentice?`), and the `Testing::Minitest` / `Testing::RSpec` mixins. Don't break it
+`step(adapter:)`, `images`, `documents`, and `apprentice?`), and the `Testing::Minitest` / `Testing::RSpec` mixins. Don't break it
 without a clear migration path in the changelog.
 
 ## Changelog and versioning

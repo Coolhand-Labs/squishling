@@ -5,9 +5,9 @@ module Squishling
   # when it names none). Squishling owns the conversation: each Conversation holds the system prompt, the output
   # schema, and the messages so far, and every request sends all of it to the adapter.
   class LLMClient
-    # One chat on one escalation step. messages are { role:, content: } Hashes, grown by #ask. images go with the
+    # One chat on one escalation step. messages are { role:, content: } Hashes, grown by #ask. files go with the
     # chat's first message.
-    Conversation = Struct.new(:step, :instructions, :schema, :messages, :images)
+    Conversation = Struct.new(:step, :instructions, :schema, :messages, :files)
 
     # Where a response came from: the request that got it (see Observer::Call#request_id) and the model that answered.
     Origin = Data.define(:request_id, :model)
@@ -33,10 +33,10 @@ module Squishling
 
     # Raises ConfigurationError if any of the steps names an adapter that isn't configured, or (given images) names one
     # that doesn't take them, so a mistake ends the call before it has made a request.
-    def check_adapters!(steps, images = [])
+    def check_adapters!(steps, files = [])
       steps.each do |step|
         adapter_for(step)
-        check_images!(step, images)
+        check_files!(step, files)
       end
     end
 
@@ -67,11 +67,12 @@ module Squishling
       threads&.each { |thread| thread.kill.join if thread.alive? }
     end
 
-    # A fresh conversation on one escalation step, with the system prompt, the strict output schema, and the Images
-    # its first message carries. Raises ConfigurationError for images when the step's adapter doesn't take them.
-    def chat(step, instructions:, schema:, images: [])
-      check_images!(step, images)
-      Conversation.new(step, instructions, schema, [], images)
+    # A fresh conversation on one escalation step, with the system prompt, the strict output schema, and the files
+    # (Images and Documents) its first message carries. Raises ConfigurationError for files when the step's adapter
+    # doesn't take them.
+    def chat(step, instructions:, schema:, files: [])
+      check_files!(step, files)
+      Conversation.new(step, instructions, schema, [], files)
     end
 
     # One request in the conversation: the message goes in, and the adapter's answer is kept in it so the next
@@ -114,18 +115,41 @@ module Squishling
 
     private
 
-    # The step's adapter, looked up once per call: the adapter a job's context was captured from is the one that
-    # makes its request, even if the configuration changes meanwhile.
-    def check_images!(step, images)
-      return if images.empty?
+    def check_files!(step, files)
+      return if files.empty?
 
       adapter = adapter_for(step)
-      return if adapter.respond_to?(:images?) && adapter.images?
+      accepted = accepted_media_types(adapter, step)
+      raise ConfigurationError, no_files_message(adapter, step, files) if accepted.empty?
 
-      raise ConfigurationError, "#{@label}: the call has images, but the #{adapter.class} adapter doesn't take " \
-                                "them (see Adapter::Base#images?)"
+      missing = files.reject { |file| accepted?(file, accepted) }.map { |file| file.media_type || "an image URL" }.uniq
+      return if missing.empty?
+
+      raise ConfigurationError, "#{@label}: the call has #{missing.join(', ')} files, but the " \
+                                "#{adapter.class} adapter takes #{accepted.join(', ')} (see Adapter::Base#media_types)"
     end
 
+    # An image given by URL has no type of its own, so an adapter that takes any image takes it.
+    def accepted?(file, accepted)
+      file.media_type ? accepted.include?(file.media_type) : accepted.any? { |type| type.start_with?("image/") }
+    end
+
+    # An adapter written before media_types is asked images? instead (and takes no documents).
+    def accepted_media_types(adapter, step)
+      return adapter.media_types(step) if adapter.respond_to?(:media_types)
+
+      adapter.respond_to?(:images?) && adapter.images? ? Image::MEDIA_TYPES.keys : []
+    end
+
+    def no_files_message(adapter, step, files)
+      model = step.model ? " for #{step.model}" : ""
+      kind = files.all?(Image) ? "images" : "files"
+      "#{@label}: the call has #{kind}, but the #{adapter.class} adapter doesn't take them#{model} " \
+        "(see Adapter::Base#media_types)"
+    end
+
+    # The step's adapter, looked up once per call: the adapter a job's context was captured from is the one that
+    # makes its request, even if the configuration changes meanwhile.
     def adapter_for(step)
       @adapters_lock.synchronize { @adapters[step.adapter] ||= @config.adapter_for(step.adapter) }
     end
@@ -163,12 +187,16 @@ module Squishling
       adapter.capture_context if adapter.respond_to?(:capture_context)
     end
 
-    # A chat's first message carries its images, after the text, as content parts (see Adapter::Request); every other
+    # A chat's first message carries its files, after the text, as content parts (see Adapter::Request); every other
     # message is the text alone.
     def content(chat, message)
-      return message unless chat.messages.empty? && chat.images&.any?
+      return message unless chat.messages.empty? && chat.files&.any?
 
-      [{ type: :text, text: message }, *chat.images.map { |image| { type: :image, image: } }]
+      [{ type: :text, text: message }, *chat.files.map { |file| file_part(file) }]
+    end
+
+    def file_part(file)
+      file.is_a?(Image) ? { type: :image, image: file } : { type: :file, file: }
     end
 
     def with_context(adapter, context, &)

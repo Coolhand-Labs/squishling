@@ -1,7 +1,10 @@
 # Images
 
-A squished method can read images: pass a `Squishling::Image` as an argument, and the model gets it with the call's
-input. Use it for receipts, screenshots, scanned forms, or anything you'd otherwise run through OCR first.
+A squished method can read images: pass a file as an argument (an ActiveStorage blob or attachment, an upload, a
+`File`, a `Pathname`, ...) and the model gets it with the call's input. You don't wrap it or declare it. Use it for
+receipts, screenshots, scanned forms, or anything you'd otherwise run through OCR first. This page is about images;
+[Inputs](inputs.md) covers every kind of file (PDFs, HL7, FHIR, a fax), what is read from where, the limits, and
+`squish_sanitize`, which filters or rewrites whatever is sent.
 
 ```ruby
 class ReceiptReader
@@ -15,8 +18,11 @@ class ReceiptReader
   end
 end
 
-ReceiptReader.call(image: Squishling::Image.from_path("receipt.jpg"), note: "team lunch")
+ReceiptReader.call(image: Pathname("receipt.jpg"), note: "team lunch")
+ReceiptReader.call(image: receipt.file, note: "team lunch")   # an ActiveStorage attachment
 ```
+
+Which files are recognized, and how, is on [Inputs](inputs.md#passing-files-directly).
 
 ## Making an image
 
@@ -47,10 +53,15 @@ raises `ConfigurationError` before any request.
 
 ## Adapters
 
+An adapter says which types it takes (`Adapter::Base#media_types`), per model: a call with an image of another type, or
+to a model RubyLLM knows can't read images, raises `ConfigurationError` before any request. For a model an adapter
+can't judge, the provider's refusal (a 400) comes back as `RequestRejectedError`, never retried or sent to a fallback.
+An escalation where a later step can't take the images fails when the call starts, not after the first step.
+
 The RubyLLM adapter sends images as RubyLLM attachments, and the OpenAI-compatible adapter as `image_url` content parts
 (a `data:` URI, or the image's own URL); the model has to accept images. RubyLLM downloads a URL image itself when the
 URL's path has no image extension (to tell its type) or when the provider can't fetch URLs, so with RubyLLM a URL has to
-be reachable from your process too. A [custom adapter](adapters.md#images) opts
+be reachable from your process too. A [custom adapter](adapters.md#images-and-documents) opts
 in with `images?`. A call with images through an adapter that doesn't take them raises `ConfigurationError` before any
 request is made.
 
@@ -64,8 +75,8 @@ Build an `Image` only from sources you trust, or check them first. Squishling do
   choose the URL, allow-list its host and scheme before building the `Image`, or download it yourself and pass the
   bytes with `Image.new(data:)`. See [the adapter note](adapters.md#known-risk-the-rubyllm-adapter-downloads-some-image-urls-itself).
   The OpenAI-compatible adapter never downloads: the provider fetches the URL.
-- **`Image.from_path`** reads whatever file the path names, so never pass it a path a user chose without confining it
-  to a directory you control.
+- **`Image.from_path`, and a `Pathname` or `File` argument,** read whatever file the path names, so never pass one a
+  path a user chose without confining it to a directory you control (a sanitizer can check `path` and the file).
 
 ## Privacy and logs
 
@@ -81,8 +92,8 @@ system prompt; the images are part of the message, not the cached prefix.
 
 ## Testing
 
-`Squishling::Testing::Request#images` lists the images a request was sent with, and `arguments` shows their
-placeholders. `squishling_preview` returns them as `images:`.
+`Squishling::Testing::Request#images` (and `#documents`, for PDFs) lists the files a request was sent with, and
+`arguments` shows their placeholders. `squishling_preview` returns them as `images:` and `documents:`.
 
 ```ruby
 fake = fake_squishling { |llm| llm.step(:any).reply({ "total_cents" => 1234 }) }
