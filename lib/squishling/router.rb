@@ -25,24 +25,7 @@ module Squishling
         begin
           return route_to_llm(frame, definition, "predicate") if definition.squish?(receiver, frame.inputs)
 
-          begin
-            frame.phase = :ruby
-            started = Apprentice.clock
-            value = impl.call
-          rescue NotImplementedError => e
-            # After squish!, the error came from the LLM path (a fallback, a proc), not a missing implementation.
-            # Otherwise it propagates unless it is the method's own stub (see Wrapper.stub?).
-            raise if frame.handed_off || !Wrapper.stub?(e)
-
-            return route_to_llm(frame, definition, "not implemented")
-          end
-
-          ruby_seconds = Apprentice.clock - started
-          definition.coerce(value).tap do |result|
-            # The Ruby path answered (not squish!), so an apprentice may run the LLM alongside it: once, for the
-            # outermost call, not again for each call the method makes to itself.
-            shadow(frame, definition, result, ruby_seconds)
-          end
+          run_ruby(frame, definition, receiver, impl)
         ensure
           frames.pop
         end
@@ -62,7 +45,7 @@ module Squishling
       end
 
       # squish!: hand the call in progress on this receiver to the LLM, with this call's overrides.
-      def hand_off(receiver, overrides)
+      def hand_off(receiver, overrides, reason = "squish!")
         frame = current_frame(receiver)
         raise Error, "#{receiver.class}#squish! called outside a squished method" unless frame
         unless frame.phase == :ruby
@@ -71,10 +54,45 @@ module Squishling
         end
 
         frame.handed_off = true
-        route_to_llm(frame, frame.definition.for_call(**overrides), "squish!")
+        route_to_llm(frame, frame.definition.for_call(**overrides), reason)
       end
 
       private
+
+      # The first squish_rescue declaration that matches the error gives the options of the hand-off.
+      def rescue_overrides(definition, error)
+        definition.klass.squishling_rescues.find { |declared| declared.match?(error) }.overrides_for(error)
+      end
+
+      # The coerce is in `else`, so the rescues never see its errors.
+      def run_ruby(frame, definition, receiver, impl)
+        frame.phase = :ruby
+        started = Apprentice.clock
+        value = impl.call
+      rescue NotImplementedError => e
+        # After squish!, the error came from the LLM path (a fallback, a proc), not a missing implementation.
+        # Otherwise it propagates unless it is the method's own stub (see Wrapper.stub?).
+        raise if frame.handed_off || !Wrapper.stub?(e)
+
+        route_to_llm(frame, definition, "not implemented")
+      rescue *definition.klass.squishling_rescues.flat_map(&:errors) => e
+        raise if frame.handed_off || unrescuable?(e)
+
+        hand_off(receiver, rescue_overrides(definition, e), "squish_rescue #{e.class}")
+      else
+        ruby_seconds = Apprentice.clock - started
+        definition.coerce(value).tap do |result|
+          # The Ruby path answered (not squish!, not a rescue), so an apprentice may run the LLM alongside it: once, for
+          # the outermost call, not again for each call the method makes to itself.
+          shadow(frame, definition, result, ruby_seconds)
+        end
+      end
+
+      # A declared StandardError also matches Squishling's own errors and the test helpers' (Testing::Error is not a
+      # Squishling::Error, so no fallback can hide a test setup mistake); neither goes to the LLM.
+      def unrescuable?(error)
+        error.is_a?(Error) || (defined?(Testing::Error) && error.is_a?(Testing::Error))
+      end
 
       # An inner call (`super`, or the method called from squish_when or a fallback) hands its value to user code
       # that may reshape it, so only a Hash is typed (for accessor access); the outermost return is validated in full.

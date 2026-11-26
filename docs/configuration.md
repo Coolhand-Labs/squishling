@@ -156,7 +156,7 @@ squishling params: { temperature: 0 },
 
 The first level that declares a `model:` or an `escalation:` supplies the whole thing (levels aren't merged):
 
-1. per call: `squish!(model: ...)` or `squish!(escalation: ...)` (see [Per-call overrides](#per-call-overrides))
+1. per call: `squish!(model: ...)` or `squish!(escalation: ...)` (see [Per-call overrides](#per-call-overrides)), or the same options of a [`squish_rescue`](routing.md#rescuing-declared-errors-with-squish_rescue) for a rescued call
 2. per method: `squish :name, model: ...` or `escalation: ...`
 3. per class: `squishling model: ...` or `escalation: ...` (inherited by subclasses)
 4. universal: `Squishling.config.default_model` or `default_escalation`
@@ -314,8 +314,9 @@ squish!(cache: false, escalation: ["claude-opus-5-5"])            # one hand-off
 ## Inheritance
 
 Subclasses inherit the model or escalation and its provider (as a pair), harness, generation params (merged key by key), prompt caching, token budgets (limit by limit), purpose, output schema,
-`squish_when` predicate, `squish_context` names, `squish_validate`, `squish_fallback`, [`apprentice_mode:`](apprentice.md),
-[`call_id:`](observers.md#declaring-the-call-id), and every `squish` declaration. Overrides in a subclass, including
+`squish_when` predicate, `squish_context` names, `squish_validate`, `squish_fallback`, every `squish_rescue` declaration,
+[`apprentice_mode:`](apprentice.md), [`call_id:`](observers.md#declaring-the-call-id), and every `squish` declaration.
+Overrides in a subclass, including
 overridden methods, are routed the same way.
 
 `append_to_purpose` sections are added to, not replaced: a subclass's sections follow its parent's, and

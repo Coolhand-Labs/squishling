@@ -95,6 +95,10 @@ Both calls return the same result class. If the LLM can't deliver either, `squis
 return, or the error is raised with the original `ParseError` as its cause. See
 [Handing off to the LLM](docs/routing.md#handing-off-to-the-llm-with-squish).
 
+To rescue every squished method of a class the same way, declare the error once with
+`squish_rescue VendorFormats::ParseError` instead of writing the `rescue`. See
+[Rescuing declared errors](docs/routing.md#rescuing-declared-errors-with-squish_rescue).
+
 ### Retire code you no longer need
 
 Go the other way too. Find the parsers and handlers that serve a thin tail of your traffic and squish them. When a
