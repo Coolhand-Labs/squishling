@@ -7,6 +7,14 @@ module Squishling
     MAX_ERRORS = 20
     UNREPRESENTABLE = "response contained a value JSON can't represent (such as Infinity or invalid UTF-8)"
 
+    # A long output can fail the schema thousands of times over; every error goes into the retry message and
+    # the log, so only the first few are kept.
+    def self.cap(errors)
+      return errors if errors.size <= MAX_ERRORS
+
+      errors.first(MAX_ERRORS) + ["... and #{errors.size - MAX_ERRORS} more errors"]
+    end
+
     def initialize(definition, receiver, inputs)
       @definition = definition
       @receiver = receiver
@@ -18,10 +26,28 @@ module Squishling
     def call(content, prompt)
       data, errors = parse(content)
       errors = prompt.schema.validate(data) if errors.empty?
-      return [nil, cap(errors)] if errors.any?
+      return [nil, self.class.cap(errors)] if errors.any?
 
       result = prompt.schema.build(data, squished: true)
       [result, prompt.role == :judge ? [] : validator_errors(result)]
+    end
+
+    # Runs the squish_validate check, if any. Exceptions it raises are the user's own and propagate as-is.
+    def validator_errors(result)
+      validator = @definition.validator
+      return [] unless validator
+
+      value = @receiver.instance_exec(result, **@inputs, &validator)
+      case value
+      when nil, true then []
+      when false then ["the output was rejected by squish_validate"]
+      when String, Array then Array(value).flatten.compact.map(&:to_s).reject { |message| message.strip.empty? }
+      else
+        return contract_errors(value) if value.respond_to?(:success?) && value.respond_to?(:errors)
+
+        raise ConfigurationError, "#{@definition.label}: squish_validate must return nil, true, false, a String, " \
+                                  "an Array of Strings, or a validation result, got #{value.class}"
+      end
     end
 
     private
@@ -49,14 +75,6 @@ module Squishling
       false
     end
 
-    # A long output can fail the schema thousands of times over; every error goes into the retry message and
-    # the log, so only the first few are kept.
-    def cap(errors)
-      return errors if errors.size <= MAX_ERRORS
-
-      errors.first(MAX_ERRORS) + ["... and #{errors.size - MAX_ERRORS} more errors"]
-    end
-
     # The parser's message quotes a snippet of the response, which must not reach error messages or logs
     # (the raw output lives only in InvalidOutputError#raw), so only the position is kept.
     def parse_position(error)
@@ -67,24 +85,6 @@ module Squishling
     # Models without native structured output sometimes wrap JSON in a markdown code fence.
     def strip_code_fence(text)
       text[/\A\s*```(?:json)?\s*\n(.*?)\n\s*```\s*\z/m, 1] || text
-    end
-
-    # Runs the squish_validate check, if any. Exceptions it raises are the user's own and propagate as-is.
-    def validator_errors(result)
-      validator = @definition.validator
-      return [] unless validator
-
-      value = @receiver.instance_exec(result, **@inputs, &validator)
-      case value
-      when nil, true then []
-      when false then ["the output was rejected by squish_validate"]
-      when String, Array then Array(value).flatten.compact.map(&:to_s).reject { |message| message.strip.empty? }
-      else
-        return contract_errors(value) if value.respond_to?(:success?) && value.respond_to?(:errors)
-
-        raise ConfigurationError, "#{@definition.label}: squish_validate must return nil, true, false, a String, " \
-                                  "an Array of Strings, or a validation result, got #{value.class}"
-      end
     end
 
     # A dry-validation style result: errors.to_h is { key => ["message", ...] }, nested for nested keys.

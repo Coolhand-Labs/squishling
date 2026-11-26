@@ -15,6 +15,12 @@ module Squishling
     # role (:judge) skips squish_validate and names the judge in errors and logs.
     Prompt = Data.define(:instructions, :schema, :input, :role)
 
+    # An anonymous error class (Class.new(StandardError)) is named after its closest named ancestor.
+    def self.exception_class_name(klass)
+      klass = klass.superclass until klass.name
+      klass.name
+    end
+
     def initialize(definition, receiver, inputs)
       @definition = definition
       @receiver = receiver
@@ -61,17 +67,11 @@ module Squishling
     # json/add/exception loaded it would also send the backtrace, which exposes file paths.
     def describe(value)
       case value
-      when Exception then { class: exception_class_name(value.class), message: value.message }
+      when Exception then { class: self.class.exception_class_name(value.class), message: value.message }
       when Hash then value.transform_values { |item| describe(item) }
       when Array then value.map { |item| describe(item) }
       else value
       end
-    end
-
-    # An anonymous error class (Class.new(StandardError)) is named after its closest named ancestor.
-    def exception_class_name(klass)
-      klass = klass.superclass until klass.name
-      klass.name
     end
 
     def context_value(name)

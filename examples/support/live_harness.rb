@@ -30,6 +30,9 @@ module LiveHarness
       config.default_escalation = [{ model: options[:model], attempts: 2 }]
       config.default_provider = provider
       config.default_params = params
+      # squish_validate (and the schema) also hold the Ruby path's return, so both paths meet the same rules: a Ruby
+      # return they reject is handed to the LLM, with the draft and the problems, instead of being returned.
+      config.validate_both_paths = true
     end
     @rejected_params = rejected_params
 
@@ -176,6 +179,27 @@ module LiveHarness
     end
   end
 
+  # Nothing to rescue by hand: Ruby's draft is capitalized wrongly for squish_validate (held to it by
+  # config.validate_both_paths), so the LLM gets the draft and the problems and corrects it. squish_rescue names an
+  # error that hands off too.
+  class CapitalizedName
+    include Squishling
+
+    purpose "Return the person's name, properly capitalized."
+    append_to_purpose "The Ruby that drafted the name:", self
+    squish_rescue ArgumentError, append_to_purpose: "An empty text has no name; reply with the name \"Unknown\"."
+    output_schema { string :name }
+    squish_validate do |result, **|
+      "the name must start with a capital letter" unless result.name.match?(/\A[[:upper:]]/)
+    end
+
+    def call(text:)
+      raise ArgumentError, "no name in the text" if text.strip.empty?
+
+      { name: text.strip }
+    end
+  end
+
   # Fallback that must never run for a setup mistake.
   class Echo
     include Squishling
@@ -265,6 +289,23 @@ module LiveHarness
       check(result.email == "ada@example.com", "email was #{result.email.inspect}")
       check(result.name.include?("Lovelace"), "name was #{result.name.inspect}")
       "#{result.name} <#{result.email}>"
+    }),
+    Scenario.new("a Ruby return squish_validate rejects is corrected by the LLM, with the draft and problems", lambda {
+      result = CapitalizedName.call(text: "ada lovelace")
+      check(result.squished?, "expected an LLM result")
+      check(result.name.match?(/\A[[:upper:]]/), "name was #{result.name.inspect}")
+      "ada lovelace -> #{result.name}"
+    }),
+    Scenario.new("a Ruby return squish_validate accepts stays in Ruby", lambda {
+      result = CapitalizedName.call(text: "Ada Lovelace")
+      check(!result.squished?, "expected the deterministic path")
+      check(result.name == "Ada Lovelace", "name was #{result.name.inspect}")
+    }),
+    Scenario.new("a Ruby error is handed to the LLM without a rescue in the class", lambda {
+      result = CapitalizedName.call(text: "   ")
+      check(result.squished?, "expected an LLM result")
+      check(result.name.is_a?(String), "name was #{result.name.inspect}")
+      "error handed off, name #{result.name.inspect}"
     }),
     Scenario.new("raw JSON Schema hash output", lambda {
       result = SentimentClassifier.call(review: "Absolutely love it — best purchase I've made all year!")

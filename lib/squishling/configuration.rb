@@ -40,7 +40,14 @@ module Squishling
     # loaded and configured, and nothing otherwise; false never wraps.
     attr_reader :observer
 
+    # Whether squish_validate (and the schema) hold the Ruby path's return too, so both paths meet the same rules,
+    # and a Ruby return they reject is handed to the LLM with the draft and the problems. false by default: Ruby's
+    # return is checked against the schema only, and a rejection raises. A class decides for itself with
+    # `squish_validate both_paths: true` (or false).
+    attr_reader :validate_both_paths
+
     def initialize
+      @validate_both_paths = false
       @observer = nil
       @default_model = nil
       @default_escalation = nil
@@ -62,6 +69,15 @@ module Squishling
       @default_model_path = ModelPath.from_escalation(escalation, "default_escalation")
       @default_model = nil
       @default_escalation = escalation
+    end
+
+    def validate_both_paths=(enabled)
+      unless [true, false].include?(enabled)
+        raise ConfigurationError,
+          "Squishling.configure validate_both_paths must be true or false, got #{enabled.inspect}"
+      end
+
+      @validate_both_paths = enabled
     end
 
     def squawk=(hook)

@@ -112,8 +112,15 @@ end
 - A [dry-validation](https://dry-rb.org/gems/dry-validation/) result works too, if your app already uses it:
   `squish_validate { |result, **| InvoiceContract.new.call(result.to_h) }`. Squishling doesn't depend on dry-rb.
 - Per method: `squish :triage, validate: ->(result, **inputs) { ... }`. Subclasses inherit the class-level check.
-- It doesn't run on deterministic or fallback returns: those are your own code.
-- Exceptions raised inside it propagate unwrapped, like any of your own code.
+- It judges LLM output. By default it doesn't run on the Ruby path's return, because that is your own code. To hold
+  Ruby to the same rules, set `config.validate_both_paths = true`, or declare it for one class with
+  `squish_validate(both_paths: true) { ... }` (`both_paths: false` keeps a class to the LLM whatever the config
+  says; `both_paths:` alone, with no block, changes only the scope and keeps the check declared above). A Ruby
+  return it rejects is [handed to the LLM](#when-the-ruby-path-fails).
+- It never runs on a `squish_fallback` return: that is the last resort.
+- Exceptions raised inside it propagate unwrapped, like any of your own code, and are never handed to the LLM.
+- Its messages reach logs, error trackers and the next prompt, so name examples by position ("the 2nd positive
+  example") rather than by content.
 
 ## Errors
 
@@ -126,6 +133,75 @@ end
 | `Squishling::LLMError` | The provider call failed on the last attempt in the escalation, after RubyLLM's own retries, including context-length errors (`cause` holds the original) |
 
 Errors raised by your own Ruby code are not wrapped.
+
+## When the Ruby path fails
+
+A squished method's Ruby implementation can be a draft the LLM corrects. Declare the one rule set once and hold both
+paths to it with `both_paths: true`, and a Ruby return the schema or the rule set rejects goes to the LLM, with the
+draft and what was wrong with it. The LLM answers in the same result type. No `rescue` and no `squish!` in your code:
+
+```ruby
+class RegexProposer
+  include Squishling
+
+  purpose "Propose a regex that matches every positive example and no negative one."
+  append_to_purpose "The Ruby that drafted the regex:", self
+  output_schema do
+    string :pattern
+    string :explanation
+  end
+
+  squish_validate(both_paths: true) { |result, **| ProposalChecks.problems(result) }   # one rule set, both paths
+  squish_rescue RegexDrafter::NoMatch                                                  # and this error, too
+
+  def call(positives:, negatives:) = RegexDrafter.draft(positives, negatives)
+end
+
+RegexProposer.call(positives: [...], negatives: [...]).squished?   # false: Ruby served it
+```
+
+Two things hand off, and nothing else does:
+
+| Ruby failure | Hands off when |
+|---|---|
+| Its return doesn't match the schema, or `squish_validate` rejects it | `both_paths` is on (`squish_validate both_paths: true`, or `config.validate_both_paths = true`). Off, a schema failure raises `InvalidOutputError` (source "Deterministic") and `squish_validate` doesn't run. |
+| It raises an error you named | `squish_rescue ParseError, ...` names it, like a `rescue` clause (names add up across calls and down the class chain). Unnamed errors propagate. |
+
+Naming `InvalidOutputError` doesn't change the first row: Ruby's own rejected return follows `both_paths`, while an
+`InvalidOutputError` from `result(...)` or another squished object it called is an ordinary named error. An error
+raised by your own `squish_validate`, and a `ConfigurationError`, never hand off.
+
+The LLM's context carries `ruby_draft` (what Ruby returned, a Hash, Array or result, cut at 4,000 characters),
+`ruby_problems` (the schema or `squish_validate` messages) and `ruby_error` (the class and message of what it raised,
+never a backtrace). The prompt gets a short note saying so (`Squishling::RubyPath::HANDOFF_NOTE`). The class's Ruby
+source is sent only if you appended it with `append_to_purpose ..., self`; the note says so when you did. The LLM's
+answer goes through the schema, `squish_validate`, escalation, and `squish_fallback` like any other, and `squished?` is
+`true`. If it fails too, the error is raised with the Ruby failure as its `cause`. With a `logger`, each hand-off is a
+warning naming the error class (`ruby raised ParseError`, or `ruby output rejected`), never its message; `squished?` on
+the result tells you the Ruby hit rate.
+
+A named error's message is sent to your provider along with the draft, so name only errors whose messages you'd send.
+A class with no purpose or schema is only typing Ruby's return, so nothing is handed off there.
+
+`squish_rescue` also takes `squish!`'s options, minus `context:`, which apply to every such hand-off (a stronger
+model, say). Called with options alone, it leaves the errors named above it (a parent class's) as they are:
+
+```ruby
+squish_rescue append_to_purpose: ["The Ruby that ran first:", self], model: "claude-opus-5-5"
+```
+
+`append_to_purpose` sections follow the built-in note (`false` drops everything above, the note included) and add to a
+parent class's. The vocabulary, in the order a call runs:
+
+| Declaration | Meaning | When |
+|---|---|---|
+| `squish_when` / `when:` | send to the LLM instead of Ruby | before Ruby |
+| `squish_rescue` | these Ruby errors go to the LLM | after Ruby |
+| `squish_validate` / `validate:` | judge a result (from either path with `both_paths`) | after Ruby or LLM |
+| `squish_fallback` / `fallback:` | the LLM failed, so return this | after the LLM |
+
+To handle one failure yourself, `rescue ParseError => e` and call [`squish!`](routing.md#handing-off-to-the-llm-with-squish)
+with your own context: it runs first, and the call isn't handed off twice.
 
 ## Fallbacks
 

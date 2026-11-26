@@ -61,7 +61,7 @@ Anything else raises `ConfigurationError` when you assign it.
 |---|---|
 | `label` | `"Class#method"` |
 | `purpose` | The purpose text sent as the system prompt (after `purpose` procs and `append_to_purpose` sections are resolved) |
-| `handed_off` | `true` when a `squish!` call sent the call to the LLM (typically from a `rescue`), `false` when `squish_when` or a missing implementation did |
+| `handed_off` | `true` when a `squish!` call, or an automatic [hand-off from a failed Ruby path](failures.md#when-the-ruby-path-fails), sent the call to the LLM, `false` when `squish_when` or a missing implementation did |
 | `harness` | The harness type (`:escalation`, `:squishsum`, `:judged_squishsum`, or a [custom one](harnesses.md#custom-harnesses)) |
 | `role` | `nil` for an escalation attempt, `:sample` or `:judge`, as in `squawk`'s `metadata` |
 | `sample` | `"a"`, `"b"`, ... for a sample, else `nil` |

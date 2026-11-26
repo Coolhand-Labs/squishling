@@ -65,7 +65,9 @@ identity), cross-check it against another source or keep that path in Ruby.
 ### Rescue errors your code can't handle yet
 
 Keep the Ruby you have for the inputs it understands, and hand the rest to the LLM instead of failing. When the
-parser raises, `squish!` sends this call to the LLM with the error and the parser's own source as context.
+parser raises an error you named with `squish_rescue` (or returns something your `squish_validate` rejects, with
+`both_paths: true`), the call goes to the LLM with the error or the draft, and what was wrong with it, as context. The
+class's own source goes along because the class appends it.
 
 ```ruby
 class InvoiceParser
@@ -77,13 +79,11 @@ class InvoiceParser
     string :invoice_number
     number :total
   end
+  squish_rescue VendorFormats::ParseError   # when the parser can't read it, the LLM takes over
 
   def call(vendor:, document:)
     invoice = VendorFormats.fetch(vendor).parse(document)
-    result(invoice_number: invoice.number, total: invoice.total)
-  rescue VendorFormats::ParseError => e
-    squish!(append_to_purpose: "The parser failed on this document; the error is in the context.",
-            context: { parse_error: e })
+    { invoice_number: invoice.number, total: invoice.total }
   end
 end
 
@@ -92,7 +92,8 @@ InvoiceParser.call(vendor: "acme", document: scanned_text).squished? # => true  
 ```
 
 Both calls return the same result class. If the LLM can't deliver either, `squish_fallback` decides what to
-return, or the error is raised with the original `ParseError` as its cause. See
+return, or the error is raised with the original `ParseError` as its cause. Hand off yourself, with your own
+context, using `squish!`. See [When the Ruby path fails](docs/failures.md#when-the-ruby-path-fails) and
 [Handing off to the LLM](docs/routing.md#handing-off-to-the-llm-with-squish).
 
 ### Retire code you no longer need
@@ -137,6 +138,7 @@ universal model, or an escalation of models to try in order:
 Squishling.configure do |config|
   config.default_model = "claude-sonnet-5-5" # falls back to RubyLLM's default when nil
   # or: config.default_escalation = [{ model: "claude-haiku-4-5", attempts: 2 }, "claude-sonnet-5-5", "claude-opus-5-5"]
+  # config.validate_both_paths = true   # squish_validate also judges the Ruby path's return (off by default)
 end
 ```
 
@@ -196,7 +198,9 @@ sees it right where the value goes, and the purpose stays short and about the go
   - [Your own](docs/harnesses.md#custom-harnesses): `Squishling.register_harness` plugs a custom harness into the same
     machinery (samples, judges, `squawk`, `squish_fallback`)
 - **Output contracts**: beyond the strict schema, conditional rules (`given`) and Ruby checks (`squish_validate`)
-  reject bad output and trigger the next attempt.
+  reject bad output and trigger the next attempt. With `both_paths`, they hold the Ruby path to the same rules.
+- **Ruby as a draft**: when the Ruby path raises a named error or its return is rejected, the LLM gets the call with the
+  draft and the problems, and returns the same typed result ([`squish_rescue`](docs/failures.md#when-the-ruby-path-fails)).
 - **Defined failure behavior**: provider errors become `Squishling::LLMError`, and `squish_fallback` lets you decide
   what to return when every attempt fails.
 - **Observability**: the opt-in [`squawk`](docs/failures.md#observing-every-attempt-squawk) hook sends every attempt's
@@ -214,7 +218,7 @@ sees it right where the value goes, and the purpose stays short and about the go
 - [Routing](docs/routing.md): when a call goes to the LLM, `squish!`, `append_to_purpose`, hardening a path,
   what the LLM sees
 - [Output schemas](docs/schemas.md): schema forms, strict mode, typed results, optional vs. empty, contracts
-- [Failure handling](docs/failures.md): escalation, `squish_validate`, error classes, fallbacks
+- [Failure handling](docs/failures.md): escalation, `squish_validate`, Ruby failures (`squish_rescue`), error classes, fallbacks
 - [Harnesses](docs/harnesses.md): escalation, squishsum, judges (chat or Jev), and custom harnesses
 - [Naming and collisions](docs/naming.md): the methods `include Squishling` adds and what happens when a name is taken
 - [Measuring token spend](docs/measuring-tokens.md): see what each squished path costs, with Coolhand Labs,

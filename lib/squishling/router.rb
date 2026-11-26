@@ -6,7 +6,7 @@ module Squishling
     # One squished call in progress. `phase` is :routing (deciding, e.g. running squish_when), :ruby (running
     # the implementation), or :llm (on the LLM path, including any fallback); `handed_off` records that squish!
     # already sent it to the LLM.
-    Frame = Struct.new(:receiver, :definition, :wrapper, :inputs, :phase, :handed_off)
+    Frame = Struct.new(:receiver, :definition, :wrapper, :inputs, :phase, :handed_off, :rejected)
 
     FRAMES_KEY = :__squishling_frames__
 
@@ -17,22 +17,12 @@ module Squishling
         end
 
         definition = receiver.class.squishling_definition(name)
-        frame = Frame.new(receiver, definition, wrapper, definition.bind_arguments(args, kwargs), :routing, false)
+        frame = Frame.new(receiver, definition, wrapper, definition.bind_arguments(args, kwargs), :routing, false, nil)
         frames.push(frame)
         begin
           return route_to_llm(frame, definition, "predicate") if definition.squish?(receiver, frame.inputs)
 
-          begin
-            frame.phase = :ruby
-            value = impl.call
-          rescue NotImplementedError
-            # After squish!, the error came from the LLM path (a fallback, a proc), not a missing implementation.
-            raise if frame.handed_off
-
-            return route_to_llm(frame, definition, "not implemented")
-          end
-
-          definition.coerce(value)
+          run_ruby(frame, definition, impl)
         ensure
           frames.pop
         end
@@ -51,16 +41,38 @@ module Squishling
                        "not from squish_when or while already on the LLM path (e.g. from squish_fallback)"
         end
 
-        frame.handed_off = true
-        route_to_llm(frame, frame.definition.for_call(**overrides), "squish!")
+        hand_off_frame(frame, overrides, "squish!")
       end
 
       private
 
+      # The Ruby implementation, held to the contract (see RubyPath); a failure that hands off goes to the LLM.
+      def run_ruby(frame, definition, impl)
+        frame.phase = :ruby
+        ruby_path = RubyPath.new(frame, definition)
+        ruby_path.call(impl) { |overrides, reason| hand_off_frame(frame, overrides, reason) }
+      rescue NotImplementedError => e
+        # After a hand-off, the error came from the LLM path (a fallback, a proc), not a missing implementation;
+        # and one from the developer's own squish_validate is theirs to see.
+        raise if frame.handed_off || ruby_path&.own?(e)
+
+        route_to_llm(frame, definition, "not implemented")
+      end
+
+      def hand_off_frame(frame, overrides, reason)
+        frame.handed_off = true
+        route_to_llm(frame, frame.definition.for_call(**overrides), reason)
+      end
+
       # An inner call (`super`, or the method called from squish_when or a fallback) hands its value to user code
       # that may reshape it, so only a Hash is typed (for accessor access); the outermost return is validated in full.
+      # A Hash an inner call returns that the schema rejects is the outer call's rejected return when it gets out of
+      # the Ruby implementation (e.g. a parent's, reached through super), so it is recorded for RubyPath.
       def coerce_inner(frame, value)
         value.is_a?(Hash) ? frame.definition.coerce(value) : value
+      rescue InvalidOutputError => e
+        frame.rejected ||= e
+        raise
       end
 
       def route_to_llm(frame, definition, reason)

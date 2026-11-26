@@ -4,6 +4,7 @@ module Squishling
   # Class-level DSL available to every squishling class.
   module ClassMethods
     DEFAULT_METHOD = :call
+    MODEL_OVERRIDES = %i[model escalation provider].freeze
 
     # Set class-wide options in one call:
     #   squishling model: "claude-sonnet-5-5", purpose: "...", output_schema: MySchema
@@ -121,17 +122,68 @@ module Squishling
       squishling_lookup(:@squishling_fallback)
     end
 
-    # Extra checks on LLM output that already matches the schema, called with the typed result and the
-    # method's inputs (as keywords), evaluated against the instance. Return nil (or true, "", []) to accept,
-    # or error message(s) to reject the output and move on to the next attempt, with the messages fed back:
+    # Extra checks on a result that already matches the schema, called with the typed result and the method's
+    # inputs (as keywords), evaluated against the instance. Return nil (or true, "", []) to accept, or error
+    # message(s) to reject the output and move on to the next attempt, with the messages fed back:
     #   squish_validate { |result, **| "total must equal the line items" if result.total != result.line_items.sum }
     # A dry-validation style result (responding to success? and errors) is accepted too.
-    def squish_validate(&block)
-      @squishling_validator = block
+    # It judges LLM output. With `both_paths: true` (or config.validate_both_paths) it judges the Ruby path's return
+    # too, and a Ruby return rejected by it or by the schema goes to the LLM, which gets the draft and the problems:
+    #   squish_validate(both_paths: true) { |result, **| ProposalChecks.problems(result) }
+    # `both_paths: false` keeps a class to the LLM whatever the config says; `both_paths:` alone, with no block,
+    # changes only that and keeps the check declared above.
+    def squish_validate(both_paths: nil, &block)
+      unless [nil, true, false].include?(both_paths)
+        raise ConfigurationError, "#{self} squish_validate both_paths: must be true or false, got #{both_paths.inspect}"
+      end
+
+      @squishling_validator = block if block || both_paths.nil?
+      @squishling_both_paths = both_paths unless both_paths.nil?
     end
 
     def squishling_validator
       squishling_lookup(:@squishling_validator)
+    end
+
+    # true, false, or nil (defer to config.validate_both_paths), from the class or its nearest ancestor.
+    def squishling_both_paths
+      squishling_lookup(:@squishling_both_paths)
+    end
+
+    # Names the errors the Ruby implementation may raise that the LLM should take over from, like a rescue clause.
+    # Names add up across calls and down the chain.
+    # The LLM gets the call with the error in its context and answers in the same result type:
+    #   squish_rescue AcmeParser::ParseError, Timeout::Error
+    # Nothing is rescued unless named. A return rejected under `squish_validate both_paths: true` is handed off too.
+    # The options are squish!'s, minus context:, and apply to every such hand-off. append_to_purpose adds sections
+    # after the built-in note (`false` drops what is above it):
+    #   squish_rescue append_to_purpose: ["The Ruby that drafted the answer:", self], model: "claude-opus-5-5"
+    def squish_rescue(*classes, append_to_purpose: nil, purpose: nil, model: nil, escalation: nil, provider: nil,
+      params: nil, harness: nil)
+      overrides = { append_to_purpose:, purpose:, model:, escalation:, provider:, params:, harness: }.compact
+      label = "#{self} squish_rescue"
+      raise ConfigurationError, "#{label} needs error classes or options" if classes.empty? && overrides.empty?
+
+      list = RubyPath.normalize_rescue(classes, label) unless classes.empty?
+      Definition.new(klass: self, name: DEFAULT_METHOD).for_call(**overrides, via: "squish_rescue") # fails now
+      if append_to_purpose
+        overrides[:append_to_purpose] = Appendices.normalize(append_to_purpose, "#{self} squish_rescue")
+      end
+      @squishling_rescue = [*@squishling_rescue, *list].uniq.freeze if list
+      @squishling_rescue_overrides = merge_rescue_overrides(@squishling_rescue_overrides || {}, overrides)
+      self
+    end
+
+    # Every class named by this class, its ancestors, and each squish_rescue call: they add up, like rescue clauses.
+    def squishling_rescue
+      [*squishling_inherited(:squishling_rescue, []), *@squishling_rescue].uniq
+    end
+
+    # The options every hand-off carries, merged down the chain: a subclass's append_to_purpose adds to its
+    # parent's, and a model or escalation of its own replaces the parent's.
+    def squishling_rescue_overrides
+      own = @squishling_rescue_overrides || {}
+      merge_rescue_overrides(squishling_inherited(:squishling_rescue_overrides, {}), own)
     end
 
     # Instance state (attributes or instance variables) to send to the LLM alongside the arguments.
@@ -191,6 +243,12 @@ module Squishling
     end
 
     private
+
+    # A model or escalation declared lower replaces the one above it (with its provider), never joins it.
+    def merge_rescue_overrides(above, below)
+      above = above.except(*MODEL_OVERRIDES) if below.keys.intersect?(%i[model escalation])
+      above.merge(below) { |key, earlier, later| key == :append_to_purpose ? [*earlier, *later] : later }
+    end
 
     # Each class gets its own prepended wrapper so overrides in subclasses are routed too.
     def squishling_install_wrapper

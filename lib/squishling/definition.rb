@@ -32,16 +32,16 @@ module Squishling
     # This definition with one call's overrides on top. The output schema, predicate, fallback, and validator
     # can't be overridden: the call must still return the method's result type.
     def for_call(purpose: nil, append_to_purpose: nil, context: nil, model: nil, escalation: nil,
-      provider: nil, params: nil, harness: nil)
-      call_path = ModelPath.declare(model, escalation, "#{label} squish!")
-      raise ConfigurationError, "#{label}: squish! provider: needs a model: or escalation:" if provider && !call_path
+      provider: nil, params: nil, harness: nil, via: "squish!")
+      call_path = ModelPath.declare(model, escalation, "#{label} #{via}")
+      raise ConfigurationError, "#{label}: #{via} provider: needs a model: or escalation:" if provider && !call_path
       unless context.nil? || (context.is_a?(Hash) && context.each_key.all?(NAME_KEY))
-        raise ConfigurationError, "#{label}: squish! context: must be a Hash with String or Symbol keys"
+        raise ConfigurationError, "#{label}: #{via} context: must be a Hash with String or Symbol keys"
       end
 
-      appended = Appendices.normalize(append_to_purpose, "#{label} squish!") unless append_to_purpose.nil?
-      call_params = params && Params.normalize(params, "#{label} squish! params")
-      call_harness = Harness.normalize(harness, "#{label} squish!") unless harness.nil?
+      appended = Appendices.normalize(append_to_purpose, "#{label} #{via}") unless append_to_purpose.nil?
+      call_params = params && Params.normalize(params, "#{label} #{via} params")
+      call_harness = Harness.normalize(harness, "#{label} #{via}") unless harness.nil?
       self.class.new(
         klass:, name:, output_schema: @output_schema, predicate: @predicate, fallback: @fallback,
         validator: @validator, squawk: @squawk,
@@ -52,7 +52,7 @@ module Squishling
         params: call_params ? (@params || {}).merge(call_params) : @params,
         harness: call_harness || @harness,
         call_context: @call_context.merge((context || {}).transform_keys(&:to_sym)),
-        handed_off: true # only squish! builds a definition this way; it is not part of a declared one
+        handed_off: true # only a hand-off (squish!, or the Ruby path's) builds a definition this way
       )
     end
 
@@ -104,6 +104,28 @@ module Squishling
     # Extra output checks run on schema-valid LLM results (see ClassMethods#squish_validate).
     def validator
       @validator || klass.squishling_validator
+    end
+
+    # Whether both paths are validated: the Ruby path's return is held to the schema and squish_validate too, and a
+    # rejected one is handed to the LLM. The class's `squish_validate both_paths:`, else the configured default.
+    def both_paths?
+      declared = klass.squishling_both_paths
+      declared.nil? ? Squishling.config.validate_both_paths : declared
+    end
+
+    # The exception classes the class hands to the LLM when Ruby raises them (squish_rescue); none by default.
+    def rescue_classes
+      klass.squishling_rescue
+    end
+
+    # The squish! overrides every automatic hand-off carries: the class's squish_rescue options.
+    def rescue_overrides
+      klass.squishling_rescue_overrides
+    end
+
+    # A hand-off needs something to say and a shape to answer in; a class without them only types Ruby's return.
+    def llm_capable?
+      !(@purpose || klass.purpose).nil? && !schema.nil?
     end
 
     # The observability hook: the method's, else the class's, else the configured one. `false` at a level

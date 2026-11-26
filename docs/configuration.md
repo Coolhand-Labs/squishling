@@ -18,6 +18,7 @@ Squishling.configure do |config|
   config.default_provider = nil
   config.default_params = { temperature: 0 }
   config.default_harness = :escalation
+  config.validate_both_paths = true   # squish_validate also judges the Ruby path's return, so both paths meet the same rules
   config.logger = Rails.logger
 end
 ```
@@ -31,6 +32,7 @@ end
 | `squawk` | `nil` | A callable run after every LLM attempt with the raw output, for sending it to an error tracker or tracing tool. Also settable per class and per method. See [Observing every attempt](failures.md#observing-every-attempt-squawk). |
 | `observer` | `nil` | An around-style hook for every provider request: `:coolhand`, any object responding to `around(call)`, or `false` for none. `nil` uses the [Coolhand observer](coolhand.md) when the `coolhand` gem is configured. See [Observers](observers.md). |
 | `default_harness` | `nil` (`:escalation`) | How every squishling class that doesn't declare its own uses its escalation: `:escalation`, `:squishsum`, `:judged_squishsum`, a [registered custom harness](harnesses.md#custom-harnesses), or a Hash with `type:` and options. See [Harnesses](harnesses.md). |
+| `validate_both_paths` | `false` | Whether the schema and `squish_validate` hold the Ruby path's return too, so both paths meet the same rules, and a Ruby return they reject is handed to the LLM with the draft and the problems. A class decides for itself with `squish_validate both_paths: true` or `false`. See [When the Ruby path fails](failures.md#when-the-ruby-path-fails). |
 | `logger` | `nil` | Any `Logger`. Debug lines when a call routes to the LLM, warnings on each escalation and when a fallback is used. Never includes the raw model response; see [what ends up in errors and logs](failures.md#what-ends-up-in-errors-and-logs). |
 
 Transport-level retries (rate limits, 5xx, timeouts) are configured on RubyLLM itself
@@ -226,7 +228,7 @@ end
 ## Inheritance
 
 Subclasses inherit the model or escalation and its provider (as a pair), harness, generation params (merged key by key), purpose, output schema,
-`squish_when` predicate, `squish_context` names, `squish_validate`, `squish_fallback`, and every `squish` declaration. Overrides in a subclass, including
+`squish_when` predicate, `squish_context` names, `squish_validate` (and its `both_paths:` scope), `squish_rescue` (the classes add up, and a subclass's `append_to_purpose` adds to its parent's), `squish_fallback`, and every `squish` declaration. Overrides in a subclass, including
 overridden methods, are routed the same way.
 
 `append_to_purpose` sections are added to, not replaced: a subclass's sections follow its parent's, and

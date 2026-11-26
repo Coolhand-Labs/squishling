@@ -19,6 +19,7 @@ A squished call runs its Ruby implementation unless one of these sends it to the
 | `squish_when` (or `when:`) predicate is truthy | class, or per method | before Ruby runs |
 | The method has no implementation: it isn't defined, or it raises `NotImplementedError` | the method body | when Ruby gives up |
 | `squish!` | inside the method, e.g. in a `rescue` | after Ruby has partly run, see [Handing off to the LLM](#handing-off-to-the-llm-with-squish) |
+| The Ruby implementation raises an error the class named with `squish_rescue`, or (with `both_paths`) returns something the schema or `squish_validate` rejects | the class | after Ruby has run, see [When the Ruby path fails](failures.md#when-the-ruby-path-fails) |
 
 With no predicate and a working implementation, every call runs Ruby.
 
@@ -39,10 +40,11 @@ When the Ruby implementation runs, whatever it returns (a `Hash`, `nil`, a strin
 is validated against the schema and turned into the same typed result the LLM path produces.
 `squishling_result(...)` does the same explicitly; `result(...)` is a convenience alias, skipped when the class
 already has a `result` (see [Naming and collisions](naming.md)). Invalid deterministic output raises
-`Squishling::InvalidOutputError` too, so a hardened path can't silently drift from the contract.
+`Squishling::InvalidOutputError` (source "Deterministic"), so a hardened path can't silently drift from the contract;
+with `squish_validate both_paths: true` the LLM is given the draft and the problems instead.
 
-A `NotImplementedError` raised anywhere inside the method, including from code it calls, also routes to the
-LLM.
+A `NotImplementedError` raised anywhere inside the method, including from code it calls (but not from your own
+`squish_validate`), also routes to the LLM.
 
 Each call is routed on its own, including a squished method that calls itself on smaller inputs (those
 recursive calls must return schema-valid values too). A subclass
@@ -98,8 +100,11 @@ end
 
 ## Handing off to the LLM with `squish!`
 
-Call `squish!` inside a squished method to hand *this call* to the LLM: for example, when the Ruby parser
-fails on an input it wasn't written for. It sends the call's arguments, as any LLM call would, and returns the
+Call `squish!` inside a squished method to hand *this call* to the LLM yourself: for example, when the Ruby
+parser fails on an input it wasn't written for. (Often you don't need to: an error named with `squish_rescue`, or a rejected return under `both_paths`, is
+[handed off for you](failures.md#when-the-ruby-path-fails), with the draft and the problems as
+context. Reach for `squish!` to choose the context, or the model, for one specific failure. A `squish!` in your own
+`rescue` runs first, and the call isn't handed off twice.) It sends the call's arguments, as any LLM call would, and returns the
 typed result (`squished?` is `true`, or `false` if the declared `squish_fallback` supplied it). Return that result
 from the method.
 

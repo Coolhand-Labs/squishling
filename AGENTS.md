@@ -8,6 +8,30 @@ Squishling makes Ruby classes *elastic*: a squished method either runs its Ruby 
 its inputs through an LLM via [RubyLLM](https://rubyllm.com), returning a strict-schema-validated,
 typed result. Both paths must return the same type — that contract is the whole point of the gem.
 
+## DSL principles
+
+The DSL is the product. A squishling class should read like natural Ruby in any host class, and the defaults
+should already do the useful, safe thing. Judge every new option or macro by how the class that uses it reads, before
+how it is implemented.
+
+- **Show the class.** A proposal or PR for a new option or macro includes a real class using it (not just a
+  signature), and it has to read aloud as a sentence. If it needs a paragraph to explain, rename it or fold it into a
+  word the gem already has.
+- **Opinionated defaults.** Zero config does the useful thing, and opting out is one word.
+- **One concept per macro, named `squish_*`** (`squish_when`, `squish_validate`, `squish_rescue`, `squish_fallback`,
+  `squish_context`). Where a macro has a per-method form, its keyword is the macro name without the prefix (`when:`,
+  `validate:`, `fallback:`), and `squish!` is the imperative form. `both_paths:` and `squish_rescue` are class-level
+  by design.
+- **`false` means off, and silences what is inherited** (`squawk: false`, `append_to_purpose false`,
+  `squish_validate both_paths: false`). Overrides use the keywords `squish!` already takes.
+- **Layering is always method over class over config**, and subclasses inherit. A setting that makes sense
+  globally gets a `Squishling.configure` option with the same default as the DSL, and an example in `examples/`
+  that sets it with a comment saying what it means. Settings that name code (`squish_rescue`'s errors) stay in the
+  class.
+- **Names say what happens.** `both_paths` over `ruby`, a macro that mirrors a Ruby idiom (`squish_rescue` is
+  `rescue_from`) over a new verb.
+- **Extend a word before adding one**, and avoid flag soup: a second boolean needs a reason.
+
 ## Verify before you push
 
 ```bash
@@ -44,7 +68,8 @@ Flag any change that breaks one of these; they are behavior contracts, not style
 - **Strict schemas only.** Squishling always requests strict structured output and rejects `strict: false`.
   Every key is required; "not provided" is expressed as a nullable (`optional`) field.
 - **Same type from both paths.** Deterministic returns (and fallback returns) are validated against the
-  schema and typed exactly like LLM results.
+  schema and typed exactly like LLM results. With `validate_both_paths` (or `squish_validate both_paths: true`) the Ruby path's
+  return also goes through `squish_validate`, and a rejected one is handed to the LLM; a fallback return never is.
 - **Validate everything that comes back.** RubyLLM does not validate structured output and some providers
   don't enforce strict mode; Squishling's own `json_schemer` validation is the guarantee. Conditional keywords
   (`if`/`then`/`else`, `dependentRequired`, `dependentSchemas`) are enforced locally and never sent to the
@@ -59,7 +84,10 @@ Flag any change that breaks one of these; they are behavior contracts, not style
   (setup mistakes; never retried, escalated, or passed to fallbacks), `InvalidOutputError` (bad output after every
   attempt in the escalation),
   `LLMError` (provider/transport failure after RubyLLM's HTTP retries, original as `cause`). Never wrap or
-  swallow exceptions raised by the user's own Ruby code.
+  swallow exceptions raised by the user's own Ruby code. The one deliberate exception is the Ruby path's hand-off
+  (`RubyPath`): an error the class names with `squish_rescue`, or a Ruby return rejected under `both_paths`,
+  goes to the LLM (never a `ConfigurationError` or an exception from the user's own `squish_validate`), and the Ruby
+  failure stays on as the `cause` if the LLM fails too. Nothing is rescued unless the developer names it.
 - **Model output leaves the process only through `InvalidOutputError#raw` and the opt-in `squawk` hook.** Error
   messages and `config.logger` lines carry parse positions and schema paths, never the response itself (the
   documented exceptions are model-chosen extra key names and the developer's own `squish_validate` messages).
@@ -67,7 +95,10 @@ Flag any change that breaks one of these; they are behavior contracts, not style
   original stays on `cause`.
 - **Only named context leaves the process.** The LLM sees method arguments, `squish_context` values, a
   `squish!` call's `context:`, and source the developer explicitly passes to `append_to_purpose` — never
-  instance variables wholesale. Exceptions in context are sent as class and message only. The one model-generated
+  instance variables wholesale. Exceptions in context are sent as class and message only. An automatic Ruby-path
+  hand-off adds the draft (capped at `Invoker::MAX_FORWARDED_CHARS`), the schema or `squish_validate` problems, and the
+  error (class and message, each capped), and the class's source only if the developer appended it. The draft is sent
+  only when Ruby returned a Hash, an Array, or a result. The one model-generated
   exception: escalating to a new step forwards the previous step's rejected output (capped at
   `Invoker::MAX_FORWARDED_CHARS`) to that step's provider, which may differ; a step can opt out with
   `forward_rejected: false`.
@@ -85,9 +116,9 @@ Flag any change that breaks one of these; they are behavior contracts, not style
   and a second interlock share can deadlock against a pending code reload.
 - **Observers see metadata and usage, around the request.** `config.observer` (`Squishling::Observer`) wraps each
   provider request (`LLMClient#ask`/`#judge`) on the thread that makes it, so a sample's observer runs on its worker
-  thread. The `Observer::Call` it receives holds label, purpose, harness, `handed_off` (whether `squish!` sent the
-  call), role/sample, attempt/attempts, model/provider, and request type; the block's `yield` returns an
-  `Observer::Usage` (token counts and model). Never
+  thread. The `Observer::Call` it receives holds label, purpose, harness, `handed_off` (whether `squish!`, or a
+  Ruby-path hand-off, sent the call), role/sample, attempt/attempts, model/provider, and request type; the block's
+  `yield` returns an `Observer::Usage` (token counts and model). Never
   inputs, context, or output: the observer's return value is ignored and the real response goes to Squishling's own
   caller, so output still leaves only through `InvalidOutputError#raw` and `squawk`. An observer's own exceptions
   propagate unwrapped. With `observer` nil, the Coolhand observer is used when the `coolhand` gem is loaded and
@@ -107,11 +138,13 @@ The public surface is `Squishling.configure`/`config`, the `include Squishling` 
 `forward_rejected:`)/`provider:`/`params:`/
 `harness:` (`type:`, `compare:`, `judge:` (a step, plus `type: :chat | :judgment` and `min_confidence:`),
 `judge_instructions:`)/`append_to_purpose:`/`squawk:` options — `purpose`, `append_to_purpose`, `output_schema`,
-`squish_when`, `squish_context`, `squish` (including `validate:`/`harness:`/`squawk:`), `squish_validate`,
-`squish_fallback`, `result`/`squishling_result`, `squish!` (including `model:`/`escalation:`/`harness:`)),
-`Squishling::Configuration` options (including `default_harness`, `observer`, and `squawk`, whose
-`output:`/`metadata:`/`error:` keywords are public), `Squishling::Observer::Call`/`Usage`,
-`Squishling::Harness::DEFAULT_JUDGE_INSTRUCTIONS`, result objects (`squished?`, `to_h`, `[]`), and the error classes
+`squish_when`, `squish_context`, `squish` (including `validate:`/`harness:`/`squawk:`), `squish_validate`
+(including `both_paths:`), `squish_rescue` (the classes, and `squish!`'s keywords but `context:`), `squish_fallback`,
+`result`/`squishling_result`, `squish!` (including `model:`/`escalation:`/`harness:`)),
+`Squishling::Configuration` options (including `default_harness`, `validate_both_paths`,
+`observer`, and `squawk`, whose `output:`/`metadata:`/`error:` keywords are public),
+`Squishling::Observer::Call`/`Usage`, `Squishling::Harness::DEFAULT_JUDGE_INSTRUCTIONS`,
+`Squishling::RubyPath::HANDOFF_NOTE`, result objects (`squished?`, `to_h`, `[]`), and the error classes
 (including `InvalidOutputError#models` and `DisagreementError#candidates`/`verdict`/`reason`). The custom-harness
 plugin point is public too:
 `Squishling.register_harness`/`harnesses`/`reset_harnesses!`, `Squishling::Harness::Base` (`option` and its types,
