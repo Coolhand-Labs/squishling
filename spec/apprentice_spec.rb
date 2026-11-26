@@ -612,6 +612,29 @@ RSpec.describe "Squishling apprentice mode" do
       expect(Squishling.verify(mixed).problems.map(&:label)).not_to include(a_string_ending_with("#summarize"))
     end
 
+    it "flags a compare: that needs more positional arguments than it is called with" do
+      greedy = squishling_class do
+        def self.to_s = "Greedy"
+        squishling model: "test-model", purpose: "Classify."
+        squish :call, apprentice_mode: { compare: ->(ruby, llm, inputs, extra) { [ruby, llm, inputs, extra] } } do
+          string :priority
+        end
+        squish :named, apprentice_mode: { compare: ->(ruby, llm, extra, **) { [ruby, llm, extra] } } do
+          string :priority
+        end
+        def call(text:) = { priority: text }
+        def named(text:) = { priority: text }
+      end
+
+      messages = Squishling.verify(greedy).problems.map { |problem| "#{problem.label} #{problem.message}" }
+
+      expect(messages).to include(
+        "Greedy#call apprentice_mode compare: takes 4 positional arguments, but is called with two results and " \
+        "the inputs",
+        "Greedy#named apprentice_mode compare: takes 3 positional arguments, but is called with two results"
+      )
+    end
+
     it "flags a method without a Ruby implementation, and when: or compare: that can't take the inputs" do
       broken = squishling_class do
         def self.to_s = "Broken"

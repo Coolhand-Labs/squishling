@@ -163,6 +163,20 @@ RSpec.describe "squish_sanitize" do # rubocop:disable RSpec/DescribeClass
       Squishling.reset_config!
     end
 
+    it "holds the files the call ends up sending to max_files, even when no one sanitizer's pass crosses it" do
+      pair = ->(value, marker) { value == marker ? (1..2).map { |n| StringIO.new("%PDF-1.7 #{marker}#{n}") } : value }
+      Squishling.configure do |config|
+        config.max_files = 2
+        config.sanitizer = ->(value:, **) { pair.call(value, "outer") }
+      end
+      klass.squish_sanitize { |value:, **| pair.call(value, "inner") }
+
+      expect { sent_request(first: "outer", second: "inner") }
+        .to raise_error(Squishling::InputRejectedError, /4 files is over max_files \(2\)/)
+    ensure
+      Squishling.reset_config!
+    end
+
     it "still holds what it returns to max_files and max_file_bytes" do
       Squishling.configure { |config| config.max_files = 2 }
       klass.squish_sanitize { |value:, **| value == "split" ? (1..5).map { |n| StringIO.new("%PDF-1.7 #{n}") } : value }

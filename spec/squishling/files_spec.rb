@@ -418,6 +418,19 @@ RSpec.describe "Files passed to a squished call" do # rubocop:disable RSpec/Desc
       expect(request.arguments["note"]).to eq("%PDF-1.7 is how a PDF starts")
     end
 
+    it "refuse empty data and a malformed media type, without echoing either" do
+      expect { Squishling::Document.new(data: "", media_type: "application/pdf") }
+        .to raise_error(Squishling::ConfigurationError, /needs data:/)
+      expect { Squishling::Document.new(data: nil, media_type: "application/pdf") }
+        .to raise_error(Squishling::ConfigurationError, /needs data:/)
+      expect { Squishling::Document.new(data: "abc", media_type: "not a type\nsecret") }
+        .to raise_error(Squishling::ConfigurationError, %r{type/subtype}) { |error|
+          expect(error.message).not_to include("secret")
+        }
+      expect { Squishling::Document.new(data: "abc", media_type: nil) }
+        .to raise_error(Squishling::ConfigurationError, %r{type/subtype})
+    end
+
     it "show only a type Squishling knows when inspected" do
       odd = Squishling::Document.new(data: "abc", media_type: "application/x-patient-jane")
 
