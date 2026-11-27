@@ -634,6 +634,24 @@ end</code></pre>
   </div>
   <p>With <code>squish!</code>, the model gets the call's inputs plus whatever context you pass, such as the error, and
   still has to return the same validated result. If it can't, <code>squish_fallback</code> decides what happens next.</p>
+  <h3>Or declare it once</h3>
+  <p>Writing that <code>rescue</code> in every method gets old. <code>squish_rescue</code> names the errors once, on the
+  class, and every squished method in it hands off to the model when Ruby raises one of them:</p>
+<pre><code>class WebhookHandler
+  include Squishling
+
+  ...
+
+  squish_rescue VendorWebhooks::ParseError,
+                append_to_purpose: "The parser failed; the error is in the context."
+
+  def call(service:, body:)
+    VendorWebhooks.fetch(service).parse(body)
+  end
+end</code></pre>
+  <p class="note">Only the errors you name are rescued, and only while your Ruby runs. The model sees the error's class and
+  message, so declare the narrow errors of your own code, not <code>StandardError</code>, which would also send the
+  text of any library's error.</p>
 </section>
 
 <section id="bugs" data-toc="Your own bugs">
@@ -675,6 +693,71 @@ SomeHelperMethod.new.call(payload).email
     </div>
     <img loading="lazy" decoding="async" src="img/squishling-gem-stack.webp" width="520" height="527" alt="A stack of three ruby gems with an anvil labeled critical on top">
   </div>
+</section>
+
+<section id="files" data-toc="Files and privacy">
+  <p class="kicker">Beyond text</p>
+  <h2>Hand it the fax. Decide what the model sees.</h2>
+  <p>Real integrations send more than JSON: a PDF referral, a scanned form, a photo from a phone. Pass the file as you
+  have it, with no wrapper and no "what kind of file is this" code. A blob, an upload, a <code>File</code> or a
+  <code>Pathname</code> is read as an image, a PDF the model reads natively, or text (HL7, FHIR, CSV).</p>
+  <p>And because health data is the kind that must not leak, <code>squish_sanitize</code> sees every part of the input
+  before any request goes out. Redact it, convert it, or refuse the call:</p>
+<pre><code>class ChartReader
+  include Squishling
+
+  purpose "Read the chart and summarize the visit."
+  output_schema { string :summary }
+
+  squish_sanitize do |value:, reject:, **|
+    case value
+    when String then value.gsub(/\b\d{3}-\d{2}-\d{4}\b/, "[SSN]")
+    when Squishling::Document
+      reject.call("fax is over 10 MB") if value.bytesize &gt; 10_000_000
+      value
+    else value
+    end
+  end
+end
+
+ChartReader.call(chart: params[:upload]) # a PDF, a photo, an HL7 file</code></pre>
+  <div class="cols three">
+    <div class="card"><h3>Nothing skips it</h3><p>Class, method and config sanitizers all run, none can be switched off, and
+    <code>squish!</code> can't go around them.</p></div>
+    <div class="card"><h3>Fails closed</h3><p>A refusal lists every problem by where it is, never the value, and nothing is
+    sent. A sanitizer that raises stops the call.</p></div>
+    <div class="card"><h3>Your Ruby sees the original</h3><p>Only what goes to the model is rewritten. Your own code,
+    and <code>squish_fallback</code>, get the input as it came in.</p></div>
+  </div>
+  <p class="note">Objects that aren't plain data are refused instead of serialized with every attribute, so an
+  ActiveRecord model can't leak by accident. Define <code>to_squishling</code> to say what the model may see of it.</p>
+</section>
+
+<section id="apprentice" data-toc="Prove it first">
+  <p class="kicker">Before you switch</p>
+  <h2>Let the model shadow your Ruby first</h2>
+  <p>Already have a parser you trust? Keep serving its answers, and run the model beside it on the same inputs. Apprentice
+  mode returns the Ruby result to the caller every time, compares the two typed results, and hands you the comparison.
+  You get the model's agreement rate on real traffic before it answers a single real call.</p>
+<pre><code>class TicketTriage
+  include Squishling
+
+  squishling model: "claude-haiku-4-5",
+    apprentice_mode: {
+      when: -&gt;(**) { rand &lt; 0.05 }, # shadow 5% of calls
+      report: -&gt;(match:, **) { Stats.record(match) } # your metrics
+    }
+
+  ...
+
+  def call(ticket_text:)
+    # the mature Ruby implementation
+  end
+end</code></pre>
+  <p>A failure in the shadow run is reported, never raised to your caller, and one setting turns every shadow run off.
+  With Coolhand Labs, each comparison is sent as feedback on the request it judged, so the agreement rate builds up per
+  workload.</p>
+  <p class="pull">When the agreement is high enough, squish the cheap, boring cases. Keep the Ruby where it still wins.</p>
 </section>
 
 <section id="number" data-toc="Measure in tokens">
@@ -754,8 +837,8 @@ gem "squishling"</code></pre>
   </div>
   <p>Requires Ruby 3.3 or newer. The
   <a href="https://github.com/Coolhand-Labs/squishling#readme">README</a> covers each use case, and the
-  <a href="https://github.com/Coolhand-Labs/squishling/tree/main/docs">docs</a> cover routing, schemas, configuration,
-  failure handling, harnesses and measuring token spend.</p>
+  <a href="https://github.com/Coolhand-Labs/squishling/tree/main/docs">docs</a> cover routing, files and sanitizing,
+  schemas, configuration, failure handling, harnesses, apprentice mode and measuring token spend.</p>
   <h3>On the roadmap</h3>
   <ul class="plain">
     <li>Framework-specific defaults.</li>
