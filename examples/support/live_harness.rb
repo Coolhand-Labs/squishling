@@ -4,6 +4,7 @@
 # default) and Squishling for one small model, and runs a set of scenarios that exercise the gem end to end.
 
 require "optparse"
+require "tempfile"
 require "zlib"
 require "bundler/setup"
 require "squishling"
@@ -207,6 +208,46 @@ module LiveHarness
       chunk.call("IDAT", Zlib::Deflate.deflate(rows)) + chunk.call("IEND", "")
   end
 
+  # Files passed as they are (no Squishling::Image wrapper): a PNG read from a Pathname, and a PDF from a Tempfile.
+  class FileColorReader
+    include Squishling
+
+    purpose "Name the single dominant colour of the attached image."
+    output_schema { string :color, enum: %w[red green blue] }
+  end
+
+  class PdfReader
+    include Squishling
+
+    purpose "Read the attached PDF and return its invoice number and total due, in cents."
+    output_schema do
+      string :invoice_number
+      integer :total_cents
+    end
+  end
+
+  # A one-page PDF with a line of Helvetica text per entry, built in memory so the example needs no fixture.
+  def text_pdf(lines)
+    shown = lines.map { |line| "(#{line}) Tj T*" }.join(" ")
+    stream = "BT /F1 18 Tf 72 720 Td 24 TL #{shown} ET"
+    bodies = [
+      "<< /Type /Catalog /Pages 2 0 R >>",
+      "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+      "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
+      "<< /Length #{stream.bytesize} >>\nstream\n#{stream}\nendstream",
+      "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"
+    ]
+    pdf = +"%PDF-1.4\n"
+    offsets = bodies.each_with_index.map do |body, index|
+      pdf.bytesize.tap { pdf << "#{index + 1} 0 obj\n#{body}\nendobj\n" }
+    end
+    xref = pdf.bytesize
+    pdf << "xref\n0 #{bodies.size + 1}\n0000000000 65535 f \n"
+    offsets.each { |offset| pdf << format("%010d 00000 n \n", offset) }
+    pdf << "trailer\n<< /Size #{bodies.size + 1} /Root 1 0 R >>\nstartxref\n#{xref}\n%%EOF\n"
+    pdf.b
+  end
+
   # Fallback that must never run for a setup mistake.
   class Echo
     include Squishling
@@ -365,6 +406,25 @@ module LiveHarness
       check(result.front_color == "red", "front_color was #{result.front_color.inspect}")
       check(result.back_color == "blue", "back_color was #{result.back_color.inspect}")
       "front #{result.front_color}, back #{result.back_color}"
+    }),
+    Scenario.new("the model reads a PNG passed as a Pathname, with no Image wrapper", lambda {
+      Tempfile.create(["swatch", ".png"], binmode: true) do |file|
+        file.write(solid_png(20, 200, 20))
+        file.flush
+        result = FileColorReader.call(image: Pathname.new(file.path))
+        check(result.color == "green", "color was #{result.color.inspect}")
+        result.color
+      end
+    }),
+    Scenario.new("the model reads a PDF passed as a Tempfile", lambda {
+      Tempfile.create(["invoice", ".pdf"], binmode: true) do |file|
+        file.write(text_pdf(["Invoice INV-2041", "Total due: $80.00"]))
+        file.flush
+        result = PdfReader.call(document: file)
+        check(result.invoice_number.include?("2041"), "invoice_number was #{result.invoice_number.inspect}")
+        check(result.total_cents == 8000, "total_cents was #{result.total_cents.inspect}")
+        "#{result.invoice_number}, #{result.total_cents} cents"
+      end
     }),
     Scenario.new("params the model rejects raise ConfigurationError, not the fallback", lambda {
       klass = Class.new(Echo) { squishling params: LiveHarness.rejected_params }

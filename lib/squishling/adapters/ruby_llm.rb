@@ -9,7 +9,7 @@ module Squishling
     # (RubyLLM.configure); transient HTTP failures are retried by RubyLLM itself (RubyLLM.config.max_retries).
     # The ruby_llm gem is loaded when the adapter is built, so Squishling doesn't depend on it. See docs/adapters.md.
     class RubyLLM < Adapter::Base
-      MINIMUM_VERSION = Gem::Version.new("2.1")
+      MINIMUM_VERSION = Gem::Version.new("2.2")
 
       # The ruby_llm gem isn't installed (Adapter.detect tells that apart from a gem that is, but too old).
       class MissingGemError < ConfigurationError; end
@@ -99,16 +99,16 @@ module Squishling
 
       private
 
-      # The conversation so far added to the chat, then its last message asked. Building an attachment can fetch an
-      # image's URL (RubyLLM reads the media type from the response when the URL has no extension), so the history is
-      # guarded like the request itself.
+      # The conversation so far added to the chat, then its last message asked, all inside #guarded: RubyLLM may still
+      # fetch an image's URL when it renders the request (for a provider that can't fetch URLs itself), and a failure
+      # there is a failed request like any other.
       def replay_and_ask(chat, request)
         *history, last = request.messages
         history.each do |message|
-          text, attachments = split(message[:content])
+          text, attachments = split(message[:content], request)
           chat.add_message({ role: message[:role], content: text, attachments: }.compact)
         end
-        ask(chat, request, *split(last[:content]))
+        ask(chat, request, *split(last[:content], request))
       end
 
       # RubyLLM checks a caching option against the provider when it renders the request, and raises ArgumentError for
@@ -123,21 +123,35 @@ module Squishling
       end
 
       # A message's text and its files as RubyLLM attachments (nil when it has none).
-      def split(content)
+      def split(content, request)
         return [content, nil] unless content.is_a?(Array)
 
         text = content.filter_map { |part| part[:text] if part[:type] == :text }.join("\n\n")
-        files = content.filter_map { |part| attachment(part[:image] || part[:file]) if part[:type] != :text }
+        files = content.filter_map { |part| attachment(part[:image] || part[:file], request) if part[:type] != :text }
         [text, files]
       end
 
-      def attachment(file)
-        return ::RubyLLM::Attachment.new(file.url, filename: file.filename, resolution: file.detail) if file.url?
+      # An image given by URL is built with its media type. Without one RubyLLM downloads the URL from this process to
+      # read the type from the response (any host it can reach, redirects followed), so a URL image that doesn't say
+      # what it is, by its extension or a media_type:, is a ConfigurationError rather than a request.
+      def attachment(file, request)
+        return url_attachment(file, request) if file.url?
 
         source = StringIO.new(file.data)
         return ::RubyLLM::Attachment.new(source, filename: file.filename, resolution: file.detail) if file.is_a?(Image)
 
         ::RubyLLM::Attachment.new(source, filename: file.filename, mime_type: file.media_type)
+      end
+
+      def url_attachment(file, request)
+        unless file.media_type
+          raise configuration_error(request,
+            "the RubyLLM adapter needs the media type of an image given by URL, so it doesn't download the URL to " \
+            "find out: use Squishling::Image.from_url(url, media_type: \"image/png\") (or a URL ending in .png, " \
+            ".jpg, .jpeg, .gif, or .webp)")
+        end
+
+        ::RubyLLM::Attachment.new(file.url, mime_type: file.media_type, resolution: file.detail)
       end
 
       def tokens_of(response)
@@ -160,7 +174,7 @@ module Squishling
       end
 
       def build_chat(request)
-        chat = ::RubyLLM.chat(**model_options(request.model, request.provider))
+        chat = ::RubyLLM.chat(**model_options(request.model, request.provider), context: chat_context)
         chat.with_instructions(request.instructions)
         chat.with_schema(request.schema)
         apply_params(chat, request)
@@ -168,6 +182,13 @@ module Squishling
         chat
       rescue ::RubyLLM::ModelNotFoundError, ::RubyLLM::ConfigurationError => e
         raise configuration_error(request, e.message)
+      end
+
+      # A copy of RubyLLM's configuration for one chat. By default RubyLLM sends an attachment over a provider's size
+      # threshold to that provider's Files API; Squishling sends a call's files with the request, bounded by
+      # max_file_bytes, so a file never goes anywhere the call didn't name.
+      def chat_context
+        ::RubyLLM.context { |config| config.auto_upload_large_files = false }
       end
 
       # RubyLLM validates some settings locally (e.g. an impossible thinking budget for the model)
@@ -282,7 +303,8 @@ module Squishling
         error.backtrace&.first&.start_with?("#{@lib}/") || false
       end
 
-      # The adapter uses RubyLLM 2.1 APIs (judgments, with_max_output_tokens, Tokens#to_h), and no gemspec pins it.
+      # The adapter uses RubyLLM 2.2 APIs (judgments, with_max_output_tokens, Tokens#to_h, and Attachment's mime_type:,
+      # which is how an image URL's type reaches RubyLLM without it downloading the URL), and no gemspec pins it.
       def check_version!
         version = Gem.loaded_specs["ruby_llm"]&.version
         return if version.nil? || version >= MINIMUM_VERSION

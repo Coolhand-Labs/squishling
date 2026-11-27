@@ -30,11 +30,11 @@ Which files are recognized, and how, is on [Inputs](inputs.md#passing-files-dire
 |---|---|
 | `Squishling::Image.from_path(path)` | Reads the file. The media type comes from the bytes (or the extension). |
 | `Squishling::Image.new(data: bytes)` | Bytes you already have (an upload, an ActiveStorage download). Pass `media_type:` if it can't be read from them. |
-| `Squishling::Image.from_url(url)` | An http(s) URL the provider fetches itself. Nothing is downloaded here, so the URL has to be reachable from the provider (a signed URL works). |
+| `Squishling::Image.from_url(url, media_type: nil)` | An http(s) URL the provider fetches itself. Nothing is downloaded here, so the URL has to be reachable from the provider (a signed URL works). The media type is the one you give, or the one the path's extension says (`.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`); a URL with neither (`/files/123?sig=...`) needs `media_type:` with the RubyLLM adapter. |
 
 PNG, JPEG, GIF, and WebP are supported. `detail: :low` or `:high` asks the provider to spend fewer or more tokens on
-the image; providers without the setting ignore it. For a PDF, render its pages to images (one `Image` per page) and
-pass them as an Array; text you can extract from the PDF can go alongside as a plain argument.
+the image; providers without the setting ignore it. A PDF is not an image: pass it as it is (a file, a blob, or a
+`Squishling::Document`) and the model reads it natively; see [Inputs](inputs.md).
 
 ## What the model sees
 
@@ -59,9 +59,11 @@ can't judge, the provider's refusal (a 400) comes back as `RequestRejectedError`
 An escalation where a later step can't take the images fails when the call starts, not after the first step.
 
 The RubyLLM adapter sends images as RubyLLM attachments, and the OpenAI-compatible adapter as `image_url` content parts
-(a `data:` URI, or the image's own URL); the model has to accept images. RubyLLM downloads a URL image itself when the
-URL's path has no image extension (to tell its type) or when the provider can't fetch URLs, so with RubyLLM a URL has to
-be reachable from your process too. A [custom adapter](adapters.md#images-and-documents) opts
+(a `data:` URI, or the image's own URL); the model has to accept images. The RubyLLM adapter hands RubyLLM the image's
+media type along with its URL, so RubyLLM never downloads a URL to find the type out; a URL image with no known type
+(no image extension and no `media_type:`) raises `ConfigurationError` before any request, naming the fix. RubyLLM can
+still download a URL image itself for a provider that can't fetch URLs, so with RubyLLM a URL may have to be reachable
+from your process too. A [custom adapter](adapters.md#images-and-documents) opts
 in with `images?`. A call with images through an adapter that doesn't take them raises `ConfigurationError` before any
 request is made.
 
@@ -69,8 +71,9 @@ request is made.
 
 Build an `Image` only from sources you trust, or check them first. Squishling doesn't filter hosts or paths:
 
-- **`Image.from_url` with the RubyLLM adapter is a known risk.** RubyLLM, not Squishling, may download the URL from your
-  own process (see [Adapters](#adapters)), following redirects, from any host it can reach, including `localhost`,
+- **`Image.from_url` with the RubyLLM adapter is a known risk, smaller than it was.** RubyLLM, not Squishling, may still
+  download the URL from your own process for a provider that can't fetch URLs (see [Adapters](#adapters); it no longer
+  downloads one just to learn its type), following redirects, from any host it can reach, including `localhost`,
   private addresses, and cloud metadata endpoints, and what it fetches is then sent to the provider. If a user can
   choose the URL, allow-list its host and scheme before building the `Image`, or download it yourself and pass the
   bytes with `Image.new(data:)`. See [the adapter note](adapters.md#known-risk-the-rubyllm-adapter-downloads-some-image-urls-itself).

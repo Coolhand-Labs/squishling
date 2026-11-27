@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "ostruct"
+require "webmock/rspec"
 require "squishling/testing"
 require_relative "../support/sent_request"
 require "tempfile"
@@ -47,7 +49,6 @@ RSpec.describe "Files passed to a squished call" do # rubocop:disable RSpec/Desc
 
       def initialize(attachment) = @attachment = attachment
       def attached? = !attachment.nil?
-      def to_squishling = { attached: attached? }
     end
   end
   let(:many_class) do
@@ -56,7 +57,6 @@ RSpec.describe "Files passed to a squished call" do # rubocop:disable RSpec/Desc
 
       def initialize(attachments) = @attachments = attachments
       def attached? = attachments.any?
-      def to_squishling = { attached: attached? }
     end
   end
   let(:upload_class) do
@@ -68,8 +68,6 @@ RSpec.describe "Files passed to a squished call" do # rubocop:disable RSpec/Desc
         @content_type = content_type
         @original_filename = original_filename
       end
-
-      def to_squishling = { filename: original_filename }
     end
   end
 
@@ -188,8 +186,8 @@ RSpec.describe "Files passed to a squished call" do # rubocop:disable RSpec/Desc
     end
 
     it "sends a collection or slot of things that aren't files as they were" do
-      many = many_class.new([1, 2])
-      one = one_class.new(3)
+      many = Class.new(many_class) { def to_squishling = { count: attachments.size } }.new([1, 2])
+      one = Class.new(one_class) { def to_squishling = { attached: attached? } }.new(3)
 
       request = sent_request(many:, one:)
 
@@ -202,6 +200,102 @@ RSpec.describe "Files passed to a squished call" do # rubocop:disable RSpec/Desc
 
       expect(sent_request(holder:).arguments["holder"]).to eq("download" => "x", "content_type" => "text/plain",
         "byte_size" => 1)
+    end
+
+    it "leaves an OpenStruct with a download member to be sent as its members, never read as a blob" do
+      holder = OpenStruct.new(download: "https://signed.example/x?sig=1", content_type: "text/plain", byte_size: 1) # rubocop:disable Style/OpenStructUse
+
+      expect(sent_request(holder:).arguments["holder"]).to eq(
+        "download" => "https://signed.example/x?sig=1", "content_type" => "text/plain", "byte_size" => 1
+      )
+    end
+
+    it "lets a class's to_squishling say what it is before anything guesses it is a file" do
+      called = []
+      presenter = Class.new do
+        define_method(:download) { (called << :download) && "bytes" }
+        define_method(:content_type) { "text/plain" }
+        define_method(:byte_size) { 5 }
+        define_method(:to_squishling) { { title: "Receipt" } }
+      end.new
+
+      request = sent_request(presenter:)
+
+      expect(request.arguments["presenter"]).to eq("title" => "Receipt")
+      expect(called).to be_empty
+    end
+
+    it "lets to_squishling shape a Struct, Data, Exception, and Array subclass too, so a field can be left out" do
+      shaped = Struct.new(:name, :ssn) { def to_squishling = { name: } }.new("Jane", "123-45-6789")
+      record = Data.define(:name, :ssn) { def to_squishling = { name: } }.new(name: "Jane", ssn: "123-45-6789")
+      failure = Class.new(StandardError) { def to_squishling = { reason: "failed" } }.new("ssn 123-45-6789")
+      listed = Class.new(Array) { def to_squishling = ["shown"] }.new(["hidden"])
+
+      arguments = sent_request(shaped:, record:, failure:, listed:).arguments
+
+      expect(arguments).to eq("shaped" => { "name" => "Jane" }, "record" => { "name" => "Jane" },
+        "failure" => { "reason" => "failed" }, "listed" => ["shown"])
+    end
+
+    it "sends a Hash that answers every method name, such as ActiveSupport::OrderedOptions, as its members" do
+      options = Class.new(Hash) do
+        def respond_to_missing?(*) = true
+        def method_missing(name, *) = self[name]
+      end.new
+      options[:name] = "Jane"
+
+      expect(sent_request(options:).arguments["options"]).to eq("name" => "Jane")
+    end
+
+    it "honors a to_squishling extended onto a Hash or defined on a Struct's singleton" do
+      hash = { name: "Jane", ssn: "123-45-6789" }.extend(Module.new { def to_squishling = { name: self[:name] } })
+      struct = Struct.new(:name, :ssn).new("Jane", "123-45-6789")
+      struct.define_singleton_method(:to_squishling) { { name: } }
+
+      expect(sent_request(hash:, struct:).arguments).to eq("hash" => { "name" => "Jane" },
+        "struct" => { "name" => "Jane" })
+    end
+
+    it "refuses a to_squishling chain that keeps returning new objects, and two that return each other" do
+      endless = Class.new { def to_squishling = self.class.new }.new
+      first = Class.new.new
+      second = Class.new.new
+      first.define_singleton_method(:to_squishling) { second }
+      second.define_singleton_method(:to_squishling) { first }
+
+      expect { sent_request(endless:) }.to raise_error(Squishling::InputRejectedError, /nested too deeply/)
+      expect { sent_request(first:) }.to raise_error(Squishling::ConfigurationError, /contains itself/)
+    end
+
+    it "refuses a deeply nested Struct chain too, without overflowing the stack" do
+      node = Struct.new(:inner)
+      chain = (1..5_000).reduce(nil) { |inner, _| node.new(inner) }
+
+      expect { sent_request(chain:) }.to raise_error(Squishling::InputRejectedError, /nested too deeply/)
+    end
+
+    it "sends a String subclass as its text, whatever its to_squishling says" do
+      text = Class.new(String) { def to_squishling = "ignored" }.new("hello")
+
+      expect(sent_request(text:).arguments["text"]).to eq("hello")
+    end
+
+    it "still refuses a to_squishling that returns itself, rather than looping" do
+      selfish = Struct.new(:name) { def to_squishling = self }.new("Jane")
+
+      expect { sent_request(selfish:) }.to raise_error(Squishling::ConfigurationError, /contains itself/)
+    end
+
+    it "lets to_squishling return a file, which is then read" do
+      presenter = Class.new do
+        define_method(:initialize) { |bytes| @bytes = bytes }
+        define_method(:to_squishling) { StringIO.new(@bytes) }
+      end.new(png)
+
+      request = sent_request(presenter:)
+
+      expect(request.images.size).to eq(1)
+      expect(request.arguments["presenter"]).to eq("attached_image" => 1)
     end
   end
 
@@ -225,7 +319,8 @@ RSpec.describe "Files passed to a squished call" do # rubocop:disable RSpec/Desc
     end
 
     it "doesn't treat an upload without a tempfile, or a stream that can't read a length, as a file" do
-      upload = upload_class.new(nil, "image/png", "r.png")
+      described = Class.new(upload_class) { def to_squishling = { filename: original_filename } }
+      upload = described.new(nil, "image/png", "r.png")
       odd = Class.new do
         def read = "x"
         def rewind = nil
@@ -418,6 +513,19 @@ RSpec.describe "Files passed to a squished call" do # rubocop:disable RSpec/Desc
       expect(request.arguments["note"]).to eq("%PDF-1.7 is how a PDF starts")
     end
 
+    it "refuse empty data and a malformed media type, without echoing either" do
+      expect { Squishling::Document.new(data: "", media_type: "application/pdf") }
+        .to raise_error(Squishling::ConfigurationError, /needs data:/)
+      expect { Squishling::Document.new(data: nil, media_type: "application/pdf") }
+        .to raise_error(Squishling::ConfigurationError, /needs data:/)
+      expect { Squishling::Document.new(data: "abc", media_type: "not a type\nsecret") }
+        .to raise_error(Squishling::ConfigurationError, %r{type/subtype}) { |error|
+          expect(error.message).not_to include("secret")
+        }
+      expect { Squishling::Document.new(data: "abc", media_type: nil) }
+        .to raise_error(Squishling::ConfigurationError, %r{type/subtype})
+    end
+
     it "show only a type Squishling knows when inspected" do
       odd = Squishling::Document.new(data: "abc", media_type: "application/x-patient-jane")
 
@@ -533,6 +641,16 @@ RSpec.describe "Files passed to a squished call" do # rubocop:disable RSpec/Desc
       expect { sent_request(deep:) }.to raise_error(Squishling::InputRejectedError, /nested too deeply/)
     end
 
+    it "refuses an input nested far deeper than JSON allows, without overflowing the stack" do
+      deep = (1..5_000).reduce("x") { |inner, _| [inner] }
+      hashes = (1..5_000).reduce("x") { |inner, _| { a: inner } }
+
+      [deep, hashes].each do |value|
+        expect { sent_request(deep: value) }
+          .to raise_error(Squishling::InputRejectedError, /arguments\.deep.*nested too deeply/)
+      end
+    end
+
     it "refuses a value JSON can't carry, without quoting it" do
       expect { sent_request(ratio: Float::NAN) }
         .to raise_error(Squishling::InputRejectedError, /arguments\.ratio: an input holds a value JSON can't represent/)
@@ -635,6 +753,23 @@ RSpec.describe "Files passed to a squished call" do # rubocop:disable RSpec/Desc
       data_uri = "data:application/pdf;base64,#{[pdf].pack('m0')}"
 
       expect(parts.last).to eq("type" => "file", "file" => { "filename" => "document.pdf", "file_data" => data_uri })
+    end
+
+    it "checks an image URL's type against the adapter, and lets one with no known type through" do
+      Squishling.configure do |config|
+        config.adapter = Squishling::Adapters::OpenAICompatible.new(api_key: "test-key", media_types: %w[image/png])
+      end
+      request = stub_request(:post, %r{api\.openai\.com/}).to_return(status: 401, body: "{}")
+
+      expect { klass.call(file: URI("https://example.com/r.gif")) }
+        .to raise_error(Squishling::ConfigurationError, %r{image/gif files, but the .* takes image/png})
+      expect(request).not_to have_been_requested
+      # Past the media type check, the request is made (and refused here as a bad credential).
+      expect { klass.call(file: Squishling::Image.from_url("https://example.com/get/1")) }
+        .to raise_error(Squishling::ConfigurationError) { |error| expect(error.message).not_to include("files, but") }
+      expect(request).to have_been_requested
+    ensure
+      Squishling.reset_config!
     end
 
     it "checks the OpenAI-compatible media_types option" do

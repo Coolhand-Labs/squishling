@@ -115,7 +115,7 @@ valid verdict raises `InvalidOutputError`. A chat judge's params are the method'
 ### System One judgment models (Jev)
 
 A judge can also be a System One decision model, such as TypeSafe's Jev, via
-[RubyLLM judgments](https://rubyllm.com/judgments/) (RubyLLM 2.1+). This needs an [adapter](adapters.md) that
+[RubyLLM judgments](https://rubyllm.com/judgments/) (the `:ruby_llm` adapter needs RubyLLM 2.2+). This needs an [adapter](adapters.md) that
 supports judgments, which today means the `:ruby_llm` adapter; on any other, a `type: :judgment` judge raises
 `ConfigurationError` before a request is made (a `type: :chat` judge works with every adapter). Decision models return
 calibrated probabilities rather than text, so they are much faster and cheaper than a chat judge.

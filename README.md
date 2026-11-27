@@ -134,7 +134,7 @@ end
 gem "squishling"
 ```
 
-Requires Ruby 3.3+ and an [adapter](docs/adapters.md) to reach a model: the `ruby_llm` gem (2.1+; Squishling uses it
+Requires Ruby 3.3+ and an [adapter](docs/adapters.md) to reach a model: the `ruby_llm` gem (2.2+; Squishling uses it
 automatically when it is in your bundle), or any OpenAI-compatible endpoint, which needs no extra gem. Squishling no
 longer installs or requires `ruby_llm` for you, so add `gem "ruby_llm"` next to it if you use RubyLLM (and
 `require "ruby_llm"` before `RubyLLM.configure` if your app doesn't load its Gemfile with `Bundler.require`). With RubyLLM,

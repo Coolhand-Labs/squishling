@@ -30,6 +30,7 @@ module Squishling
       @receiver = receiver
       @label = label
       @normalizer = normalizer
+      @depth = 0
     end
 
     def call(tree)
@@ -50,17 +51,34 @@ module Squishling
     # path is where the node is, as the sanitizer is told it; safe is the same for an error message, with any Hash key
     # that isn't a plain identifier masked (see Payload.join).
     def visit(hook, node, path, safe, rejections)
-      replaced = replace(hook, node, path, safe, rejections)
-      case replaced
-      when Hash
-        replaced.to_h do |key, item|
-          [key, visit(hook, item, "#{path}.#{key}", Payload.join(safe, key), rejections)]
+      deeper(safe) do
+        replaced = replace(hook, node, path, safe, rejections)
+        case replaced
+        when Hash
+          replaced.to_h do |key, item|
+            [key, visit(hook, item, "#{path}.#{key}", Payload.join(safe, key), rejections)]
+          end
+        when Array
+          replaced.each_with_index.map do |item, index|
+            visit(hook, item, "#{path}[#{index}]", "#{safe}[#{index}]", rejections)
+          end
+        else replaced
         end
-      when Array
-        replaced.each_with_index.map do |item, index|
-          visit(hook, item, "#{path}[#{index}]", "#{safe}[#{index}]", rejections)
-        end
-      else replaced
+      end
+    end
+
+    # Runs the block one node deeper. A sanitizer that wraps what it returns would otherwise grow the tree, and this
+    # recursion, without end (a SystemStackError, which isn't a StandardError).
+    def deeper(path)
+      if @depth >= Payload::Normalizer::MAX_DEPTH
+        raise InputRejectedError.single(Payload::TOO_DEEP, label: @label, path:), cause: nil
+      end
+
+      @depth += 1
+      begin
+        yield
+      ensure
+        @depth -= 1
       end
     end
 

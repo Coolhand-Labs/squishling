@@ -36,9 +36,11 @@ raises `Squishling::ConfigurationError` saying what to add.
 
 ### Known risk: the RubyLLM adapter downloads some image URLs itself
 
-When a call carries an [image given by URL](images.md#adapters), the RubyLLM adapter hands the URL to RubyLLM, which
-downloads it from your process whenever it can't tell the image type from the URL's path (any path with no image
-extension) or the provider can't fetch URLs itself. That download follows redirects and doesn't filter hosts, so a URL
+When a call carries an [image given by URL](images.md#adapters), the RubyLLM adapter hands the URL and the image's media
+type to RubyLLM. Because the type is given, RubyLLM doesn't download the URL to find it out: an image whose URL has no
+image extension and no `media_type:` is a `ConfigurationError` before any request (`Image.from_url(url,
+media_type: "image/png")`). RubyLLM can still download the URL from your process when the provider can't fetch URLs
+itself. That download follows redirects and doesn't filter hosts, so a URL
 that points at `localhost`, a private address, or a cloud metadata endpoint is fetched, and what comes back is sent to
 the provider. If a user can choose an image URL, that is a server-side request forgery risk that comes with the RubyLLM
 adapter: allow-list the URL's host and scheme before building the `Image`, or download it yourself and pass the bytes
@@ -303,8 +305,9 @@ exception propagates unwrapped and is never retried, so map your transport's err
 A call can carry [images](images.md) and PDFs ([inputs](inputs.md)). A chat's first user message then has an Array of
 content parts instead of a String: `{ type: :text, text: String }`, then `{ type: :image, image: Squishling::Image }`
 per image and `{ type: :file, file: Squishling::Document }` per document. An `Image` gives you `data` (the bytes) with
-`media_type`, `data_uri`, and `filename`, or, for `url?` images, the `url` for the provider to fetch, plus the `detail`
-asked for (`:low`, `:high`, or `nil`). A `Document` gives you `data`, `media_type` (`application/pdf`), `data_uri`, and
+`media_type`, `data_uri`, and `filename`, or, for `url?` images, the `url` for the provider to fetch and its
+`media_type` (`nil` when neither a `media_type:` nor an image extension in the URL says what it is, so check `url?`
+before trusting it), plus the `detail` asked for (`:low`, `:high`, or `nil`). A `Document` gives you `data`, `media_type` (`application/pdf`), `data_uri`, and
 a generic `filename` ("document.pdf").
 
 `media_types(step)` says which types the adapter takes for a step's model: any of `Squishling::Image::MEDIA_TYPES` and

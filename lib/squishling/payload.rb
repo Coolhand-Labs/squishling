@@ -37,9 +37,11 @@ module Squishling
       raise InputRejectedError.single(unrepresentable(e), label:), cause: nil
     end
 
+    TOO_DEEP = "an input is nested too deeply to send as JSON"
+
     # Why a value can't be JSON, without the value (or the system's message, which quotes it).
     def unrepresentable(error)
-      return "an input is nested too deeply to send as JSON" if error.is_a?(JSON::NestingError)
+      return TOO_DEEP if error.is_a?(JSON::NestingError)
 
       "an input holds a value JSON can't represent (such as invalid UTF-8 or NaN)"
     end

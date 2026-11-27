@@ -8,10 +8,11 @@ RSpec.describe Squishling::Adapters::RubyLLM do
   let(:fake_chat_class) do
     reply = reply_class
     Class.new do
-      attr_reader :options, :instructions, :schema, :added, :asked, :attached, :generation
+      attr_reader :options, :context, :instructions, :schema, :added, :asked, :attached, :generation
 
       def initialize(options, responses)
-        @options = options
+        @context = options[:context]
+        @options = options.except(:context)
         @responses = responses
         @added = []
         @asked = []
@@ -67,12 +68,12 @@ RSpec.describe Squishling::Adapters::RubyLLM do
     expect { instance.send(:initialize) }.to raise_error(Squishling::ConfigurationError, /needs the ruby_llm gem/)
   end
 
-  it "refuses a ruby_llm older than 2.1, which lacks the APIs it uses" do
-    old = instance_double(Gem::Specification, version: Gem::Version.new("2.0.3"))
+  it "refuses a ruby_llm older than 2.2, which lacks the APIs it uses (Attachment's mime_type:)" do
+    old = instance_double(Gem::Specification, version: Gem::Version.new("2.1.1"))
     allow(Gem).to receive(:loaded_specs).and_return("ruby_llm" => old)
 
     expect { described_class.new }
-      .to raise_error(Squishling::ConfigurationError, /needs ruby_llm 2\.1 or newer, got 2\.0\.3/)
+      .to raise_error(Squishling::ConfigurationError, /needs ruby_llm 2\.2 or newer, got 2\.1\.1/)
   end
 
   it "supports judgments" do
@@ -150,11 +151,51 @@ RSpec.describe Squishling::Adapters::RubyLLM do
       expect(sources).to eq(["https://example.com/r.png"])
     end
 
-    it "reports a failure building a history attachment as an LLMError, like one from the request" do
+    it "builds each chat in a RubyLLM context that doesn't upload large files to a provider's Files API" do
       stub_chat("{}")
-      linked = Squishling::Image.from_url("https://example.com/r")
-      allow(RubyLLM::Attachment).to receive(:new).and_raise(Faraday::ConnectionFailed, "down")
+
+      adapter.complete(adapter_request)
+
+      expect(chats.first.context).to be_a(RubyLLM::Context)
+      expect(chats.first.context.config.auto_upload_large_files).to be(false)
+      expect(RubyLLM.config.auto_upload_large_files).to be(true)
+    end
+
+    it "gives an image URL its media type, so RubyLLM never downloads it to find the type out" do
+      stub_chat("{}")
+      byext = Squishling::Image.from_url("https://example.com/r.png")
+      given = Squishling::Image.from_url("https://example.com/get/123?sig=1", media_type: "image/jpeg")
+      content = [{ type: :text, text: "go" }, { type: :image, image: byext }, { type: :image, image: given }]
+
+      adapter.complete(adapter_request(messages: [{ role: :user, content: }]))
+
+      expect(chats.first.attached.flatten).to contain_exactly(
+        have_attributes(mime_type: "image/png"), have_attributes(mime_type: "image/jpeg")
+      )
+    end
+
+    it "refuses an image URL that doesn't say what it is, before RubyLLM could download it" do
+      stub_chat("{}")
+      linked = Squishling::Image.from_url("https://example.com/get/123?token=s3cret")
+      allow(RubyLLM::Attachment).to receive(:new).and_call_original
       messages = [{ role: :user, content: [{ type: :image, image: linked }] }, { role: :assistant, content: "bad" },
+                  { role: :user, content: "again" }]
+
+      expect { adapter.complete(adapter_request(messages:)) }
+        .to raise_error(Squishling::ConfigurationError, /media type of an image given by URL.*media_type:/m) { |error|
+          expect(error.message).not_to include("s3cret")
+        }
+      expect(RubyLLM::Attachment).not_to have_received(:new)
+      expect(chats.first.asked).to be_empty
+    end
+
+    it "reports a failure replaying the history as an LLMError, like one from the request" do
+      allow(RubyLLM).to receive(:chat) do |**options|
+        fake_chat_class.new(options, ["{}"]).tap do |chat|
+          chat.define_singleton_method(:add_message) { |_attributes| raise Faraday::ConnectionFailed, "down" }
+        end
+      end
+      messages = [{ role: :user, content: "first" }, { role: :assistant, content: "bad" },
                   { role: :user, content: "again" }]
 
       expect { adapter.complete(adapter_request(messages:)) }.to raise_error(Squishling::LLMError)

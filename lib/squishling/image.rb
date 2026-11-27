@@ -33,12 +33,20 @@ module Squishling
       # An image read from a file. The media type comes from the bytes, or the extension when given none.
       def from_path(path, media_type: nil, detail: nil)
         data = File.binread(path)
-        new(data:, media_type: media_type || sniff(data) || EXTENSIONS[File.extname(path.to_s).downcase], detail:)
+        new(data:, media_type: media_type || sniff(data) || extension_type(path), detail:)
       end
 
-      # An image the provider fetches itself (http or https). Nothing is downloaded here.
-      def from_url(url, detail: nil)
-        new(url:, detail:)
+      # An image the provider fetches itself (http or https). Nothing is downloaded here. The media type is the one
+      # given, or else the one the URL's path ends in (.png, .jpg, .jpeg, .gif, .webp), or nil when neither says: the
+      # RubyLLM adapter needs it, so that RubyLLM doesn't download the URL to find it out (see Adapters::RubyLLM).
+      def from_url(url, media_type: nil, detail: nil)
+        new(url:, media_type:, detail:)
+      end
+
+      # Internal (not public API): the media type a path or URL path's extension says (.png, .jpg, .jpeg, .gif, .webp),
+      # or nil.
+      def extension_type(path)
+        EXTENSIONS[File.extname(path.to_s).downcase]
       end
 
       # The media type the bytes start with, or nil.
@@ -53,15 +61,15 @@ module Squishling
     end
 
     # Exactly one of data: (the image's bytes, with its media_type:, which is read from the bytes when left out) and
-    # url: (http or https). Raises ConfigurationError for anything else.
+    # url: (http or https, with a media_type: that is read from the path's extension when left out, and may stay nil).
+    # Raises ConfigurationError for anything else.
     def initialize(data: nil, media_type: nil, url: nil, detail: nil)
       raise ConfigurationError, "Squishling::Image takes data: or url:, not both" if data && url
 
       @detail = checked_detail(detail)
       if url
-        raise ConfigurationError, "Squishling::Image from a url: takes no media_type:" if media_type
-
         @url = checked_url(url)
+        @media_type = media_type ? checked_media_type(media_type.to_s) : self.class.extension_type(URI.parse(@url).path)
       else
         @data = checked_data(data)
         @media_type = checked_media_type(media_type&.to_s || self.class.sniff(@data))
