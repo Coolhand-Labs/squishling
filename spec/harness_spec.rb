@@ -1,9 +1,12 @@
 # frozen_string_literal: true
 
 require "logger"
+require "squishling/testing"
 require "stringio"
 
 RSpec.describe "Squishling harnesses" do
+  include Squishling::Testing::RSpec
+
   let(:klass) do
     Class.new do
       include Squishling
@@ -185,6 +188,39 @@ RSpec.describe "Squishling harnesses" do
         expect(e.error_details.map(&:source)).to eq([:squishling])
         expect(e.raw).to eq([{ priority: "high", team: "api" }, { priority: "low", team: "api" }])
         expect(e.models).to eq(%w[claude-haiku-4-5 claude-haiku-4-5])
+      end
+    end
+
+    it "raises DisagreementError and notifies squawk and squish_fallback for non-object String schemas" do
+      klass.output_schema({ "type" => "string", "enum" => %w[yes no] })
+      stopped = []
+      hook = ->(metadata:, error:, **) { stopped << [metadata[:stopped], error.class] if metadata[:stopped] }
+      klass.squishling(squawk: hook)
+      fake_squishling do |llm|
+        llm.sample("a").reply('"yes"')
+        llm.sample("b").reply('"no"')
+      end
+
+      expect { klass.call(text: "x") }.to raise_error(Squishling::DisagreementError) do |e|
+        expect(e.candidates).to eq(%w[yes no])
+        expect(e.raw).to eq(%w[yes no])
+      end
+      expect(stopped).to eq([[:disagreement, Squishling::DisagreementError]])
+
+      klass.squish_fallback { |error, **| error.candidates.last }
+      expect(klass.call(text: "x")).to eq("no")
+    end
+
+    it "raises DisagreementError for non-object Array schemas instead of TypeError" do
+      klass.output_schema({ "type" => "array", "items" => { "type" => "string" } })
+      fake_squishling do |llm|
+        llm.sample("a").reply(%w[foo])
+        llm.sample("b").reply(%w[bar])
+      end
+
+      expect { klass.call(text: "x") }.to raise_error(Squishling::DisagreementError) do |e|
+        expect(e.candidates).to eq([%w[foo], %w[bar]])
+        expect(e.raw).to eq([%w[foo], %w[bar]])
       end
     end
 
@@ -476,6 +512,24 @@ RSpec.describe "Squishling harnesses" do
         expect(e.message).to include("the judge rejected both samples")
         expect(e.message).not_to include("both misread the ticket")
         expect(e.models).to eq(%w[claude-haiku-4-5 claude-haiku-4-5 claude-sonnet-5-5])
+      end
+    end
+
+    it "judges disagreeing samples for non-object schemas and raises DisagreementError on :neither" do
+      klass.output_schema({ "type" => "string", "enum" => %w[yes no] })
+      fake = fake_squishling do |llm|
+        llm.sample("a").reply('"yes"')
+        llm.sample("b").reply('"no"')
+        llm.judge.verdict(:a, reason: "matches input").verdict(:neither, reason: "ambiguous")
+      end
+
+      expect(klass.call(text: "x")).to eq("yes")
+      expect(fake.requests_for(role: :judge).fetch(0).candidates).to eq("a" => "yes", "b" => "no")
+
+      expect { klass.call(text: "x") }.to raise_error(Squishling::DisagreementError) do |e|
+        expect(e.verdict).to eq(:neither)
+        expect(e.candidates).to eq(%w[yes no])
+        expect(e.raw).to eq(%w[yes no])
       end
     end
 

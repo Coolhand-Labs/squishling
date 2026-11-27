@@ -102,6 +102,15 @@ RSpec.describe Squishling::Testing::Stubs do
       }
     end
 
+    it "raises a DisagreementError for non-object output schemas" do
+      klass.output_schema({ "type" => "string", "enum" => %w[yes no] })
+      stub_squishling_error(klass, :disagreement, candidates: %w[yes no], verdict: :neither, reason: "unsure")
+
+      expect { klass.call }.to raise_error(Squishling::DisagreementError) { |error|
+        expect(error).to have_attributes(candidates: %w[yes no], raw: %w[yes no], verdict: :neither, reason: "unsure")
+      }
+    end
+
     it "rejects an unknown kind" do
       expect { stub_squishling_error(klass, :gremlins) }.to raise_error(ArgumentError, /unknown error/)
     end

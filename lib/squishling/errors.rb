@@ -117,7 +117,8 @@ module Squishling
 
   # A harness's samples (the squishsum harnesses', or a custom one's) were valid but didn't agree, and either no
   # judge was declared (verdict nil) or the judge rejected both (verdict :neither, with its reason). candidates
-  # holds the typed results, so a squish_fallback can still return one of them, and raw all of them as Hashes.
+  # holds the typed results (or bare JSON values for non-object schemas), so a squish_fallback can still return one
+  # of them, and raw holds them as plain data (Hashes for typed results).
   # models names the model behind each role (sample a, sample b, then the judge if one ran), not one entry per
   # attempt; attempts is nil.
   class DisagreementError < InvalidOutputError
@@ -132,7 +133,8 @@ module Squishling
       @reason = reason
       error = verdict ? "the judge rejected both samples" : "the two samples disagreed"
       error += " (#{detail})" if detail
-      super(errors: [error], raw: candidates.map(&:to_h), models:)
+      raw = candidates.map { |candidate| candidate.is_a?(Result::Instance) ? candidate.to_h : candidate }
+      super(errors: [error], raw:, models:)
     end
   end
 
