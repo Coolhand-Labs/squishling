@@ -74,7 +74,7 @@ module Squishling
     # The Verdict for the two candidates: :a or :b for the chosen one, or :neither.
     def verdict(first, second)
       @guard.call
-      candidates = { a: Schema.jsonify(first.to_h), b: Schema.jsonify(second.to_h) }
+      candidates = { a: Schema.plain(first), b: Schema.plain(second) }
       judgment? ? judgment(candidates) : chat(candidates)
     end
 
