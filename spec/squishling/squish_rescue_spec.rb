@@ -555,5 +555,29 @@ RSpec.describe Squishling, ".squish_rescue" do
 
       expect(Squishling.verify(klass)).to be_ok
     end
+
+    it "checks include_when: keywords on a rescue's escalation steps" do
+      missing = parser(ArgumentError, escalation: [{ model: "m", include_when: ->(nonexistent:, **) { nonexistent } }])
+      strict = parser(ArgumentError, escalation: [{ model: "m", include_when: -> { true } }])
+
+      expect(Squishling.verify(missing).problems.map(&:to_s))
+        .to contain_exactly(a_string_including("squish_rescue", "include_when:", "nonexistent:"))
+      expect(Squishling.verify(strict).problems.map(&:to_s))
+        .to contain_exactly(a_string_including("squish_rescue", "include_when:", "record:"))
+    end
+
+    it "is clean for a rescue whose escalation step include_when: accepts the method's inputs" do
+      klass = parser(ArgumentError, escalation: [{ model: "m", include_when: ->(record:) { record.size > 10 } }])
+
+      expect(Squishling.verify(klass)).to be_ok
+    end
+
+    it "reports a method's own broken include_when: once when a rescue inherits its escalation" do
+      klass = parser(ArgumentError) do
+        squishling escalation: [{ model: "m", include_when: ->(nonexistent:, **) { nonexistent } }]
+      end
+
+      expect(Squishling.verify(klass).problems.map(&:to_s).grep(/nonexistent:/).size).to eq(1)
+    end
   end
 end

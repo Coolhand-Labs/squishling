@@ -8,8 +8,9 @@ module Squishling
     # Checks one squished method's Definition. Each check returns messages, or raises what the call would.
     class MethodCheck
       CHECKS = %i[schema declarations adapters harness callables apprentice call_id].freeze
-      # The schema, callables, apprentice and call_id belong to the method; a squish_rescue cannot change them.
-      RESCUE_CHECKS = %i[declarations adapters harness].freeze
+      # The schema, squish_when, apprentice, and call_id belong to the method; a squish_rescue can still override
+      # escalation steps (including their include_when: procs), params, adapters, and harness.
+      RESCUE_CHECKS = %i[declarations adapters harness step_callables].freeze
 
       def initialize(definition, checks: CHECKS, label: definition.label)
         @definition = definition
@@ -92,12 +93,24 @@ module Squishling
 
       # Callables the method's inputs are passed to as keywords: include_when: of each step, and squish_when.
       def callables
-        names, open = @definition.input_names
-        gates = @definition.declared_path.first.filter_map do |step|
-          [step[:include_when], "escalation step #{step[:model].inspect} include_when:"] if step[:include_when]
-        end
+        gates = step_gates
         gates << [@definition.predicate, "squish_when"] if @definition.predicate
         gates << [shadowed_apprentice[:when], "apprentice_mode when:"] if shadowed_apprentice&.dig(:when)
+        callable_messages(gates)
+      end
+
+      def step_callables
+        callable_messages(step_gates)
+      end
+
+      def step_gates
+        @definition.declared_path.first.filter_map do |step|
+          [step[:include_when], "escalation step #{step[:model].inspect} include_when:"] if step[:include_when]
+        end
+      end
+
+      def callable_messages(gates)
+        names, open = @definition.input_names
         gates.flat_map { |callable, what| KeywordCheck.messages(callable, names, open).map { "#{what} #{_1}" } }
       end
 
